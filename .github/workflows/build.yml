@@ -1,47 +1,106 @@
 name: build
 
+# main -> :latest and :<version> (Docker Hub $DOCKERHUB_USERNAME/nextkloud).
+# Desktop/mobile releases come with the release workflow.
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  backend:
+  check:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable@v1
-        with:
-          toolchain: stable
-      - run: cargo test -p nextkloud-backend
-      - run: cargo build --release -p nextkloud-backend
-
-  web:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/desktop
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-      - run: npm ci || npm install
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: apps/desktop
+      - name: Audit web dependencies (fail on high/critical)
+        run: npm audit --audit-level=high
+        working-directory: apps/desktop
       - run: npm run build
+        working-directory: apps/desktop
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/backend -> target
+      - run: cargo test --locked -p nextkloud-backend
 
-  # Tauri desktop/mobile matrix (tham khảo Kermius/Kellyfin: tách job theo OS).
-  # Kích hoạt dần ở M3 để tránh CI quá nặng.
-  tauri:
-    if: contains(github.event.head_commit.message, '[tauri]')
+  tauri-check:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+      - run: mkdir -p ../dist && cargo test
+        working-directory: apps/desktop/src-tauri
+
+  # Each architecture builds natively (arm64 under QEMU is slow), then one manifest joins them.
+  docker:
+    needs: check
+    if: github.event_name == 'push'
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - { platform: linux/amd64, os: ubuntu-latest }
+          - { platform: linux/arm64, os: ubuntu-24.04-arm }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
-          node-version: 20
-      - run: npm install
-        working-directory: apps/desktop
-      - uses: tauri-apps/tauri-action@v0
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/server/Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/nextkloud,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+      - run: mkdir -p digests && touch "digests/${DIGEST#sha256:}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ strategy.job-index }}
+          path: digests/*
+          retention-days: 1
+
+  docker-manifest:
+    needs: docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: digests
+          pattern: digests-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Tag the multi-arch image
+        working-directory: digests
+        run: |
+          V=$(node -p "require('../apps/desktop/package.json').version")
+          I=${{ secrets.DOCKERHUB_USERNAME }}/nextkloud
+          docker buildx imagetools create -t $I:latest -t $I:$V $(printf "$I@sha256:%s " *)
+          docker buildx imagetools inspect $I:latest

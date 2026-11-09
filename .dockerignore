@@ -1,0 +1,8 @@
+node_modules
+dist
+target
+.git
+apps/desktop/dist
+apps/desktop/src-tauri/target
+apps/desktop/src-tauri/gen
+crates/*/target

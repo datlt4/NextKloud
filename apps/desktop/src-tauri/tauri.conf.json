@@ -3,16 +3,32 @@
   "productName": "NextKloud",
   "version": "0.1.0",
   "identifier": "com.nextkloud.app",
-  "build": { "frontendDist": "../dist" },
-  "app": { "windows": [{ "title": "NextKloud" }] },
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "NextKloud",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 720,
+        "minHeight": 480
+      }
+    ]
+  },
   "bundle": {
     "active": true,
     "targets": "all",
     "category": "Utility",
-    "windows": { "nsis": {}, "msi": {} },
+    "windows": { "nsis": {}, "wix": {} },
     "linux": { "deb": {}, "appimage": {} },
     "macOS": {},
     "android": {},
-    "iOS": {}
+    "iOS": {},
+    "createUpdaterArtifacts": true
   }
 }
