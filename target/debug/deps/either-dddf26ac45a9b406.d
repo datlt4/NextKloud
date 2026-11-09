@@ -1,0 +1,11 @@
+/mnt/ssd_1tb/Downloads-Ubuntu/Miscellaneous/NextKloud/target/debug/deps/either-dddf26ac45a9b406.d: /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.19.0/src/lib.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.19.0/src/serde_untagged.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.19.0/src/serde_untagged_optional.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.19.0/src/iterator.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.19.0/src/into_either.rs
+
+/mnt/ssd_1tb/Downloads-Ubuntu/Miscellaneous/NextKloud/target/debug/deps/libeither-dddf26ac45a9b406.rlib: /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.19.0/src/lib.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.19.0/src/serde_untagged.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.19.0/src/serde_untagged_optional.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.19.0/src/iterator.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.19.0/src/into_either.rs
+
+/mnt/ssd_1tb/Downloads-Ubuntu/Miscellaneous/NextKloud/target/debug/deps/libeither-dddf26ac45a9b406.rmeta: /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.19.0/src/lib.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.19.0/src/serde_untagged.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.19.0/src/serde_untagged_optional.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.19.0/src/iterator.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.19.0/src/into_either.rs
+
+/home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.19.0/src/lib.rs:
+/home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.19.0/src/serde_untagged.rs:
+/home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.19.0/src/serde_untagged_optional.rs:
+/home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.19.0/src/iterator.rs:
+/home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.19.0/src/into_either.rs:

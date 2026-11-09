@@ -1,0 +1,13 @@
+[package]
+name = "nextkloud-migrate"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[[bin]]
+name = "nextkloud-migrate"
+path = "src/main.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

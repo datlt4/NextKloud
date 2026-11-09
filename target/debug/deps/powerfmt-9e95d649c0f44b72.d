@@ -1,0 +1,11 @@
+/mnt/ssd_1tb/Downloads-Ubuntu/Miscellaneous/NextKloud/target/debug/deps/powerfmt-9e95d649c0f44b72.d: /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/powerfmt-0.2.1/src/lib.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/powerfmt-0.2.1/src/buf.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/powerfmt-0.2.1/src/ext.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/powerfmt-0.2.1/src/smart_display.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/powerfmt-0.2.1/src/smart_display_impls.rs
+
+/mnt/ssd_1tb/Downloads-Ubuntu/Miscellaneous/NextKloud/target/debug/deps/libpowerfmt-9e95d649c0f44b72.rlib: /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/powerfmt-0.2.1/src/lib.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/powerfmt-0.2.1/src/buf.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/powerfmt-0.2.1/src/ext.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/powerfmt-0.2.1/src/smart_display.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/powerfmt-0.2.1/src/smart_display_impls.rs
+
+/mnt/ssd_1tb/Downloads-Ubuntu/Miscellaneous/NextKloud/target/debug/deps/libpowerfmt-9e95d649c0f44b72.rmeta: /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/powerfmt-0.2.1/src/lib.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/powerfmt-0.2.1/src/buf.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/powerfmt-0.2.1/src/ext.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/powerfmt-0.2.1/src/smart_display.rs /home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/powerfmt-0.2.1/src/smart_display_impls.rs
+
+/home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/powerfmt-0.2.1/src/lib.rs:
+/home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/powerfmt-0.2.1/src/buf.rs:
+/home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/powerfmt-0.2.1/src/ext.rs:
+/home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/powerfmt-0.2.1/src/smart_display.rs:
+/home/koi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/powerfmt-0.2.1/src/smart_display_impls.rs:
