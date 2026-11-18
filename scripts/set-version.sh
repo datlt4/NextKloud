@@ -13,4 +13,9 @@ for (const f of ['apps/desktop/package.json', 'apps/desktop/src-tauri/tauri.conf
   fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
 }"
 sed -i "s/^version = \".*\"/version = \"$V\"/" "$ROOT/apps/desktop/src-tauri/Cargo.toml" "$ROOT/crates/backend/Cargo.toml" "$ROOT/crates/migrate/Cargo.toml"
+# Keep --locked CI green: version bumps invalidate Cargo.lock.
+if command -v cargo >/dev/null; then
+  (cd "$ROOT" && cargo update -w >/dev/null 2>&1 || true)
+  (cd "$ROOT/apps/desktop/src-tauri" && cargo update >/dev/null 2>&1 || true)
+fi
 echo "version -> $V"
