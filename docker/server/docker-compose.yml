@@ -16,6 +16,8 @@ services:
       - BIND=0.0.0.0:8014
       - DATABASE_URL=postgres://nextkloud:nextkloud@db:5432/nextkloud
       - REDIS_URL=redis://cache:6379
+      - JWT_SECRET=${JWT_SECRET:-dev-insecure-change-me}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
       - STORAGE_DRIVER=s3 # fs | s3 (abstraction OpenDAL)
       - S3_ENDPOINT=http://minio:9000
       - S3_BUCKET=nextkloud
