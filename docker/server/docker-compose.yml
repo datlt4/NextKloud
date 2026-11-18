@@ -16,10 +16,11 @@ services:
       - BIND=0.0.0.0:8014
       - DATABASE_URL=postgres://nextkloud:nextkloud@db:5432/nextkloud
       - REDIS_URL=redis://cache:6379
-      # S3/MinIO tạm gỡ: minio/minio đã rời Docker Hub, quay.io đòi login.
-      # Backend M1 dùng STORAGE_DRIVER=fs (local disk 8TB) trước, chuyển s3 sau.
-      - STORAGE_DRIVER=fs
-      - FILE_DIR=/data/files
+      - STORAGE_DRIVER=s3 # fs | s3 (abstraction OpenDAL)
+      - S3_ENDPOINT=http://minio:9000
+      - S3_BUCKET=nextkloud
+      - S3_ACCESS_KEY=minioadmin
+      - S3_SECRET_KEY=minioadmin123
       # Dùng OnlyOffice sẵn có trên mini PC (port 8027), không chạy thêm.
       - ONLYOFFICE_URL=http://host.docker.internal:8027
       - ALLOWED_ORIGINS=*
@@ -31,6 +32,7 @@ services:
     depends_on:
       - db
       - cache
+      - minio
 
   db:
     image: postgres:16-alpine
@@ -49,22 +51,21 @@ services:
       - /mnt/das_8tb/nextkloud_volume/redis:/data
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
 
-  # TẠM GỠ minio: minio/minio đã rời Docker Hub (repo 404, check cả với JWT auth).
-  # quay.io/minio/minio:latest đòi `docker login quay.io` (pull anon 401 từ IP mini PC).
-  # M1 chạy STORAGE_DRIVER=fs trên disk 8TB. Có login Quay thì mở block dưới.
-  #minio:
-  #  image: quay.io/minio/minio:latest
-  #  container_name: minio
-  #  restart: unless-stopped
-  #  ports:
-  #    - "9000:9000" # S3 API
-  #    - "9001:9001" # Web Console
-  #  environment:
-  #    MINIO_ROOT_USER: admin
-  #    MINIO_ROOT_PASSWORD: password123 # >= 8 ký tự, đổi khi deploy thật
-  #  volumes:
-  #    - /mnt/das_8tb/nextkloud_volume/s3:/data
-  #  command: server /data --console-address ":9001"
+  # MinIO community: minio/minio gốc đã rời Docker Hub + Quay chặn anon pull.
+  # Dùng bản rebuild cộng đồng pgsty/minio (S3 API tương thích).
+  minio:
+    image: pgsty/minio:latest
+    container_name: minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # Web Console
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123 # >= 8 ký tự, đổi khi deploy thật
+    volumes:
+      - /mnt/das_8tb/nextkloud_volume/s3:/data
+    command: server /data --console-address ":9001"
 
   # TẠM GỠ onlyoffice: mini PC đã có onlyoffice-documentserver ở port 8027.
   # Backend trỏ qua ONLYOFFICE_URL=http://host.docker.internal:8027.
