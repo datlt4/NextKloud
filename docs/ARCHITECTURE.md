@@ -24,6 +24,13 @@
 - M3: sync engine desktop (selective, custom path, free-up, auto-release), mobile browse-only,
   TTS pre-render + stale flag, notifications + auto-update, Tauri build matrix.
 
+## Quyền file — không khóa app như Nextcloud
+- Object data nằm trong MinIO (S3 API), không phải file host chia owner với webserver.
+- Backend chạy bằng UID/GID của bạn (`user: "${UID:-1000}:${GID:-1000}"`), không đòi owner
+  cụ thể. `chown`/`chmod` folder disk thoải mái, app vẫn chạy.
+- `nextkloud-migrate` chỉ mở thư mục Nextcloud gốc ở chế độ read-only, không bao giờ
+  chown/chmod nguồn. Muốn chắc: mount source với `:ro`.
+
 ## Mini PC deploy
 ```bash
 mkdir -p ~/Software/NextKloud
