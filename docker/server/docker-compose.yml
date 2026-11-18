@@ -28,8 +28,6 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - /mnt/das_8tb/nextkloud_volume/app:/data
-    volumes:
-      - /mnt/das_8tb/nextkloud_volume/app:/data
     depends_on:
       - db
       - cache
