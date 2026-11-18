@@ -1,0 +1,11 @@
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    pass_hash TEXT NOT NULL,
+    must_reset BOOLEAN NOT NULL DEFAULT TRUE,
+    quota_limit BIGINT NOT NULL DEFAULT 10737418240,
+    quota_used BIGINT NOT NULL DEFAULT 0,
+    is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS users_username ON users (username);

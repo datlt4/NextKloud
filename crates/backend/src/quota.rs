@@ -28,6 +28,8 @@ impl std::fmt::Display for QuotaError {
     }
 }
 
+impl std::error::Error for QuotaError {}
+
 impl Quota {
     pub fn new(limit_bytes: u64, used_bytes: u64) -> Self {
         Self { limit_bytes, used_bytes }

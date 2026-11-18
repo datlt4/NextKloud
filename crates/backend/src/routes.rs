@@ -5,14 +5,17 @@ use axum::{
     body::Body,
     http::{StatusCode, Uri, header},
     response::{IntoResponse, Response},
+    routing::{get, post, put},
 };
 use serde_json::{Value, json};
+
+use crate::state::AppState;
 
 async fn health() -> axum::Json<Value> {
     axum::Json(json!({"status":"ok","service":"nextkloud"}))
 }
 
-fn content_type(path: &str) -> &'static str {
+pub fn content_type(path: &str) -> &'static str {
     match path.rsplit('.').next().unwrap_or("") {
         "html" => "text/html; charset=utf-8",
         "js" => "text/javascript; charset=utf-8",
@@ -26,7 +29,7 @@ fn content_type(path: &str) -> &'static str {
     }
 }
 
-async fn serve_web(web_dir: PathBuf, uri: Uri) -> Response {
+pub async fn serve_web(web_dir: PathBuf, uri: Uri) -> Response {
     // Giữ trong web_dir: chặn `..`.
     let mut rel = PathBuf::new();
     for comp in uri.path().trim_start_matches('/').split('/') {
@@ -63,17 +66,32 @@ pub fn router() -> Router {
     router_with_web(None)
 }
 
+pub fn api_router(state: AppState) -> Router {
+    use crate::{file_handlers as f, users as u};
+    Router::new()
+        .route("/api/health", get(health))
+        .route("/api/auth/login", post(u::login))
+        .route("/api/auth/password", post(u::change_password))
+        .route("/api/users", get(u::list_users).post(u::create_user))
+        .route("/api/users/:id/quota", post(u::set_quota))
+        .route("/api/users/:id/password", post(u::reset_password))
+        .route("/api/files", get(f::list_files))
+        .route("/api/files/uploads", post(f::init_upload))
+        .route("/api/files/uploads/:id", put(f::put_chunk))
+        .route("/api/files/uploads/:id/complete", post(f::complete_upload))
+        .route("/api/files/*path", get(f::download).delete(f::delete_file))
+        .with_state(state)
+}
+
 pub fn router_with_web(web_dir: Option<PathBuf>) -> Router {
-    let api = Router::new()
-        .route("/api/health", axum::routing::get(health))
-        // MVP stubs — triển khai dần: auth, users, files, kanban
-        .route("/api/users", axum::routing::get(|| async { axum::Json(json!([])) }));
     match web_dir {
-        Some(dir) => api.fallback(move |uri: Uri| {
-            let dir = dir.clone();
-            async move { serve_web(dir, uri).await }
-        }),
-        None => api,
+        Some(dir) => Router::new()
+            .route("/api/health", get(health))
+            .fallback(move |uri: Uri| {
+                let dir = dir.clone();
+                async move { serve_web(dir, uri).await }
+            }),
+        None => Router::new().route("/api/health", get(health)),
     }
 }
 
