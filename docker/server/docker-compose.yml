@@ -49,19 +49,21 @@ services:
       - /mnt/das_8tb/nextkloud_volume/redis:/data
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
 
-  # TẠM GỠ: minio/minio đã rời Docker Hub (repo 404), quay.io/minio đòi login.
-  # M1 chạy STORAGE_DRIVER=fs trên disk 8TB. Khi cần S3 sẽ thêm lại (Garage/MinIO binary).
+  # TẠM GỠ minio: minio/minio đã rời Docker Hub (repo 404, check cả với JWT auth).
+  # quay.io/minio/minio:latest đòi `docker login quay.io` (pull anon 401 từ IP mini PC).
+  # M1 chạy STORAGE_DRIVER=fs trên disk 8TB. Có login Quay thì mở block dưới.
   #minio:
-  #  image: minio/minio:latest
+  #  image: quay.io/minio/minio:latest
+  #  container_name: minio
   #  restart: unless-stopped
   #  ports:
-  #    - "9000:9000"
-  #    - "9001:9001"
+  #    - "9000:9000" # S3 API
+  #    - "9001:9001" # Web Console
+  #  environment:
+  #    MINIO_ROOT_USER: admin
+  #    MINIO_ROOT_PASSWORD: password123 # >= 8 ký tự, đổi khi deploy thật
   #  volumes:
   #    - /mnt/das_8tb/nextkloud_volume/s3:/data
-  #  environment:
-  #    - MINIO_ROOT_USER=minioadmin
-  #    - MINIO_ROOT_PASSWORD=minioadmin123
   #  command: server /data --console-address ":9001"
 
   # TẠM GỠ onlyoffice: mini PC đã có onlyoffice-documentserver ở port 8027.
