@@ -5,7 +5,7 @@ services:
     image: "${NEXTKLOUD_IMAGE:?set NEXTKLOUD_IMAGE=<dockerhub_user>/nextkloud, vd export NEXTKLOUD_IMAGE=hienanh/nextkloud}"
     # Chạy bằng UID/GID của chính bạn: app không yêu cầu owner cụ thể,
     # chown folder disk thoải mái cũng không khóa app (khác Nextcloud).
-    user: "${UID:-1000}:${GID:-1000}"
+    user: "${PUID:-1000}:${PGID:-1000}"
     #build:
     #  context: ../..
     #  dockerfile: docker/server/Dockerfile
