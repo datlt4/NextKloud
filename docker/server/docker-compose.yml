@@ -1,7 +1,11 @@
 services:
   backend:
-    build: ../..
-    dockerfile: docker/server/Dockerfile
+    # Image do CI build/push (build.yml). Trên mini PC chỉ pull, không build local.
+    # Muốn build local: mở comment khối build bên dưới (cần checkout repo).
+    image: "${NEXTKLOUD_IMAGE:?set NEXTKLOUD_IMAGE=<dockerhub_user>/nextkloud, vd export NEXTKLOUD_IMAGE=hienanh/nextkloud}"
+    #build:
+    #  context: ../..
+    #  dockerfile: docker/server/Dockerfile
     restart: unless-stopped
     ports:
       - "8014:8014"
