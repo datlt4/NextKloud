@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use nextkloud_backend::{auth::hash_password, files::FsStore, routes::api_router, state::AppState};
+use nextkloud_backend::{auth::hash_password_unchecked, files::FsStore, routes::api_router, state::AppState};
 use sqlx::PgPool;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
@@ -18,7 +18,7 @@ async fn ensure_admin(db: &PgPool) -> Result<(), sqlx::Error> {
     if password == "admin" {
         tracing::warn!("seeded admin/admin with must_reset — change ADMIN_PASSWORD and reset on first login");
     }
-    let hash = hash_password(&password).expect("admin password too short");
+    let hash = hash_password_unchecked(&password).expect("hash admin");
     sqlx::query(
         "INSERT INTO users (id, username, pass_hash, must_reset, quota_limit, is_admin)
          VALUES ($1, 'admin', $2, TRUE, 107374182400, TRUE)",

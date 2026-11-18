@@ -18,6 +18,11 @@ pub fn hash_password(password: &str) -> Result<String, String> {
     if password.len() < 8 {
         return Err("password must be at least 8 characters".into());
     }
+    hash_password_unchecked(password)
+}
+
+/// Bypass policy — chỉ dùng khi seed admin mặc định (must_reset bắt đổi ngay).
+pub fn hash_password_unchecked(password: &str) -> Result<String, String> {
     let salt = SaltString::generate(&mut rand::thread_rng());
     Argon2::default()
         .hash_password(password.as_bytes(), &salt)
