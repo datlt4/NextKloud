@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "NextKloud",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.nextkloud.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -24,8 +24,14 @@
     "active": true,
     "targets": "all",
     "category": "Utility",
-    "windows": { "nsis": {}, "wix": {} },
-    "linux": { "deb": {}, "appimage": {} },
+    "windows": {
+      "nsis": {},
+      "wix": {}
+    },
+    "linux": {
+      "deb": {},
+      "appimage": {}
+    },
     "macOS": {},
     "android": {},
     "iOS": {},

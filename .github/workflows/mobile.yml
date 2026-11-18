@@ -28,6 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ensure pre-releases exist
+        working-directory: ${{ github.workspace }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
