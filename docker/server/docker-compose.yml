@@ -30,7 +30,7 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     volumes:
-      - /home/mini/Software/NextKloud/pgdata:/var/lib/postgresql/data
+      - /mnt/das_8tb/nextkloud_volume/pgdata:/var/lib/postgresql/data
     environment:
       - POSTGRES_USER=nextkloud
       - POSTGRES_PASSWORD=nextkloud
@@ -40,7 +40,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     volumes:
-      - /home/mini/Software/NextKloud/redis:/data
+      - /mnt/das_8tb/nextkloud_volume/redis:/data
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
 
   minio:
@@ -50,7 +50,7 @@ services:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - /home/mini/Software/NextKloud/s3:/data
+      - /mnt/das_8tb/nextkloud_volume/s3:/data
     environment:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin123
