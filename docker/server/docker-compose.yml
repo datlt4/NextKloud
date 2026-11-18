@@ -20,8 +20,14 @@ services:
       # Backend M1 dùng STORAGE_DRIVER=fs (local disk 8TB) trước, chuyển s3 sau.
       - STORAGE_DRIVER=fs
       - FILE_DIR=/data/files
+      # Dùng OnlyOffice sẵn có trên mini PC (port 8027), không chạy thêm.
+      - ONLYOFFICE_URL=http://host.docker.internal:8027
       - ALLOWED_ORIGINS=*
       # Không có TRUSTED_DOMAINS — cố tình bỏ giống yêu cầu (khác Nextcloud).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /mnt/das_8tb/nextkloud_volume/app:/data
     volumes:
       - /mnt/das_8tb/nextkloud_volume/app:/data
     depends_on:
@@ -60,10 +66,12 @@ services:
   #    - MINIO_ROOT_PASSWORD=minioadmin123
   #  command: server /data --console-address ":9001"
 
-  onlyoffice:
-    image: onlyoffice/documentserver:latest
-    restart: unless-stopped
-    ports:
-      - "8015:80"
-    environment:
-      - JWT_ENABLED=false # bật JWT khi ra production
+  # TẠM GỠ onlyoffice: mini PC đã có onlyoffice-documentserver ở port 8027.
+  # Backend trỏ qua ONLYOFFICE_URL=http://host.docker.internal:8027.
+  #onlyoffice:
+  #  image: onlyoffice/documentserver:latest
+  #  restart: unless-stopped
+  #  ports:
+  #    - "8015:80"
+  #  environment:
+  #    - JWT_ENABLED=false # bật JWT khi ra production
