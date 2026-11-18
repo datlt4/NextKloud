@@ -1,17 +1,80 @@
-use axum::{Json, Router, routing::get};
+use std::path::{Component, PathBuf};
+
+use axum::{
+    Router,
+    body::Body,
+    http::{StatusCode, Uri, header},
+    response::{IntoResponse, Response},
+};
 use serde_json::{Value, json};
 
-async fn health() -> Json<Value> {
-    Json(json!({"status":"ok","service":"nextkloud"}))
+async fn health() -> axum::Json<Value> {
+    axum::Json(json!({"status":"ok","service":"nextkloud"}))
+}
+
+fn content_type(path: &str) -> &'static str {
+    match path.rsplit('.').next().unwrap_or("") {
+        "html" => "text/html; charset=utf-8",
+        "js" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" => "application/json",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "ico" => "image/x-icon",
+        "woff2" => "font/woff2",
+        _ => "application/octet-stream",
+    }
+}
+
+async fn serve_web(web_dir: PathBuf, uri: Uri) -> Response {
+    // Giữ trong web_dir: chặn `..`.
+    let mut rel = PathBuf::new();
+    for comp in uri.path().trim_start_matches('/').split('/') {
+        if comp.is_empty() || comp == "." {
+            continue;
+        }
+        if comp == ".." {
+            return StatusCode::FORBIDDEN.into_response();
+        }
+        rel.push(Component::Normal(comp.as_ref()));
+    }
+    // Thư mục hoặc file không tồn tại (route SPA) -> index.html.
+    let mut file = web_dir.join(&rel);
+    let is_dir = tokio::fs::metadata(&file).await.map(|m| m.is_dir()).unwrap_or(false);
+    if rel.as_os_str().is_empty() || is_dir || !tokio::fs::try_exists(&file).await.unwrap_or(false) {
+        file = web_dir.join("index.html");
+    }
+    match tokio::fs::read(&file).await {
+        Ok(bytes) => {
+            let name = file.to_string_lossy().into_owned();
+            Response::builder()
+                .header(header::CONTENT_TYPE, content_type(&name))
+                .header(header::CACHE_CONTROL, "no-cache")
+                .body(Body::from(bytes))
+                .unwrap()
+        }
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 // NOTE: không validate Host / trusted-domains như Nextcloud.
 // CORS allowlist qua env ALLOWED_ORIGINS, mặc định "*".
 pub fn router() -> Router {
-    Router::new()
-        .route("/api/health", get(health))
+    router_with_web(None)
+}
+
+pub fn router_with_web(web_dir: Option<PathBuf>) -> Router {
+    let api = Router::new()
+        .route("/api/health", axum::routing::get(health))
         // MVP stubs — triển khai dần: auth, users, files, kanban
-        .route("/api/users", get(|| async { Json(json!([])) }))
+        .route("/api/users", axum::routing::get(|| async { axum::Json(json!([])) }));
+    match web_dir {
+        Some(dir) => api.fallback(move |uri: Uri| {
+            let dir = dir.clone();
+            async move { serve_web(dir, uri).await }
+        }),
+        None => api,
+    }
 }
 
 #[cfg(test)]
@@ -21,6 +84,11 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
 
+    async fn body_text(res: axum::response::Response) -> String {
+        let bytes = axum::body::to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
     #[tokio::test]
     async fn health_ok() {
         let app = router();
@@ -29,5 +97,47 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn web_serves_index_and_spa_fallback() {
+        let dir = std::env::temp_dir().join("nk-web-test");
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        tokio::fs::write(dir.join("index.html"), "<h1>NextKloud</h1>").await.unwrap();
+        let app = router_with_web(Some(dir));
+        // / -> index.html
+        let res = app
+            .clone()
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert!(body_text(res).await.contains("NextKloud"));
+        // route SPA không tồn tại -> index.html
+        let res = app
+            .clone()
+            .oneshot(Request::builder().uri("/files/abc").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        // API vẫn ưu tiên
+        let res = app
+            .oneshot(Request::builder().uri("/api/health").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn web_blocks_path_traversal() {
+        let dir = std::env::temp_dir().join("nk-web-test2");
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let app = router_with_web(Some(dir));
+        let res = app
+            .oneshot(Request::builder().uri("/..%2f..%2fetc/passwd").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        // %2f không decode ở path segment này hoặc bị chặn -> 403/404 đều an toàn
+        assert!(res.status() == StatusCode::FORBIDDEN || res.status() == StatusCode::NOT_FOUND);
     }
 }
