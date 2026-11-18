@@ -36,8 +36,15 @@
 mkdir -p ~/Software/NextKloud
 cp docker/server/docker-compose.yml ~/Software/NextKloud/
 cd ~/Software/NextKloud && docker compose up -d
-# backend :8014, minio :9000/:9001, onlyoffice :8015
+# backend :8011 (host), minio :9000/:9001, onlyoffice dùng sẵn :8027, tts :8016
 ```
+
+## TTS giọng đọc (Obsidian)
+- Service `tts` (`docker/tts/server.py`): edge-tts Microsoft Neural, cache mp3 theo hash.
+- Detect ngôn ngữ EN/VI/ZH bằng LibreTranslate `:8015`, fallback heuristic offline.
+- Giọng mặc định: en-US-AriaNeural / vi-VN-HoaiMyNeural / zh-CN-XiaoxiaoNeural.
+- Quy tắc viewer (M2): mỗi đoạn văn 1 nút voice, bỏ qua code fence + math.
+  Sửa md xong ấn TTS mới render lại, chưa ấn hiện banner "âm thanh đã cũ".
 
 ## Test
 ```bash

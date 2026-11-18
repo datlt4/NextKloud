@@ -53,6 +53,22 @@ services:
       - /mnt/das_8tb/nextkloud_volume/redis:/data
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
 
+  # TTS giọng đọc: edge-tts (Microsoft Neural, miễn phí) + detect EN/VI/ZH
+  # bằng LibreTranslate sẵn có trên mini PC (:8015).
+  tts:
+    image: "${NEXTKLOUD_TTS_IMAGE:?set NEXTKLOUD_TTS_IMAGE=<dockerhub_user>/nextkloud-tts}:latest"
+    container_name: nextkloud-tts
+    restart: unless-stopped
+    ports:
+      - "8016:8016"
+    environment:
+      - LIBRETRANSLATE_URL=http://host.docker.internal:8015
+      - TTS_RATE=+0%
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /mnt/das_8tb/nextkloud_volume/tts:/data
+
   # MinIO community: minio/minio gốc đã rời Docker Hub + Quay chặn anon pull.
   # Dùng bản rebuild cộng đồng pgsty/minio (S3 API tương thích).
   minio:
