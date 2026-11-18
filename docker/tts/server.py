@@ -13,6 +13,7 @@ import re
 import urllib.request
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -28,6 +29,10 @@ VOICES = {
 }
 
 app = FastAPI()
+# Web client gọi trực tiếp (browser/Tauri): cho phép mọi origin (LAN).
+app.add_middleware(
+    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+)
 
 
 def detect_lang(text: str) -> str:

@@ -1,0 +1,12 @@
+.md-body { line-height: 1.7; }
+.md-body img { display: block; margin: 12px auto; max-width: 100%; }
+.md-body pre { background: #111827; color: #e5e7eb; padding: 12px; overflow-x: auto; border-radius: 6px; }
+.md-body pre.math { background: #1f2937; }
+.md-body code { background: #f3f4f6; padding: 1px 4px; border-radius: 4px; }
+.md-body pre code { background: none; padding: 0; }
+.md-body blockquote { border-left: 3px solid #4f46e5; margin: 8px 0; padding: 4px 12px; background: #eef2ff; }
+.md-block { display: flex; gap: 8px; align-items: flex-start; margin: 6px 0; }
+.md-block > div:last-child { flex: 1; }
+.voice-btn { flex-shrink: 0; margin-top: 2px; cursor: pointer; }
+.md-bar { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
+.stale { background: #fef3c7; border: 1px solid #f59e0b; padding: 8px; border-radius: 6px; }
