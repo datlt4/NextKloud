@@ -40,12 +40,30 @@ jobs:
           script: |
             const tag = "${{ steps.v.outputs.tag }}";
             const { owner, repo } = context.repo;
-            await github.rest.git.createRef({ owner, repo, ref: `refs/heads/release/${tag}`, sha: context.sha });
-            const { data } = await github.rest.repos.createRelease({
-              owner, repo, tag_name: tag, target_commitish: context.sha,
-              name: `NextKloud ${tag}`, draft: true, generate_release_notes: true,
-            });
-            core.setOutput("id", data.id);
+            // Re-runs must not fail: branch/release may already exist from a previous run.
+            try {
+              await github.rest.git.createRef({ owner, repo, ref: `refs/heads/release/${tag}`, sha: context.sha });
+            } catch (e) {
+              if (e.status === 422 && /already exists/.test(e.message)) {
+                core.info(`release/${tag} branch exists, fast-forwarding`);
+                await github.rest.git.updateRef({ owner, repo, ref: `heads/release/${tag}`, sha: context.sha, force: true });
+              } else throw e;
+            }
+            let id;
+            try {
+              const { data } = await github.rest.repos.createRelease({
+                owner, repo, tag_name: tag, target_commitish: context.sha,
+                name: `NextKloud ${tag}`, draft: true, generate_release_notes: true,
+              });
+              id = data.id;
+            } catch (e) {
+              if (/already_exists/.test(JSON.stringify(e))) {
+                core.info(`draft release ${tag} exists, reusing`);
+                const { data } = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+                id = data.id;
+              } else throw e;
+            }
+            core.setOutput("id", id);
 
   desktop:
     needs: prepare
