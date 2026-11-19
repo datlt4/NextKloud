@@ -5,7 +5,7 @@ use axum::{
     Json,
     body::Body,
     extract::{Path, Query, State},
-    http::{StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     response::Response,
 };
 use serde::{Deserialize, Serialize};
@@ -36,26 +36,72 @@ pub async fn list_files(
     user: AuthUser,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Vec<EntryOut>>, AppError> {
-    let entries: Vec<Entry> = s.store.list(user.id, &q.prefix)?;
+    let entries: Vec<Entry> = s.store.list(user.id, &q.prefix).await?;
     Ok(Json(entries.into_iter().map(|e| EntryOut { name: e.name, is_dir: e.is_dir, size: e.size, modified: e.modified }).collect()))
 }
 
+/// Parse "bytes=a-b" | "bytes=a-" | "bytes=-n" -> [start, end). None = không hợp lệ/không có.
+pub fn parse_range(h: &str, size: u64) -> Option<(u64, u64)> {
+    let r = h.strip_prefix("bytes=")?;
+    if r.contains(',') || size == 0 {
+        return None;
+    }
+    let (a, b) = r.split_once('-')?;
+    let (start, end) = match (a.trim(), b.trim()) {
+        ("", n) => {
+            let n: u64 = n.parse().ok()?;
+            (size.saturating_sub(n), size)
+        }
+        (a, "") => (a.parse().ok()?, size),
+        (a, b) => (a.parse().ok()?, b.parse::<u64>().ok()?.saturating_add(1).min(size)),
+    };
+    (start < end).then_some((start, end))
+}
+
+/// Stream từ store, không nạp cả file vào RAM. Hỗ trợ Range (tua video, tải tiếp).
 pub async fn download(
     State(s): State<AppState>,
     user: AuthUser,
     Path(path): Path<String>,
+    headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let full = s.store.safe_join(user.id, &path)?;
-    let meta = tokio::fs::metadata(&full).await.map_err(|_| AppError::NotFound("not found".into()))?;
-    if !meta.is_file() {
+    let meta = s.store.stat(user.id, &path).await?;
+    if meta.is_dir() {
         return Err(AppError::BadRequest("not a file (use ?prefix= to list)".into()));
     }
-    let bytes = tokio::fs::read(&full).await.map_err(|e| AppError::Internal(e.to_string()))?;
-    Ok(Response::builder()
+    let size = meta.content_length();
+    let range = headers.get(header::RANGE).and_then(|v| v.to_str().ok()).map(|h| parse_range(h, size));
+    let (start, end, status) = match range {
+        Some(Some((a, b))) => (a, b, StatusCode::PARTIAL_CONTENT),
+        Some(None) => {
+            return Ok(Response::builder()
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .header(header::CONTENT_RANGE, format!("bytes */{size}"))
+                .body(Body::empty())
+                .unwrap());
+        }
+        None => (0, size, StatusCode::OK),
+    };
+    let key = s.store.key(user.id, &path)?;
+    let stream = s
+        .store
+        .op
+        .reader_with(&key)
+        .chunk(4 * 1024 * 1024)
+        .await
+        .map_err(crate::files::StoreError::from)?
+        .into_bytes_stream(start..end)
+        .await
+        .map_err(crate::files::StoreError::from)?;
+    let mut res = Response::builder()
+        .status(status)
         .header(header::CONTENT_TYPE, crate::routes::content_type(&path))
-        .header(header::ACCEPT_RANGES, "bytes")
-        .body(Body::from(bytes))
-        .unwrap())
+        .header(header::CONTENT_LENGTH, end - start)
+        .header(header::ACCEPT_RANGES, "bytes");
+    if status == StatusCode::PARTIAL_CONTENT {
+        res = res.header(header::CONTENT_RANGE, format!("bytes {start}-{}/{size}", end - 1));
+    }
+    Ok(res.body(Body::from_stream(stream)).unwrap())
 }
 
 pub async fn delete_file(
@@ -65,7 +111,7 @@ pub async fn delete_file(
 ) -> Result<StatusCode, AppError> {
     let mut row = load_user(&s.db, user.id).await?;
     let mut q = Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64);
-    let _freed = s.store.delete(user.id, &path, &mut q)?;
+    let _freed = s.store.delete(user.id, &path, &mut q).await?;
     row.quota_used = q.used_bytes as i64;
     sqlx::query("UPDATE users SET quota_used = $1 WHERE id = $2")
         .bind(row.quota_used)
@@ -98,7 +144,7 @@ pub async fn init_upload(
     let row = load_user(&s.db, user.id).await?;
     let q = Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64);
     q.can_add(b.size).map_err(|e| AppError::Conflict(format!("quota exceeded: {e}")))?;
-    s.store.safe_join(user.id, &b.path)?; // validate early
+    s.store.key(user.id, &b.path)?; // validate early
     let id = Uuid::new_v4().to_string();
     s.uploads.lock().await.insert(
         id.clone(),
@@ -148,7 +194,7 @@ pub async fn complete_upload(
     }
     let row = load_user(&s.db, user.id).await?;
     let mut q = Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64);
-    let r = s.store.complete(user.id, &id, &pend.path, pend.size, &mut q);
+    let r = s.store.complete(user.id, &id, &pend.path, pend.size, &mut q).await;
     // Clean staging on failure so retries start fresh.
     if r.is_err() {
         let _ = std::fs::remove_file(s.store.stage_path(user.id, &id));
@@ -160,4 +206,21 @@ pub async fn complete_upload(
         .execute(&s.db)
         .await?;
     Ok(StatusCode::CREATED)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_range;
+
+    #[test]
+    fn range_parsing() {
+        assert_eq!(parse_range("bytes=0-99", 1000), Some((0, 100)));
+        assert_eq!(parse_range("bytes=900-", 1000), Some((900, 1000)));
+        assert_eq!(parse_range("bytes=-100", 1000), Some((900, 1000)));
+        assert_eq!(parse_range("bytes=0-5000", 1000), Some((0, 1000))); // clamp
+        assert_eq!(parse_range("bytes=1000-", 1000), None);
+        assert_eq!(parse_range("bytes=5-2", 1000), None);
+        assert_eq!(parse_range("bytes=0-1,5-9", 1000), None);
+        assert_eq!(parse_range("items=0-1", 1000), None);
+    }
 }

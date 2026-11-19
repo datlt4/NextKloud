@@ -78,7 +78,11 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/users/:id/password", post(u::reset_password))
         .route("/api/files", get(f::list_files))
         .route("/api/files/uploads", post(f::init_upload))
-        .route("/api/files/uploads/:id", put(f::put_chunk))
+        // axum mặc định chặn body > 2MB; chunk cho phép tới 64MB.
+        .route(
+            "/api/files/uploads/:id",
+            put(f::put_chunk).layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024 + 1024)),
+        )
         .route("/api/files/uploads/:id/complete", post(f::complete_upload))
         .route("/api/files/*path", get(f::download).delete(f::delete_file))
         .route("/api/tts/voices", get(crate::tts::voices))

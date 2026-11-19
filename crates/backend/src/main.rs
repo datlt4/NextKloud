@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use nextkloud_backend::{auth::hash_password_unchecked, files::FsStore, routes::api_router, state::AppState};
+use nextkloud_backend::{auth::hash_password_unchecked, files::Store, routes::api_router, state::AppState};
 use sqlx::PgPool;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
@@ -42,14 +42,28 @@ async fn main() {
     sqlx::migrate!("./migrations").run(&db).await.expect("migrate");
     ensure_admin(&db).await.expect("seed admin");
 
-    let file_dir = std::env::var("FILE_DIR").unwrap_or_else(|_| "/data/files".into());
+    let env = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.into());
+    let staging = PathBuf::from(env("STAGING_DIR", "/data/staging"));
+    let store = match env("STORAGE_DRIVER", "fs").as_str() {
+        "s3" => Store::s3(
+            &env("S3_ENDPOINT", "http://rustfs:9000"),
+            &env("S3_BUCKET", "nextkloud"),
+            &std::env::var("S3_ACCESS_KEY").expect("S3_ACCESS_KEY required"),
+            &std::env::var("S3_SECRET_KEY").expect("S3_SECRET_KEY required"),
+            staging,
+        ),
+        _ => Store::fs(&PathBuf::from(env("FILE_DIR", "/data/files")), staging),
+    }
+    .expect("storage init");
+    // Fail sớm nếu bucket chưa có / sai key, thay vì lỗi lúc upload.
+    store.op.check().await.expect("storage check (bucket tồn tại? key đúng?)");
     let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| {
         tracing::warn!("JWT_SECRET unset — using dev default, set it in production");
         "dev-insecure-change-me".into()
     });
     let state = AppState {
         db,
-        store: FsStore { root: PathBuf::from(file_dir) },
+        store,
         enc: EncodingKey::from_secret(secret.as_bytes()),
         dec: DecodingKey::from_secret(secret.as_bytes()),
         uploads: Arc::new(Mutex::new(HashMap::new())),

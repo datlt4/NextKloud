@@ -14,7 +14,7 @@ use sqlx::PgPool;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::{auth::verify_jwt, files::FsStore};
+use crate::{auth::verify_jwt, files::Store};
 
 #[derive(Debug, Clone)]
 pub struct PendingUpload {
@@ -26,7 +26,7 @@ pub struct PendingUpload {
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
-    pub store: FsStore,
+    pub store: Store,
     pub enc: EncodingKey,
     pub dec: DecodingKey,
     pub uploads: Arc<Mutex<HashMap<String, PendingUpload>>>,
@@ -67,6 +67,7 @@ impl From<crate::files::StoreError> for AppError {
             E::Conflict(m) => Self::Conflict(m),
             E::Quota(q) => Self::Conflict(format!("quota exceeded: {q}")),
             E::Io(e) => Self::Internal(e.to_string()),
+            E::Backend(e) => Self::Internal(e.to_string()),
         }
     }
 }
