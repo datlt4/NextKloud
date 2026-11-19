@@ -10,7 +10,7 @@ use axum::{
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use crate::state::{AppError, AppState};
+use crate::state::{AppError, AppState, AuthUser};
 
 async fn passthrough(res: reqwest::Response, content_type: &str) -> Result<Response, AppError> {
     let status = res.status();
@@ -22,7 +22,7 @@ async fn passthrough(res: reqwest::Response, content_type: &str) -> Result<Respo
         .unwrap())
 }
 
-pub async fn voices(State(s): State<AppState>) -> Result<Response, AppError> {
+pub async fn voices(State(s): State<AppState>, _u: AuthUser) -> Result<Response, AppError> {
     let res = s
         .http
         .get(format!("{}/voices", s.tts_url))
@@ -34,6 +34,7 @@ pub async fn voices(State(s): State<AppState>) -> Result<Response, AppError> {
 
 pub async fn detect(
     State(s): State<AppState>,
+    _u: AuthUser,
     Query(q): Query<HashMap<String, String>>,
 ) -> Result<Response, AppError> {
     let res = s
@@ -53,7 +54,7 @@ pub struct SynthBody {
     pub rate: Option<String>,
 }
 
-pub async fn synthesize(State(s): State<AppState>, Json(b): Json<SynthBody>) -> Result<Response, AppError> {
+pub async fn synthesize(State(s): State<AppState>, _u: AuthUser, Json(b): Json<SynthBody>) -> Result<Response, AppError> {
     if b.text.len() > 20000 {
         return Err(AppError::BadRequest("text too long".into()));
     }
