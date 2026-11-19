@@ -11,6 +11,22 @@ export function serverOrigin(): string {
   return "http://mini:8011";
 }
 
+export interface Entry {
+  name: string;
+  is_dir: boolean;
+  size: number;
+  modified: number;
+}
+
+export interface Me {
+  username: string;
+  is_admin: boolean;
+  quota_limit: number;
+  quota_used: number;
+}
+
+const encPath = (p: string) => p.split("/").map(encodeURIComponent).join("/");
+
 export function token(): string | null {
   return localStorage.getItem("nk-token");
 }
@@ -50,14 +66,40 @@ export const api = {
   },
   async files(prefix: string) {
     const r = await req(`/api/files?prefix=${encodeURIComponent(prefix)}`);
-    return r.json() as Promise<{ name: string; is_dir: boolean; size: number }[]>;
+    return r.json() as Promise<Entry[]>;
+  },
+  async me() {
+    const r = await req("/api/me");
+    return r.json() as Promise<Me>;
+  },
+  async remove(path: string) {
+    await req(`/api/files/${encPath(path)}`, { method: "DELETE" });
+  },
+  async readBlob(path: string) {
+    return (await req(`/api/files/${encPath(path)}`)).blob();
+  },
+  /** Chunked upload 8MB tuần tự — không giữ cả file trong RAM. */
+  async upload(path: string, data: Blob, onProgress?: (done: number) => void) {
+    const json = { "Content-Type": "application/json" };
+    const init = await req("/api/files/uploads", {
+      method: "POST",
+      headers: json,
+      body: JSON.stringify({ path, size: data.size }),
+    });
+    const { id } = (await init.json()) as { id: string };
+    const CHUNK = 8 * 1024 * 1024;
+    for (let off = 0; off < data.size; off += CHUNK) {
+      await req(`/api/files/uploads/${id}?offset=${off}`, { method: "PUT", body: data.slice(off, off + CHUNK) });
+      onProgress?.(Math.min(off + CHUNK, data.size));
+    }
+    await req(`/api/files/uploads/${id}/complete`, { method: "POST" });
   },
   async readText(path: string) {
-    const r = await req(`/api/files/${path.split("/").map(encodeURIComponent).join("/")}`);
+    const r = await req(`/api/files/${encPath(path)}`);
     return r.text();
   },
   async downloadUrl(path: string): Promise<string> {
-    const r = await req(`/api/files/${path.split("/").map(encodeURIComponent).join("/")}`);
+    const r = await req(`/api/files/${encPath(path)}`);
     const b = await r.blob();
     return URL.createObjectURL(b);
   },

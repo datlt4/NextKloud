@@ -72,6 +72,7 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/health", get(health))
         .route("/api/auth/login", post(u::login))
         .route("/api/auth/password", post(u::change_password))
+        .route("/api/me", get(u::me))
         .route("/api/users", get(u::list_users).post(u::create_user))
         .route("/api/users/:id/quota", post(u::set_quota))
         .route("/api/users/:id/password", post(u::reset_password))

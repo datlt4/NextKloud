@@ -29,6 +29,8 @@ pub struct Entry {
     pub name: String,
     pub is_dir: bool,
     pub size: u64,
+    /// Unix seconds.
+    pub modified: i64,
 }
 
 impl FsStore {
@@ -74,10 +76,17 @@ impl FsStore {
                 }
             }
             let ft = e.file_type()?;
+            let meta = e.metadata()?;
+            let modified = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_secs() as i64);
             out.push(Entry {
                 name,
                 is_dir: ft.is_dir(),
-                size: if ft.is_file() { e.metadata()?.len() } else { 0 },
+                size: if ft.is_file() { meta.len() } else { 0 },
+                modified,
             });
         }
         out.sort_by(|a, b| (b.is_dir, &a.name).cmp(&(a.is_dir, &b.name)));
@@ -183,6 +192,7 @@ mod tests {
         let got = s.list(u, "a").unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].name, "b.txt");
+        assert!(got[0].modified > 0);
     }
 
     #[test]

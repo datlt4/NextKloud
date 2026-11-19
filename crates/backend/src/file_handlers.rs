@@ -28,6 +28,7 @@ pub struct EntryOut {
     pub name: String,
     pub is_dir: bool,
     pub size: u64,
+    pub modified: i64,
 }
 
 pub async fn list_files(
@@ -36,7 +37,7 @@ pub async fn list_files(
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Vec<EntryOut>>, AppError> {
     let entries: Vec<Entry> = s.store.list(user.id, &q.prefix)?;
-    Ok(Json(entries.into_iter().map(|e| EntryOut { name: e.name, is_dir: e.is_dir, size: e.size }).collect()))
+    Ok(Json(entries.into_iter().map(|e| EntryOut { name: e.name, is_dir: e.is_dir, size: e.size, modified: e.modified }).collect()))
 }
 
 pub async fn download(

@@ -37,6 +37,11 @@ pub async fn login(State(s): State<AppState>, Json(b): Json<LoginBody>) -> Resul
     Ok(Json(LoginOut { token, must_reset: row.must_reset, is_admin: row.is_admin }))
 }
 
+/// Current user (quota, admin flag) — survives page reload, unlike login response.
+pub async fn me(State(s): State<AppState>, user: AuthUser) -> Result<Json<UserRow>, AppError> {
+    Ok(Json(load_user(&s.db, user.id).await?))
+}
+
 #[derive(Deserialize)]
 pub struct PasswordBody {
     pub old: String,
