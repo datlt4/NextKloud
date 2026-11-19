@@ -109,9 +109,18 @@ async def synthesize(b: SynthBody):
     key = hashlib.sha256(f"{voice}|{rate}|{text}".encode()).hexdigest()
     os.makedirs(DATA, exist_ok=True)
     out = os.path.join(DATA, f"{key}.mp3")
+    # Tự heal: file rỗng (edge-tts fail giữa chừng) thì render lại.
+    if os.path.exists(out) and os.path.getsize(out) == 0:
+        os.remove(out)
     if not os.path.exists(out):
+        tmp = out + ".tmp"
         try:
-            await edge_tts.Communicate(text, voice, rate=rate).save(out)
+            await edge_tts.Communicate(text, voice, rate=rate).save(tmp)
+            if os.path.getsize(tmp) == 0:
+                raise RuntimeError("empty audio")
+            os.replace(tmp, out)  # atomic, tránh file nửa vời
         except Exception as e:
+            if os.path.exists(tmp):
+                os.remove(tmp)
             raise HTTPException(502, f"edge-tts failed: {e}")
     return FileResponse(out, media_type="audio/mpeg", filename=f"{key}.mp3")
