@@ -21,11 +21,17 @@ LIBRE = os.environ.get("LIBRETRANSLATE_URL", "http://host.docker.internal:8015")
 DATA = os.environ.get("TTS_DATA", "/data")
 DEFAULT_RATE = os.environ.get("TTS_RATE", "+0%")
 
-# Giọng Neural mặc định cho 3 ngôn ngữ yêu cầu.
+# Giọng Neural mặc định cho 3 ngôn ngữ yêu cầu + giọng dự phòng (Microsoft
+# thỉnh thoảng không trả audio với vài cụm từ — thử giọng khác thường qua được).
 VOICES = {
     "en": "en-US-AriaNeural",
     "vi": "vi-VN-HoaiMyNeural",
     "zh": "zh-CN-XiaoxiaoNeural",
+}
+FALLBACK_VOICES = {
+    "en": "en-US-GuyNeural",
+    "vi": "vi-VN-NamMinhNeural",
+    "zh": "zh-CN-YunjianNeural",
 }
 
 app = FastAPI()
@@ -106,6 +112,7 @@ async def synthesize(b: SynthBody):
         raise HTTPException(400, "text too long (max 5000 chars per paragraph)")
     voice = b.voice or VOICES[detect_lang(text)]
     rate = b.rate or DEFAULT_RATE
+    tried = [voice] + ([FALLBACK_VOICES.get(detect_lang(text))] if not b.voice else [])
     key = hashlib.sha256(f"{voice}|{rate}|{text}".encode()).hexdigest()
     os.makedirs(DATA, exist_ok=True)
     out = os.path.join(DATA, f"{key}.mp3")
@@ -114,13 +121,20 @@ async def synthesize(b: SynthBody):
         os.remove(out)
     if not os.path.exists(out):
         tmp = out + ".tmp"
-        try:
-            await edge_tts.Communicate(text, voice, rate=rate).save(tmp)
-            if os.path.getsize(tmp) == 0:
-                raise RuntimeError("empty audio")
-            os.replace(tmp, out)  # atomic, tránh file nửa vời
-        except Exception as e:
+        err: Exception | None = None
+        for v in dict.fromkeys(tried):  # giữ thứ tự, bỏ trùng
+            try:
+                await edge_tts.Communicate(text, v, rate=rate).save(tmp)
+                if os.path.getsize(tmp) == 0:
+                    raise RuntimeError(f"empty audio from {v}")
+                err = None
+                break
+            except Exception as e:
+                err = e
+                continue
+        if err is not None:
             if os.path.exists(tmp):
                 os.remove(tmp)
-            raise HTTPException(502, f"edge-tts failed: {e}")
+            raise HTTPException(502, f"edge-tts failed: {err}")
+        os.replace(tmp, out)  # atomic, tránh file nửa vời
     return FileResponse(out, media_type="audio/mpeg", filename=f"{key}.mp3")
