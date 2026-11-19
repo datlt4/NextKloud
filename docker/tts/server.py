@@ -103,6 +103,8 @@ def detect(q: str):
 
 @app.post("/synthesize")
 async def synthesize(b: SynthBody):
+    import asyncio
+
     import edge_tts
 
     text = strip_md(b.text)
@@ -112,7 +114,9 @@ async def synthesize(b: SynthBody):
         raise HTTPException(400, "text too long (max 5000 chars per paragraph)")
     voice = b.voice or VOICES[detect_lang(text)]
     rate = b.rate or DEFAULT_RATE
-    tried = [voice] + ([FALLBACK_VOICES.get(detect_lang(text))] if not b.voice else [])
+    # Microsoft throttle khi gọi dồn: retry cùng giọng + giọng phụ, giãn cách.
+    tried = [voice] + ([] if b.voice else [FALLBACK_VOICES.get(detect_lang(text), voice)])
+    waits = [0, 8, 20]
     key = hashlib.sha256(f"{voice}|{rate}|{text}".encode()).hexdigest()
     os.makedirs(DATA, exist_ok=True)
     out = os.path.join(DATA, f"{key}.mp3")
@@ -121,17 +125,24 @@ async def synthesize(b: SynthBody):
         os.remove(out)
     if not os.path.exists(out):
         tmp = out + ".tmp"
-        err: Exception | None = None
+        err: Exception | None = RuntimeError("no attempt made")
+        done = False
         for v in dict.fromkeys(tried):  # giữ thứ tự, bỏ trùng
-            try:
-                await edge_tts.Communicate(text, v, rate=rate).save(tmp)
-                if os.path.getsize(tmp) == 0:
-                    raise RuntimeError(f"empty audio from {v}")
-                err = None
+            for w in waits:
+                if w:
+                    await asyncio.sleep(w)
+                try:
+                    await edge_tts.Communicate(text, v, rate=rate).save(tmp)
+                    if os.path.getsize(tmp) == 0:
+                        raise RuntimeError(f"empty audio from {v} (likely throttled)")
+                    err = None
+                    done = True
+                    break
+                except Exception as e:
+                    err = e
+                    continue
+            if done:
                 break
-            except Exception as e:
-                err = e
-                continue
         if err is not None:
             if os.path.exists(tmp):
                 os.remove(tmp)
