@@ -1,6 +1,6 @@
 import { For, Match, Show, Switch, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { api, isSelfHostedWeb, serverOrigin, type Entry, type Me } from "./api";
-import { PRESETS, previewDim, setDim, setImage, setPreset, syncFromServer, ui, wallCss } from "./background";
+import { PRESETS, previewDim, setDim, setImage, setPreset, setTheme, syncFromServer, ui, wallCss } from "./background";
 import { Icon, ext, kindOf } from "./icons";
 import MarkdownView from "./viewers/MarkdownView";
 
@@ -212,7 +212,7 @@ export default function App() {
 
   const Logo = () => (
     <div class="brand">
-      <img src="/logo.svg" alt="" width="28" height="28" />
+      <img src="/logo.svg" alt="" width="34" height="34" />
       <span>
         Next<b>Kloud</b>
       </span>
@@ -268,7 +268,7 @@ export default function App() {
         </Match>
 
         <Match when={true}>
-          <header class="hdr">
+          <header class="hdr glass">
             <button class="icon-btn only-mobile" onClick={() => setSideOpen(!sideOpen())} title="Menu">
               <Icon name="menu" size={20} />
             </button>
@@ -521,6 +521,17 @@ function LookDialog(props: { onClose: () => void; onError: (m: string) => void }
           <button class="icon-btn" onClick={props.onClose}><Icon name="close" /></button>
         </div>
         <p class="muted sm">Lưu trên server — đồng bộ mọi thiết bị.</p>
+        <div class="field-label">Chế độ màu</div>
+        <div class="seg wide">
+          <For each={[["auto", "Theo hệ thống"], ["light", "Sáng"], ["dark", "Tối"]] as const}>
+            {([id, label]) => (
+              <button classList={{ on: ui().theme === id }} disabled={busy()} onClick={() => run(() => setTheme(id))}>
+                {label}
+              </button>
+            )}
+          </For>
+        </div>
+        <div class="field-label">Hình nền</div>
         <div class="swatches">
           <button
             class="swatch upload"

@@ -4,23 +4,24 @@ import { createSignal } from "solid-js";
 import { api } from "./api";
 
 export const PRESETS: { id: string; name: string; css: string }[] = [
-  { id: "aurora", name: "Aurora", css: "radial-gradient(at 15% 20%, #4338ca 0, transparent 50%), radial-gradient(at 85% 15%, #0e7490 0, transparent 45%), radial-gradient(at 70% 90%, #9d174d 0, transparent 50%), #0f1222" },
-  { id: "sunset", name: "Hoàng hôn", css: "linear-gradient(160deg, #1e1b4b 0%, #7c2d12 55%, #f59e0b 120%)" },
-  { id: "forest", name: "Rừng", css: "radial-gradient(at 20% 80%, #166534 0, transparent 55%), radial-gradient(at 80% 20%, #134e4a 0, transparent 50%), #0b1410" },
-  { id: "ocean", name: "Đại dương", css: "linear-gradient(180deg, #0c4a6e 0%, #082f49 50%, #020617 100%)" },
-  { id: "sakura", name: "Sakura", css: "radial-gradient(at 75% 25%, #be185d 0, transparent 50%), radial-gradient(at 20% 75%, #6d28d9 0, transparent 50%), #1a1020" },
-  { id: "plain", name: "Trơn", css: "#14161f" },
+  { id: "cream", name: "Kem", css: "radial-gradient(at 0% 0%, #fbe1cc 0, transparent 45%), radial-gradient(at 100% 100%, #f7d3bc 0, transparent 45%), #f5f0e8" },
+  { id: "peach", name: "Đào", css: "linear-gradient(135deg, #fdeee2 0%, #f9cfb1 55%, #f2a77f 100%)" },
+  { id: "sunset", name: "Hoàng hôn", css: "linear-gradient(170deg, #fff6ee 0%, #f6b48c 60%, #d9653b 115%)" },
+  { id: "clay", name: "Đất nung", css: "radial-gradient(at 85% 10%, #e9875f 0, transparent 50%), radial-gradient(at 10% 95%, #c4552d 0, transparent 50%), #efd8c4" },
+  { id: "plain", name: "Trơn", css: "#f5f0e8" },
+  { id: "night", name: "Đêm ấm", css: "radial-gradient(at 15% 15%, #6b3520 0, transparent 50%), radial-gradient(at 90% 90%, #4a2a1a 0, transparent 45%), #1f1b17" },
 ];
 
 export interface UiSettings {
   bg: string; // preset id | "image"
   dim: number; // 0..0.8 lớp tối phủ lên ảnh
+  theme: "auto" | "light" | "dark";
   v: number; // version, đổi khi ảnh mới -> bust cache
 }
 
 const SETTINGS = ".nextkloud/settings.json";
 const IMAGE = ".nextkloud/background.webp";
-const DEFAULT: UiSettings = { bg: "aurora", dim: 0.35, v: 0 };
+const DEFAULT: UiSettings = { bg: "cream", dim: 0.2, v: 0, theme: "auto" };
 
 function cached(): UiSettings {
   try {
@@ -31,12 +32,14 @@ function cached(): UiSettings {
 }
 
 const [ui, setUi] = createSignal<UiSettings>(cached());
+// Áp theme ngay khi load (trước đăng nhập), tránh nháy màu.
+if (cached().theme !== "auto") document.documentElement.dataset.theme = cached().theme;
 const [imageUrl, setImageUrl] = createSignal<string | null>(null);
 export { ui };
 
 export function wallCss(): string {
   const s = ui();
-  if (s.bg === "image" && imageUrl()) return `center / cover no-repeat url("${imageUrl()}"), #0f1222`;
+  if (s.bg === "image" && imageUrl()) return `center / cover no-repeat url("${imageUrl()}"), #f5f0e8`;
   return (PRESETS.find((p) => p.id === s.bg) ?? PRESETS[0]).css;
 }
 
@@ -77,6 +80,8 @@ async function loadImage(v: number) {
 
 function apply(s: UiSettings) {
   setUi(s);
+  if (s.theme === "auto") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = s.theme;
   localStorage.setItem("nk-ui", JSON.stringify(s));
   if (s.bg === "image") loadImage(s.v);
 }
@@ -96,6 +101,7 @@ async function save(s: UiSettings) {
   await api.upload(SETTINGS, new Blob([JSON.stringify(s)], { type: "application/json" }));
 }
 
+export const setTheme = (theme: UiSettings["theme"]) => save({ ...ui(), theme });
 export const setPreset = (id: string) => save({ ...ui(), bg: id });
 /** Kéo slider: chỉ preview; thả tay mới lưu (tránh upload mỗi pixel). */
 export const previewDim = (dim: number) => setUi({ ...ui(), dim });

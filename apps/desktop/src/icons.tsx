@@ -64,7 +64,7 @@ const KINDS: [RegExp, string, string][] = [
 ];
 
 export function kindOf(name: string, isDir: boolean): { icon: string; color: string } {
-  if (isDir) return { icon: "folder", color: "#60a5fa" };
+  if (isDir) return { icon: "folder", color: "#e07a45" };
   for (const [re, icon, color] of KINDS) if (re.test(name)) return { icon, color };
   return { icon: "file", color: "#94a3b8" };
 }
