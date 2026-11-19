@@ -6,17 +6,6 @@ export function serverOrigin(): string {
   return "http://mini:8011";
 }
 
-export function ttsOrigin(): string {
-  try {
-    const u = new URL(serverOrigin());
-    u.port = "8016";
-    u.pathname = "";
-    return u.toString().replace(/\/+$/, "");
-  } catch {
-    return "http://mini:8016";
-  }
-}
-
 export function token(): string | null {
   return localStorage.getItem("nk-token");
 }
@@ -79,12 +68,15 @@ export function hashText(s: string): string {
 const audioCache = new Map<string, string>();
 
 export async function speak(text: string): Promise<string> {
+  // Qua backend proxy (/api/tts/*) để chạy được trên domain public,
+  // không cần mở port 8016 ra ngoài.
   const key = hashText(text);
   const hit = audioCache.get(key);
   if (hit) return hit;
-  const r = await fetch(ttsOrigin() + "/synthesize", {
+  const t = token();
+  const r = await fetch(serverOrigin() + "/api/tts/synthesize", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
     body: JSON.stringify({ text }),
   });
   if (!r.ok) throw new Error("tts failed");

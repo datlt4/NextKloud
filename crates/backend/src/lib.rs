@@ -4,4 +4,5 @@ pub mod files;
 pub mod quota;
 pub mod routes;
 pub mod state;
+pub mod tts;
 pub mod users;

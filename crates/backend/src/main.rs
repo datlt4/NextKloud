@@ -53,6 +53,8 @@ async fn main() {
         enc: EncodingKey::from_secret(secret.as_bytes()),
         dec: DecodingKey::from_secret(secret.as_bytes()),
         uploads: Arc::new(Mutex::new(HashMap::new())),
+        http: reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build().expect("http client"),
+        tts_url: std::env::var("TTS_URL").unwrap_or_else(|_| "http://localhost:8016".into()),
     };
 
     let web_dir = std::env::var("NEXTKLOUD_WEB").ok().filter(|d| !d.is_empty()).map(PathBuf::from);

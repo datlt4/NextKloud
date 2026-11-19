@@ -80,6 +80,9 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/files/uploads/:id", put(f::put_chunk))
         .route("/api/files/uploads/:id/complete", post(f::complete_upload))
         .route("/api/files/*path", get(f::download).delete(f::delete_file))
+        .route("/api/tts/voices", get(crate::tts::voices))
+        .route("/api/tts/detect", get(crate::tts::detect))
+        .route("/api/tts/synthesize", post(crate::tts::synthesize))
         .with_state(state)
 }
 

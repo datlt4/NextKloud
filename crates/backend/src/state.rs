@@ -30,6 +30,8 @@ pub struct AppState {
     pub enc: EncodingKey,
     pub dec: DecodingKey,
     pub uploads: Arc<Mutex<HashMap<String, PendingUpload>>>,
+    pub http: reqwest::Client,
+    pub tts_url: String,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
