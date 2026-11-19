@@ -1,8 +1,13 @@
 // Nhỏ gọn: client cho backend /api + TTS service. Không dep ngoài solid.
+export function isSelfHostedWeb(): boolean {
+  return window.location.protocol.startsWith("http");
+}
+
 export function serverOrigin(): string {
+  // Web serve từ chính backend -> cùng origin, khỏi nhập tay (bỏ qua giá trị cũ).
+  if (isSelfHostedWeb()) return window.location.origin;
   const saved = localStorage.getItem("nk-server");
   if (saved) return saved.replace(/\/+$/, "");
-  if (window.location.protocol.startsWith("http")) return window.location.origin;
   return "http://mini:8011";
 }
 

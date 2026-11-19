@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, createSignal, onMount } from "solid-js";
-import { api, serverOrigin } from "./api";
+import { api, isSelfHostedWeb, serverOrigin } from "./api";
 import MarkdownView from "./viewers/MarkdownView";
 
 export default function App() {
@@ -112,8 +112,12 @@ export default function App() {
         <Match when={!authed()}>
           <div class="card login-card">
             <h2>Đăng nhập</h2>
-            <p class="muted">Server backend NextKloud của bạn (vd http://mini:8011).</p>
-            <input value={server()} onInput={(e) => setServer(e.currentTarget.value)} placeholder="Server" />
+            <Show when={isSelfHostedWeb()} fallback={<p class="muted">Server backend NextKloud của bạn (vd http://mini:8011).</p>}>
+              <p class="muted">Đang kết nối tới server này.</p>
+            </Show>
+            <Show when={!isSelfHostedWeb()}>
+              <input value={server()} onInput={(e) => setServer(e.currentTarget.value)} placeholder="Server" />
+            </Show>
             <input value={username()} onInput={(e) => setUsername(e.currentTarget.value)} placeholder="Username" autocomplete="username" />
             <input type="password" value={password()} onInput={(e) => setPassword(e.currentTarget.value)} placeholder="Password" autocomplete="current-password"
               onKeyDown={(e) => { if (e.key === "Enter") doLogin(); }} />
