@@ -1386,7 +1386,7 @@ dependencies = [
 
 [[package]]
 name = "nextkloud-backend"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "argon2",
  "axum",
@@ -1410,7 +1410,7 @@ dependencies = [
 
 [[package]]
 name = "nextkloud-migrate"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "serde",
  "serde_json",
