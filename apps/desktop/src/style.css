@@ -145,7 +145,8 @@ input { font: inherit; color: var(--text); }
 .err.banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 12px 8px; }
 
 /* header */
-.hdr { height: var(--hdr); flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 0 12px; margin: 10px 10px; border-radius: var(--radius); }
+.hdr { height: var(--hdr); flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 0 12px; margin: 10px 10px; border-radius: var(--radius); position: relative; z-index: 10; }
+/* backdrop-filter tạo stacking context -> header phải nằm trên panel để menu không bị đè */
 .hdr-brand { color: inherit; text-decoration: none; }
 .hdr-search {
   flex: 1; max-width: 560px; margin: 0 auto; height: 38px; display: flex; align-items: center; gap: 8px;
