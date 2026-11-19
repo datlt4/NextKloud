@@ -237,7 +237,11 @@ input { font: inherit; color: var(--text); }
 .menu {
   position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; min-width: 180px; padding: 6px;
   background: var(--elev); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-lg);
+  /* viewport ngắn (mobile ngang, cửa sổ thấp): không để menu tràn khỏi màn hình */
+  max-height: min(340px, calc(100dvh - 90px)); overflow-y: auto; overscroll-behavior: contain;
 }
+/* hết chỗ phía dưới -> mở ngược lên trên nút bấm */
+.menu.up { top: auto; bottom: calc(100% + 4px); }
 .menu button { display: flex; align-items: center; gap: 10px; width: 100%; height: 36px; padding: 0 10px; border-radius: 8px; text-align: left; }
 .menu button:hover { background: var(--hover); }
 .menu button.danger { color: var(--danger); }

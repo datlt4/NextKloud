@@ -35,7 +35,9 @@ export default function App() {
   const [view, setView] = createSignal<"list" | "grid">((localStorage.getItem("nk-view") as "grid") || "list");
   const [sideOpen, setSideOpen] = createSignal(false);
   const [menuFor, setMenuFor] = createSignal<string | null>(null);
+  const [menuUpFor, setMenuUpFor] = createSignal<string | null>(null);
   const [userMenu, setUserMenu] = createSignal(false);
+  const [userMenuUp, setUserMenuUp] = createSignal(false);
   const [showLook, setShowLook] = createSignal(false);
   const [upload, setUpload] = createSignal<{ name: string; pct: number; left: number } | null>(null);
   let fileInput!: HTMLInputElement;
@@ -48,6 +50,13 @@ export default function App() {
     setOpen(null);
     setMe(null);
     setUserMenu(false);
+  };
+
+  // Đo chỗ trống dưới nút bấm: còn < ~220px thì mở menu ngược lên trên,
+  // tránh bị cắt khỏi màn hình (viewport ngắn, mobile ngang...).
+  const flipIfNeeded = (el: HTMLElement | null) => {
+    if (!el) return false;
+    return window.innerHeight - el.getBoundingClientRect().bottom < 220;
   };
 
   const fail = (e: any, what: string) => {
@@ -87,6 +96,7 @@ export default function App() {
     const close = (e: MouseEvent) => {
       if ((e.target as Element).closest?.(".menu-wrap")) return;
       setMenuFor(null);
+      setMenuUpFor(null);
       setUserMenu(false);
     };
     document.addEventListener("click", close);
@@ -187,21 +197,26 @@ export default function App() {
 
   const RowMenu = (p: { f: Entry }) => (
     <div class="menu-wrap" onClick={(e) => e.stopPropagation()}>
-      <button class="icon-btn" title="Thao tác" onClick={() => setMenuFor(menuFor() === p.f.name ? null : p.f.name)}>
+      <button class="icon-btn" title="Thao tác" onClick={(e) => {
+        const n = p.f.name;
+        if (menuFor() === n) { setMenuFor(null); setMenuUpFor(null); return; }
+        setMenuUpFor(flipIfNeeded(e.currentTarget as HTMLElement) ? n : null);
+        setMenuFor(n);
+      }}>
         <Icon name="more" />
       </button>
       <Show when={menuFor() === p.f.name}>
-        <div class="menu">
+        <div class="menu" classList={{ up: menuUpFor() === p.f.name }}>
           <Show when={!p.f.is_dir}>
-            <button onClick={() => { setMenuFor(null); download(join(p.f.name), p.f.name); }}>
+            <button onClick={() => { setMenuFor(null); setMenuUpFor(null); download(join(p.f.name), p.f.name); }}>
               <Icon name="download" /> Tải xuống
             </button>
-            <button class="danger" onClick={() => { setMenuFor(null); remove(p.f); }}>
+            <button class="danger" onClick={() => { setMenuFor(null); setMenuUpFor(null); remove(p.f); }}>
               <Icon name="trash" /> Xoá
             </button>
           </Show>
           <Show when={p.f.is_dir}>
-            <button onClick={() => { setMenuFor(null); load(join(p.f.name)); }}>
+            <button onClick={() => { setMenuFor(null); setMenuUpFor(null); load(join(p.f.name)); }}>
               <Icon name="folder" /> Mở
             </button>
           </Show>
@@ -283,11 +298,15 @@ export default function App() {
               </Show>
             </div>
             <div class="menu-wrap">
-              <button class="avatar" onClick={() => setUserMenu(!userMenu())} title={me()?.username}>
+              <button class="avatar" onClick={(e) => {
+                if (userMenu()) { setUserMenu(false); return; }
+                setUserMenuUp(flipIfNeeded(e.currentTarget as HTMLElement));
+                setUserMenu(true);
+              }} title={me()?.username}>
                 {(me()?.username ?? "?").slice(0, 1).toUpperCase()}
               </button>
               <Show when={userMenu()}>
-                <div class="menu right">
+                <div class="menu right" classList={{ up: userMenuUp() }}>
                   <div class="menu-head">
                     <b>{me()?.username}</b>
                     <Show when={me()?.is_admin}><span class="tag">admin</span></Show>
