@@ -33,7 +33,17 @@ export interface ListOpts {
   limit: number;
 }
 
+export interface UserRow {
+  id: string;
+  username: string;
+  must_reset: boolean;
+  is_admin: boolean;
+  quota_limit: number;
+  quota_used: number;
+}
+
 export interface Me {
+  id: string;
   username: string;
   is_admin: boolean;
   quota_limit: number;
@@ -89,6 +99,32 @@ export const api = {
   async search(q: string) {
     const r = await req(`/api/search?q=${encodeURIComponent(q)}&limit=300`);
     return r.json() as Promise<Entry[]>;
+  },
+  // --- admin ---
+  async users() {
+    return (await req("/api/users")).json() as Promise<UserRow[]>;
+  },
+  async createUser(b: { username: string; password: string; quota_limit: number; is_admin: boolean }) {
+    const r = await req("/api/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) });
+    return r.json() as Promise<UserRow>;
+  },
+  async setQuota(id: string, quota_limit: number) {
+    const r = await req(`/api/users/${id}/quota`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ quota_limit }),
+    });
+    return r.json() as Promise<UserRow>;
+  },
+  async resetPassword(id: string, password: string) {
+    await req(`/api/users/${id}/password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+  },
+  async deleteUser(id: string) {
+    await req(`/api/users/${id}`, { method: "DELETE" });
   },
   async me() {
     const r = await req("/api/me");

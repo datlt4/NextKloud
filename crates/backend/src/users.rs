@@ -176,3 +176,109 @@ pub async fn reset_password(
     }
     Ok(StatusCode::NO_CONTENT)
 }
+
+/// Admin xoá user: dữ liệu trên store + chỉ mục (cascade). Không tự xoá chính mình.
+pub async fn delete_user(
+    State(s): State<AppState>,
+    admin: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    if !admin.admin {
+        return Err(AppError::Forbidden("admin only".into()));
+    }
+    if admin.id == id {
+        return Err(AppError::Conflict("cannot delete yourself".into()));
+    }
+    load_user(&s.db, id).await.map_err(|_| AppError::NotFound("user not found".into()))?;
+    s.store.op.delete_with(&format!("{id}/")).recursive(true).await.map_err(crate::files::StoreError::from)?;
+    let _ = tokio::fs::remove_dir_all(s.store.staging.join(id.to_string())).await;
+    sqlx::query("DELETE FROM users WHERE id = $1").bind(id).execute(&s.db).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, sync::Arc};
+
+    use axum::{body::Body, http::Request};
+    use jsonwebtoken::{DecodingKey, EncodingKey};
+    use serde_json::{Value, json};
+    use tower::ServiceExt;
+
+    use super::*;
+
+    /// Chạy với Postgres thật: NK_TEST_DB=postgres://... cargo test
+    async fn setup() -> Option<(axum::Router, AppState, String, Uuid)> {
+        let db = sqlx::PgPool::connect(&std::env::var("NK_TEST_DB").ok()?).await.unwrap();
+        sqlx::migrate!("./migrations").run(&db).await.unwrap();
+        let (store, admin) = crate::files::tests::tmp_store("users");
+        sqlx::query("INSERT INTO users (id, username, pass_hash, is_admin, must_reset) VALUES ($1, $2, 'x', TRUE, FALSE)")
+            .bind(admin)
+            .bind(format!("adm-{admin}"))
+            .execute(&db)
+            .await
+            .unwrap();
+        let state = AppState {
+            db,
+            store,
+            enc: EncodingKey::from_secret(b"t"),
+            dec: DecodingKey::from_secret(b"t"),
+            uploads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            http: reqwest::Client::new(),
+            tts_url: String::new(),
+        };
+        let tok = create_jwt(admin, true, &state.enc).unwrap();
+        Some((crate::routes::api_router(state.clone()), state, tok, admin))
+    }
+
+    async fn call(app: &axum::Router, m: &str, uri: &str, tok: &str, body: Option<Value>) -> (StatusCode, Value) {
+        let req = Request::builder()
+            .method(m)
+            .uri(uri)
+            .header("authorization", format!("Bearer {tok}"))
+            .header("content-type", "application/json")
+            .body(body.map_or(Body::empty(), |b| Body::from(b.to_string())))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        let st = res.status();
+        let b = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+        (st, serde_json::from_slice(&b).unwrap_or(Value::Null))
+    }
+
+    #[tokio::test]
+    async fn admin_manages_users() {
+        let Some((app, s, tok, admin)) = setup().await else { return };
+        let name = format!("u-{}", Uuid::new_v4());
+        let body = json!({"username": name, "password": "default123", "quota_limit": 1000});
+        let (st, u) = call(&app, "POST", "/api/users", &tok, Some(body.clone())).await;
+        assert_eq!(st, StatusCode::CREATED);
+        assert_eq!(u["must_reset"], true);
+        assert!(u.get("pass_hash").is_none());
+        let id: Uuid = u["id"].as_str().unwrap().parse().unwrap();
+        assert_eq!(call(&app, "POST", "/api/users", &tok, Some(body)).await.0, StatusCode::CONFLICT);
+        let short = json!({"username": "x-short", "password": "123"});
+        assert_eq!(call(&app, "POST", "/api/users", &tok, Some(short)).await.0, StatusCode::BAD_REQUEST);
+
+        // user thường không được gọi API admin
+        let utok = create_jwt(id, false, &s.enc).unwrap();
+        assert_eq!(call(&app, "GET", "/api/users", &utok, None).await.0, StatusCode::FORBIDDEN);
+        assert_eq!(call(&app, "DELETE", &format!("/api/users/{admin}"), &utok, None).await.0, StatusCode::FORBIDDEN);
+
+        let (st, u) = call(&app, "POST", &format!("/api/users/{id}/quota"), &tok, Some(json!({"quota_limit": 5000}))).await;
+        assert_eq!((st, u["quota_limit"].as_i64()), (StatusCode::OK, Some(5000)));
+        let st = call(&app, "POST", &format!("/api/users/{id}/password"), &tok, Some(json!({"password": "another123"}))).await.0;
+        assert_eq!(st, StatusCode::NO_CONTENT);
+
+        // xoá: dữ liệu trên store + chỉ mục biến mất
+        let mut q = Quota::new(0, 0);
+        s.store.write_chunk(id, "up", 0, b"hi").unwrap();
+        let m = s.store.complete(id, "up", "a/b.txt", 2, None, &mut q).await.unwrap();
+        crate::index::add_file(&s.db, id, "a/b.txt", 2, m).await.unwrap();
+        assert_eq!(call(&app, "DELETE", &format!("/api/users/{admin}"), &tok, None).await.0, StatusCode::CONFLICT);
+        assert_eq!(call(&app, "DELETE", &format!("/api/users/{id}"), &tok, None).await.0, StatusCode::NO_CONTENT);
+        assert!(s.store.scan(id).await.unwrap().is_empty());
+        let n: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM files WHERE user_id = $1").bind(id).fetch_one(&s.db).await.unwrap();
+        assert_eq!(n.0, 0);
+        assert_eq!(call(&app, "DELETE", &format!("/api/users/{id}"), &tok, None).await.0, StatusCode::NOT_FOUND);
+    }
+}

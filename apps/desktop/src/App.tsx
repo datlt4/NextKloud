@@ -1,21 +1,13 @@
 import { For, Index, Match, Show, Switch, batch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { api, isSelfHostedWeb, serverOrigin, type Entry, type Me } from "./api";
 import { PRESETS, previewDim, setDim, setImage, setPreset, setTheme, syncFromServer, ui, wallCss } from "./background";
+import { fmtSize } from "./format";
 import { Icon, ext, kindOf } from "./icons";
+import UsersAdmin from "./UsersAdmin";
 import MarkdownView from "./viewers/MarkdownView";
 
 type SortKey = "name" | "size" | "modified";
 
-const fmtSize = (n: number) => {
-  if (n < 1024) return `${n} B`;
-  const u = ["KB", "MB", "GB", "TB"];
-  let i = -1;
-  do {
-    n /= 1024;
-    i++;
-  } while (n >= 1024 && i < u.length - 1);
-  return `${n.toFixed(n < 10 ? 1 : 0)} ${u[i]}`;
-};
 const fmtDate = (s: number) => (s ? new Date(s * 1000).toLocaleDateString("vi-VN") : "");
 const parentOf = (p: string) => p.split("/").slice(0, -1).join("/");
 
@@ -50,6 +42,7 @@ export default function App() {
   const [userMenu, setUserMenu] = createSignal(false);
   const [userMenuUp, setUserMenuUp] = createSignal(false);
   const [showLook, setShowLook] = createSignal(false);
+  const [page, setPage] = createSignal<"files" | "users">("files");
   const [upload, setUpload] = createSignal<{ name: string; pct: number; left: number } | null>(null);
   let fileInput!: HTMLInputElement;
   let scrollEl: HTMLDivElement | undefined;
@@ -66,6 +59,7 @@ export default function App() {
     setOpen(null);
     setMe(null);
     setUserMenu(false);
+    setPage("files");
   };
 
   // Đo chỗ trống dưới nút bấm: còn < ~220px thì mở menu ngược lên trên,
@@ -123,6 +117,7 @@ export default function App() {
     setLoading(true);
     try {
       if (!(await fetchSet(p, [0]))) return;
+      setPage("files");
       setQuery("");
       setResults(null);
       setOpen(null);
@@ -249,7 +244,7 @@ export default function App() {
   onCleanup(() => ro.disconnect());
   const measureTile = () =>
     requestAnimationFrame(() => {
-      const t = scrollEl?.querySelector<HTMLElement>(".vgrid .tile:not(.ghost)");
+      const t = scrollEl?.querySelector<HTMLElement>(".vgrid .tile:not(.skel)");
       if (t) setTileH(t.offsetHeight + gap());
     });
   createEffect(() => {
@@ -459,7 +454,7 @@ export default function App() {
             </a>
             <div class="hdr-search">
               <Icon name="search" />
-              <input value={query()} onInput={(e) => setQuery(e.currentTarget.value)} placeholder="Tìm tất cả file" />
+              <input value={query()} onInput={(e) => { setPage("files"); setQuery(e.currentTarget.value); }} placeholder="Tìm tất cả file" />
               <Show when={query()}>
                 <button class="icon-btn sm" onClick={() => setQuery("")}><Icon name="close" size={14} /></button>
               </Show>
@@ -496,9 +491,14 @@ export default function App() {
             <aside class="side glass" classList={{ open: sideOpen() }}>
               <div class="side-brand only-mobile"><Logo /></div>
               <nav>
-                <button class="nav" classList={{ active: !prefix() && !open() }} onClick={() => load("")}>
+                <button class="nav" classList={{ active: page() === "files" && !prefix() && !open() }} onClick={() => load("")}>
                   <Icon name="home" /> Tất cả file
                 </button>
+                <Show when={me()?.is_admin}>
+                  <button class="nav" classList={{ active: page() === "users" }} onClick={() => { setSideOpen(false); setPage("users"); }}>
+                    <Icon name="users" /> Người dùng
+                  </button>
+                </Show>
                 <button class="nav" onClick={() => { setSideOpen(false); setShowLook(true); }}>
                   <Icon name="palette" /> Giao diện & nền
                 </button>
@@ -522,6 +522,16 @@ export default function App() {
             </aside>
 
             <main class="panel glass">
+              <Show when={page() === "users" && me()}>
+                <Show when={err()}>
+                  <div class="err banner">
+                    <span>{err()}</span>
+                    <button class="icon-btn sm" onClick={() => setErr("")}><Icon name="close" size={14} /></button>
+                  </div>
+                </Show>
+                <UsersAdmin meId={me()!.id} onError={setErr} onChanged={refreshMe} />
+              </Show>
+              <Show when={page() === "files"}>
               <div class="toolbar">
                 <button class="btn primary" onClick={() => fileInput.click()} disabled={!!upload()}>
                   <Icon name="upload" /> <span class="hide-xs">Tải lên</span>
@@ -608,7 +618,7 @@ export default function App() {
                         {(i) => {
                           const pos = () => ({ transform: `translateY(${i() * ROW_H}px)` });
                           return (
-                            <Show when={entryAt(i())} fallback={<div class="row vrow ghost" style={pos()}><span class="sk" /></div>}>
+                            <Show when={entryAt(i())} fallback={<div class="row vrow skel" style={pos()}><span class="sk" /></div>}>
                               {(f) => {
                                 const k = () => kindOf(f().name, f().is_dir);
                                 return (
@@ -649,7 +659,7 @@ export default function App() {
                           >
                             <Index each={Array.from({ length: Math.min(cols(), total() - r() * cols()) }, (_, k) => r() * cols() + k)}>
                               {(i) => (
-                                <Show when={entryAt(i())} fallback={<div class="tile ghost"><div class="tile-art" /></div>}>
+                                <Show when={entryAt(i())} fallback={<div class="tile skel"><div class="tile-art" /></div>}>
                                   {(f) => {
                                     const k = () => kindOf(f().name, f().is_dir);
                                     return (
@@ -700,6 +710,7 @@ export default function App() {
                     <span>{fmtSize(stats().bytes)}</span>
                   </Show>
                 </div>
+              </Show>
               </Show>
             </main>
           </div>

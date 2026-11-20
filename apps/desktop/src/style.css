@@ -224,9 +224,9 @@ input { font: inherit; color: var(--text); }
 .vgrid { margin-top: 4px; }
 .vgrid-row { position: absolute; left: 0; right: 0; top: 0; padding-top: 0; }
 .vgrid .tile { content-visibility: visible; }
-.ghost { pointer-events: none; }
+.skel { pointer-events: none; }
 .sk { display: block; height: 12px; width: 40%; margin-left: 46px; border-radius: 6px; background: var(--hover); }
-.tile.ghost .tile-art { background: var(--hover); }
+.tile.skel .tile-art { background: var(--hover); }
 .fcol { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
 .fpath { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile-art {
@@ -309,10 +309,52 @@ input { font: inherit; color: var(--text); }
 .md-bar button { height: 34px; padding: 0 14px; border-radius: 10px; background: var(--accent); color: var(--accent-fg); font-weight: 600; }
 .stale { background: var(--warn-bg); border: 1px solid var(--warn-line); padding: 10px 12px; border-radius: 10px; }
 
+/* admin: người dùng */
+.admin { flex: 1; overflow: auto; padding: 18px 18px 24px; }
+.admin-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.admin-head h2 { margin: 0 0 2px; font-size: 19px; }
+.admin-head p { margin: 0; }
+.ulist { display: grid; gap: 8px; }
+.ucard { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.avatar.static { cursor: default; flex-shrink: 0; display: grid; place-items: center; }
+.ubody { flex: 1; min-width: 0; display: grid; gap: 6px; }
+.uname { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.uname b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.uquota { display: grid; gap: 4px; font-size: 12px; color: var(--muted); max-width: 320px; }
+.uact { display: flex; gap: 6px; flex-shrink: 0; }
+.btn.sm { height: 32px; padding: 0 10px; font-size: 13px; gap: 6px; }
+.btn.danger { color: var(--danger); }
+.btn.danger.block { background: var(--danger); color: #fff; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.tag.soft { background: var(--hover); color: var(--muted); }
+.tag.warn { background: var(--warn-bg); color: var(--accent-text); border: 1px solid var(--warn-line); }
+.modal.form label { display: block; margin: 14px 0 6px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.modal.form input:not([type=checkbox]) {
+  width: 100%; height: 42px; padding: 0 12px; background: var(--input);
+  border: 1px solid var(--line); border-radius: 10px; font-size: 15px;
+}
+.modal.form input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.modal.form .err { margin: 12px 0 0; font-size: 13px; }
+.modal.form p.sm { margin: 6px 0 0; }
+.modal.form label.check { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text); font-weight: 500; margin-top: 16px; cursor: pointer; }
+.check input { width: 18px; height: 18px; accent-color: var(--accent); }
+.pw-row { display: flex; gap: 8px; }
+.pw-row input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .5px; }
+.pw-row .btn { height: 42px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.chip { height: 30px; padding: 0 12px; border-radius: 15px; border: 1px solid var(--line); font-size: 13px; font-weight: 600; color: var(--muted); }
+.chip:hover { background: var(--hover); }
+.chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
+.secret {
+  margin: 14px 0 0; padding: 12px 14px; border-radius: 10px; background: var(--input); border: 1px solid var(--line);
+  font-size: 14px; line-height: 1.6; white-space: pre-wrap; user-select: all;
+}
+
 /* responsive */
 .only-mobile { display: none; }
 .scrim { position: fixed; inset: 0; z-index: 19; background: rgba(20,14,8,.4); }
 @media (max-width: 860px) {
+  .hide-sm { display: none; }
   .only-mobile { display: inline-grid; }
   .scrim.only-mobile { display: block; }
   .side {
@@ -330,6 +372,8 @@ input { font: inherit; color: var(--text); }
   .row .c-size, .row .c-date { display: none; }
   .row.head .c-size, .row.head .c-date { display: none; }
   .hide-xs { display: none; }
+  .ucard { flex-wrap: wrap; }
+  .uact { width: 100%; justify-content: flex-end; }
   .grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px; }
   .hdr { gap: 8px; padding: 0 8px; }
   .viewer { padding: 4px 12px 32px; }
