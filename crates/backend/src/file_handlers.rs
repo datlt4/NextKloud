@@ -211,7 +211,7 @@ pub async fn init_upload(
     let row = load_user(&s.db, user.id).await?;
     let q = Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64);
     q.can_add(b.size).map_err(|e| AppError::Conflict(format!("quota exceeded: {e}")))?;
-    ops::user_path(&b.path)?; // validate early, chặn ghi vào .nextkloud
+    ops::upload_path(&b.path)?; // validate early, chặn ghi vào .nextkloud (trừ file cài đặt client)
     let id = Uuid::new_v4().to_string();
     s.uploads.lock().await.insert(
         id.clone(),

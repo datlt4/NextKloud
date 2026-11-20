@@ -30,6 +30,15 @@ pub fn user_path(p: &str) -> Result<String, AppError> {
     Ok(p)
 }
 
+/// File cài đặt client được tự ghi trong `.nextkloud` (giao diện, ảnh nền).
+const CLIENT_FILES: [&str; 2] = [".nextkloud/settings.json", ".nextkloud/background.webp"];
+
+/// Path cho upload: như `user_path` nhưng cho phép các file cài đặt của client.
+pub fn upload_path(p: &str) -> Result<String, AppError> {
+    let c = clean_path(p)?;
+    if CLIENT_FILES.contains(&c.as_str()) { Ok(c) } else { user_path(p) }
+}
+
 fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
@@ -327,6 +336,16 @@ mod tests {
 
     async fn used(db: &PgPool, u: Uuid) -> i64 {
         sqlx::query_as::<_, (i64,)>("SELECT quota_used FROM users WHERE id = $1").bind(u).fetch_one(db).await.unwrap().0
+    }
+
+    #[test]
+    fn reserved_paths() {
+        assert!(upload_path(".nextkloud/settings.json").is_ok());
+        assert!(upload_path("./.nextkloud/background.webp").is_ok());
+        assert!(upload_path(".nextkloud/avatar").is_err());
+        assert!(upload_path(".nextkloud/trash/x/a.txt").is_err());
+        assert!(user_path(".nextkloud/settings.json").is_err());
+        assert!(upload_path("a/b.txt").is_ok());
     }
 
     #[tokio::test]
