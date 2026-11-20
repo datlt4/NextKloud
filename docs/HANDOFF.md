@@ -1,237 +1,551 @@
-# NextKloud — Handoff
+# NextKloud — Handoff (chi tiết)
 
-Tài liệu bàn giao cho agent tiếp theo (review hoặc tiếp quản). Đọc file này trước, sau đó đến `docs/ARCHITECTURE.md`.
-Cập nhật: 2026-11-20 · commit gần nhất `147e850`.
+Tài liệu bàn giao cho agent kế tiếp (review hoặc tiếp quản). Đọc hết file này trước khi sửa code.
+Cập nhật: 2026-11-20 · version 0.1.6 · commit nền `147e850` (màn admin) + tài liệu này.
+
+> Repo **public**. Không ghi secret, mật khẩu, nội dung file hay nội dung card Kanban của người dùng vào repo (kể cả trong tài liệu này).
+
+## Mục lục
+1. [Mục tiêu sản phẩm](#1-mục-tiêu-sản-phẩm)
+2. [Quy tắc làm việc](#2-quy-tắc-làm-việc)
+3. [Hạ tầng, deploy, test](#3-hạ-tầng-deploy-test)
+4. [Bản đồ code](#4-bản-đồ-code)
+5. [API hiện có](#5-api-hiện-có)
+6. [Mô hình dữ liệu](#6-mô-hình-dữ-liệu)
+7. [Quyết định đã chốt và lý do](#7-quyết-định-đã-chốt-và-lý-do)
+8. [Đã xong (lịch sử)](#8-đã-xong-lịch-sử)
+9. [Backlog chi tiết](#9-backlog-chi-tiết)
+10. [Nợ kỹ thuật và rủi ro](#10-nợ-kỹ-thuật-và-rủi-ro)
+11. [Bẫy đã gặp](#11-bẫy-đã-gặp)
+12. [Checklist review](#12-checklist-review)
 
 ---
 
-## 1. Mục tiêu sản phẩm (tóm tắt yêu cầu gốc)
+## 1. Mục tiêu sản phẩm
 
-NextKloud thay thế Nextcloud, **không dùng PHP**: Tauri v2 + Rust (Axum) + TypeScript + SolidJS.
+NextKloud là bản thay thế Nextcloud **không dùng PHP**: Tauri v2 + Rust (Axum) + TypeScript + SolidJS. License MIT.
 
-- **File** kiểu Google Drive. Phải chịu được thư mục **1 triệu file** và upload/download **hàng trăm GB** mà không treo. Đây là nỗi đau chính của người dùng với Nextcloud.
-- **Kanban** thay Deck (giống JIRA): có subtask, chia sẻ, thumbnail cho URL. Kèm **Task tracker** và **Habit tracker**.
-- **Viewer:**
-  - Office: OnlyOffice có sẵn trên mini PC, port 8027.
-  - Media, zip, ebook, drawio, excalidraw.
-  - Markdown kiểu Obsidian (có math) và chế độ **TTS**. Sửa md mà chưa render lại thì hiện banner "âm thanh đã cũ".
-- **Máy yếu (Samsung A8 Star) phải mượt.**
-- **Multi-user:**
-  - Admin tạo user với mật khẩu mặc định, user bị buộc đổi mật khẩu lần đầu.
-  - Admin nới hoặc thu hẹp quota.
-  - **Bắt buộc có unit test.**
-- **Không có trusted-domains** (khác Nextcloud).
-- **i18n** EN / JA / ZH / VI, lựa chọn đồng bộ giữa các thiết bị.
-- **Desktop sync** kiểu OneDrive: chọn thư mục, free-up space, tự giải phóng sau N ngày.
-- **Mobile:** chỉ duyệt, upload, download và Kanban.
-- Notifications và auto-update.
-- **CI** theo mẫu Kermius/Kellyfin. iOS build theo chuẩn job-spec của ipa-resign-dashboard.
-- **MIT license.**
-- **Self-host bằng Docker** trên mini PC (Ryzen 3400GE, không có GPU NVIDIA).
-
-## 2. Quy tắc làm việc (bắt buộc)
-
-- **Trả lời người dùng bằng tiếng Việt.** Mặc định trả lời ngắn.
-- Sửa có chủ đích, chỉ đụng vào phần cần thiết; không refactor ngoài yêu cầu. Comment trong code ngắn, tối đa 1–2 dòng.
-- **Làm xong mỗi thay đổi thì tự commit và push lên `main`, không cần hỏi.** Commit message **không ghi tác giả là AI**.
-- **Không bao giờ commit secret** (`.env`, mật khẩu, key). Không đổi mật khẩu admin của người dùng.
-- Giá trị nào chỉ suy ra mà chưa kiểm chứng (version, path, config) thì phải nói rõ là suy đoán.
-- **Release:** `release.yml` chỉ publish khi version trong `apps/desktop/package.json` thay đổi.
-  - Bump bằng `scripts/set-version.sh X.Y.Z`.
-  - Người dùng muốn bump **major** khi ra bản lớn. Hiện đang ở 0.1.6 và 2 commit gần nhất chưa bump.
-
-## 3. Hạ tầng và cách chạy
-
-### Mini PC (production)
-
-- SSH: `ssh -o BatchMode=yes mini-wg`.
-- Thư mục compose: `/home/mini/Software/NextKloud` (có `.env` chứa S3 key và mật khẩu; **không in nội dung ra**).
-- **Ports:**
-
-  | Port | Dịch vụ |
-  |---|---|
-  | 8011 | backend (trong container là 8014) |
-  | 9000 / 9001 | RustFS (S3 API / console) |
-  | 8016 | TTS |
-  | 8027 | OnlyOffice |
-  | 8015 | LibreTranslate |
-
-- **Dữ liệu** (trên `/mnt/das_8tb/nextkloud_volume/`):
-  - `app/`: staging upload.
-  - `pgdata/`.
-  - `rustfs/`: object.
-  - `redis/`.
-  - `tts/`.
-  - `migration/`: backup Deck và file mật khẩu tạm.
-- **Deploy:** push lên `main` → CI `build.yml` build image `hienanh/nextkloud` → trên mini PC chạy:
-  ```bash
-  cd /home/mini/Software/NextKloud && docker compose pull -q backend && docker compose up -d backend
-  ```
-- **Theo dõi CI** (máy local không có `gh`):
-  `curl -s "https://api.github.com/repos/datlt4/NextKloud/actions/runs?per_page=5&head_sha=<SHA>"`
-- **Dựng lại chỉ mục file:**
-  ```bash
-  docker compose exec backend nextkloud reindex [username]
-  ```
-  Khi khởi động, backend tự dựng chỉ mục cho user chưa có.
-
-### Máy dev local
-
-- **Container test có sẵn:**
-  - `nk-pg-test`: Postgres 16, `127.0.0.1:15432`, user/pass/db đều là `nk`.
-  - `nk-rustfs-test`: RustFS, `127.0.0.1:19000`, bucket `nktest`. Key đọc bằng `docker exec nk-rustfs-test printenv RUSTFS_ACCESS_KEY` (tương tự với `RUSTFS_SECRET_KEY`).
-- **Test đầy đủ** (thiếu 2 biến môi trường thì các test cần DB/S3 tự bỏ qua):
-  ```bash
-  NK_TEST_DB=postgres://nk:nk@127.0.0.1:15432/nk \
-  NK_TEST_S3=http://127.0.0.1:19000,nktest,$KEY,$SECRET \
-  cargo test -p nextkloud-backend          # hiện tại 27 test pass
-  ```
-- **Frontend:**
-  ```bash
-  cd apps/desktop && npx tsc --noEmit -p . && npm run build
-  ```
-  Cần `source ~/.nvm/nvm.sh` trước.
-- **Chạy backend local:**
-  - Biến môi trường: `BIND=127.0.0.1:18014 DATABASE_URL=… STORAGE_DRIVER=s3 S3_ENDPOINT=http://127.0.0.1:19000 S3_BUCKET=nktest S3_ACCESS_KEY=… S3_SECRET_KEY=… STAGING_DIR=… NEXTKLOUD_WEB=apps/desktop/dist`.
-  - Lệnh: `target/debug/nextkloud`.
-  - Tài khoản admin trong DB test: `admin` / `adminpass123`. Chỉ dùng ở local.
-- **Test UI:** puppeteer-core + `/usr/bin/google-chrome` headless. Script mẫu nằm trong scratchpad của session trước (`virt.mjs`, `admin.mjs`).
-  Viết script bằng file, không dùng heredoc chứa JS vì bị safety-check chặn.
-
-## 4. Đã xong
-
-| Hạng mục | Ghi chú |
+| Mảng | Yêu cầu của người dùng |
 |---|---|
-| Khung repo, CI build/release/mobile, quota (unit test), Docker | M0 |
-| Auth JWT, buộc đổi mật khẩu lần đầu, API users/quota | `users.rs`, `auth.rs` |
-| Storage RustFS qua OpenDAL 0.59 | `files.rs`. Upload chunk 8MB → staging → multipart 16MB×4 lên S3. Download stream có Range. |
-| Migrate Nextcloud (làm thủ công bằng rclone) | 5.815 file / 15,39 GiB của `datlt4`, `rclone check` khớp 100%. Chưa migrate trash (854M) và versions (1,7G). |
-| **Chỉ mục file trong Postgres** (`index.rs`, migration `0002`) | Phân trang offset, thư mục luôn đứng trước, sort tự nhiên (ICU), tìm kiếm bằng trigram, giữ mtime gốc (S3 user metadata `mtime`). 1 triệu file: trang đầu ~70ms, giữa danh sách ~110ms. |
-| Danh sách ảo (list và grid) | `App.tsx`: chỉ render dòng đang thấy, tải từng trang 200 dòng, debounce 80ms khi kéo thanh cuộn. |
-| Giao diện: theme cam/kem sáng/tối, logo, hình nền đồng bộ qua `.nextkloud/` | `background.ts` |
-| **Màn hình admin quản lý user** | `UsersAdmin.tsx`: tạo user (sinh mật khẩu), quota (preset, cảnh báo khi thấp hơn mức đang dùng), reset mật khẩu, xoá (gõ lại tên để xác nhận; xoá luôn object và chỉ mục). |
+| File | Kiểu Google Drive. **Thư mục 1 triệu file, upload/download hàng trăm GB không được treo** (đây là lý do bỏ Nextcloud). |
+| Kanban | Thay Deck, kiểu JIRA: subtask, chia sẻ, thumbnail cho URL. Kèm Task tracker và Habit tracker. |
+| Viewer | OnlyOffice (có sẵn ở :8027), media, zip, ebook, drawio, excalidraw, Markdown kiểu Obsidian (math) + chế độ TTS có banner "âm thanh đã cũ". |
+| Hiệu năng | Mượt trên **Samsung A8 Star** (máy yếu). |
+| Multi-user | Admin tạo user với mật khẩu mặc định, bắt đổi khi đăng nhập lần đầu. Admin nới hoặc thu hẹp quota. **Bắt buộc có unit test.** |
+| Bảo mật | **Không có trusted_domains**. |
+| i18n | EN / JA / ZH / VI, lựa chọn đồng bộ giữa các thiết bị. |
+| Desktop | Sync kiểu OneDrive: chọn thư mục cục bộ, free-up space, tự giải phóng sau N ngày. |
+| Mobile | Chỉ duyệt, upload, download và Kanban. |
+| Khác | Notifications, auto-update. Giao diện như Nextcloud nhưng đẹp hơn: logo, favicon, ảnh nền tuỳ chọn, theme cam/kem/cam kiểu Claude. |
+| CI | Theo mẫu Kermius/Kellyfin. iOS theo chuẩn job-spec của ipa-resign-dashboard. |
+| Host | Docker trên mini PC (Ryzen 5 3400GE, không có GPU NVIDIA). |
 
-## 5. Việc cần làm (theo thứ tự ưu tiên)
+## 2. Quy tắc làm việc
 
-Mỗi mục đều cần: unit test cho backend, typecheck và build frontend, kiểm tra UI bằng Chrome headless (desktop 1400px và mobile 390px), sau đó commit, push và deploy.
+1. **Trả lời người dùng bằng tiếng Việt.** Mặc định trả lời ngắn; chỉ giải thích dài khi người dùng hỏi "giải thích".
+2. **Sửa đúng chỗ.** Mỗi dòng thay đổi phải gắn với yêu cầu. Không refactor phần không hỏng. Giữ nguyên style hiện có. Comment tối đa 1–2 dòng.
+3. **Tự commit và push lên `main` sau mỗi thay đổi đã xong, không cần hỏi.** Commit message viết như của developer, **không** có `Co-Authored-By` hay bất kỳ dòng ghi tác giả AI nào.
+4. **Không commit secret.** `.env` chỉ có trên mini PC. Không đổi mật khẩu admin thật của người dùng.
+5. **Không nói suy đoán như sự thật.** Giá trị nào kiểm chứng được (version, path, config) thì kiểm tra trước, bằng SSH hoặc đọc file.
+6. **Thao tác không đảo ngược** (xoá dữ liệu trên server, purge bucket) phải hỏi trước, kiểm tra đúng đích (UUID đủ 36 ký tự) rồi mới chạy.
+7. **Release:** `release.yml` chỉ tạo release khi version trong `apps/desktop/package.json` khác với tag đã có.
+   - Bump bằng `scripts/set-version.sh X.Y.Z`. Script cập nhật package.json, tauri.conf.json, và các Cargo.toml của desktop, backend, migrate.
+   - Người dùng muốn **bump major** khi ra bản lớn.
+   - Các commit `80aeed5`, `147e850` chưa bump (vẫn 0.1.6) nên chưa có installer mới; Docker image thì đã build.
 
-### 5.1 Thao tác file cơ bản ← **làm tiếp theo**
+## 3. Hạ tầng, deploy, test
 
-- **Tạo thư mục:**
-  - Backend: thêm dòng dir vào chỉ mục. Không cần object marker trên S3, vì chỉ mục là nguồn sự thật cho cây thư mục.
-  - API gợi ý: `POST /api/files/mkdir {path}`.
-- **Đổi tên và di chuyển** file/thư mục:
-  - S3 không có rename, phải copy rồi delete từng object.
-  - Thư mục lớn chạy dạng job nền có tiến độ; cập nhật chỉ mục bằng `UPDATE … SET path = $new || substr(path, …)` trong 1 transaction.
-  - Cần thêm index `text_pattern_ops` cho truy vấn kiểu `path LIKE 'a/b/%'`.
-- **Xoá thư mục** (đệ quy):
-  - Hiện `delete` từ chối thư mục.
-  - Cần hoàn quota đúng bằng `SUM(size)` từ chỉ mục.
-- **Chọn nhiều** (checkbox/shift-click) rồi xoá, di chuyển hoặc tải về hàng loạt.
-- **Thùng rác** (khôi phục, tự dọn sau N ngày). Sau đó cân nhắc migrate trash cũ từ Nextcloud.
+### 3.1 Mini PC (production)
 
-### 5.2 Upload và download lớn (yêu cầu cốt lõi)
+- **SSH:** `ssh -o BatchMode=yes mini-wg` (đi qua WireGuard).
+- **Compose:** `/home/mini/Software/NextKloud/` (`docker-compose.yml` + `.env`). **Không in `.env`.** Muốn dùng biến thì chạy `set -a; . ./.env; set +a` rồi tham chiếu `$S3_ACCESS_KEY`.
+- **Container:**
 
-- **Kéo thả cả thư mục** (`webkitGetAsEntry`):
-  - Duyệt cây trong **Web Worker**, xếp hàng đợi, không giữ hàng triệu `File` trên luồng chính.
-- **Upload song song:**
-  - 3–4 file cùng lúc; file lớn gửi các chunk song song.
-  - Tự chạy tiếp sau khi mất mạng. Backend đã có `?offset=` và kiểm tra offset.
-  - **Vấn đề:** `uploads` đang nằm trong RAM (`state.rs`), nên mất khi restart. Cần lưu vào Postgres hoặc Redis.
-- **Nhiều file nhỏ:** 1 triệu file × 3 request mỗi file là quá chậm. Đề xuất API batch cho file < 1MB: gộp nhiều file trong 1 request, hoặc upload dạng tar stream.
-- **Tải cả thư mục** thành **zip stream**:
-  - Tạo zip ngay khi gửi, không tạo file tạm (crate `async_zip`, chế độ store không nén).
-  - Không giới hạn kích thước.
-- **UI hàng đợi** (tốc độ, ETA, tạm dừng, huỷ, thử lại), thay toast hiện tại.
-- **Kiểm thử:** 100k file nhỏ và 1 file 50GB trên mini PC. Đo RAM của backend và trình duyệt.
+  | Container | Image | Port (host) | Ghi chú |
+  |---|---|---|---|
+  | nextkloud-backend-1 | `hienanh/nextkloud:latest` (CI build) | 8011 → 8014 | chạy bằng PUID/PGID, serve luôn web từ `/web` |
+  | nextkloud-db-1 | postgres:16-alpine | (nội bộ) | user/db `nextkloud`, có ICU và pg_trgm |
+  | nextkloud-cache-1 | redis:7-alpine | (nội bộ) | **backend chưa dùng** |
+  | nextkloud-tts | `hienanh/nextkloud-tts` | 8016 | edge-tts; nhận diện ngôn ngữ qua LibreTranslate :8015 |
+  | rustfs | rustfs/rustfs:1.0.4 | 9000 (S3), 9001 (console) | bucket `nextkloud` |
+  | bucket-init | rclone/rclone:1.75.2 | — | chạy một lần, `rclone mkdir nk:nextkloud` |
+  | (có sẵn, ngoài compose) | onlyoffice-documentserver | 8027 | backend gọi qua `host.docker.internal:8027` |
 
-### 5.3 Viewer và OnlyOffice
+- **Dữ liệu:** `/mnt/das_8tb/nextkloud_volume/`
 
-- Ảnh: thumbnail 256px dạng webp, tạo phía server và cache lại. Grid hiển thị thumbnail thật thay cho icon.
-- Video/audio: phát bằng Range, đã hỗ trợ sẵn.
-- PDF.
-- Zip: liệt kê nội dung, giải nén 1 file.
-- Ebook: epub.
-- drawio, excalidraw.
-- OnlyOffice: callback lưu file, có JWT. OnlyOffice có sẵn ở `ONLYOFFICE_URL`.
-- Markdown kiểu Obsidian:
-  - Đã có `viewers/MarkdownView.tsx` và TTS proxy `/api/tts/*`.
-  - Còn thiếu: math (KaTeX), wikilink, sửa trực tiếp, banner stale-audio theo quy tắc trong ARCHITECTURE.md.
-- Lazy-load viewer theo loại file để giữ bundle nhỏ cho A8 Star.
+  | Thư mục | Nội dung |
+  |---|---|
+  | `app/` | mount `/data` của backend; `app/staging/<uuid>/<upload-id>.part` là chunk đang upload |
+  | `pgdata/` | Postgres |
+  | `rustfs/` | object S3 (key = `<user_uuid>/<path>`) |
+  | `redis/`, `tts/` | dữ liệu của Redis và TTS |
+  | `s3/` | thư mục MinIO cũ, rỗng (120K), chưa xoá |
+  | `migration/nextcloud-owncloud-2026-11-20.db` | backup SQLite của Nextcloud, dùng để nhập Deck |
+  | `migration/datlt4-temp-password.txt` | mật khẩu tạm của user `datlt4` (umask 077) |
 
-### 5.4 Kanban, Task và Habit tracker
+- **User thật:** `datlt4` (5.815 file, 15,39 GiB, quota_used = 16525284221) và `admin`. Chỉ mục của cả hai đã được backend tự dựng lúc khởi động.
+- **Deploy:**
+  1. Push lên `main`.
+  2. CI `build.yml` build image amd64 + arm64 rồi tag `latest` và `<version>`.
+  3. Trên mini PC:
+     ```bash
+     cd /home/mini/Software/NextKloud
+     docker compose pull -q backend && docker compose up -d backend
+     docker compose logs --tail 20 backend
+     curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8011/api/health   # 200
+     ```
+  - Push commit mới khi build cũ chưa xong thì build cũ bị huỷ (concurrency). Phải chờ build của commit mới nhất.
+- **Theo dõi CI** (máy dev không có `gh`):
+  `curl -s "https://api.github.com/repos/datlt4/NextKloud/actions/runs?per_page=5&head_sha=<SHA đầy đủ>"`, lọc `name == "build"`, chờ `status == completed` và `conclusion == success`.
+- **Dựng lại chỉ mục:**
+  `docker compose exec backend nextkloud reindex [username]`. Lệnh xoá rồi dựng lại các dòng trong `files` từ S3, có HEAD từng object để lấy mtime gốc, và ghi lại `quota_used`.
+- **Đọc metadata object bằng rclone** (debug):
+  ```bash
+  docker run --rm --network nextkloud_default \
+    -e RCLONE_CONFIG_NK_TYPE=s3 -e RCLONE_CONFIG_NK_PROVIDER=Other \
+    -e RCLONE_CONFIG_NK_ENDPOINT=http://rustfs:9000 \
+    -e RCLONE_CONFIG_NK_ACCESS_KEY_ID=$S3_ACCESS_KEY -e RCLONE_CONFIG_NK_SECRET_ACCESS_KEY=$S3_SECRET_KEY \
+    -e RCLONE_CONFIG_NK_FORCE_PATH_STYLE=true rclone/rclone:1.75.2 lsjson -R --metadata nk:nextkloud/<uuid>/
+  ```
+- **Đọc backup Deck:**
+  ```bash
+  docker run --rm -v <db>:/db.sqlite:ro keinos/sqlite3 sqlite3 "file:/db.sqlite?mode=ro&immutable=1" "<sql>"
+  ```
+  Bắt buộc có `immutable=1`; thiếu nó sqlite báo lỗi "readonly database".
 
-- Board/column/card/subtask, kéo thả mượt trên mobile. Chia sẻ board cho user khác. Card có thumbnail cho URL (unfurl Open Graph phía server).
-- **Nhập Deck** từ `/mnt/das_8tb/nextkloud_volume/migration/nextcloud-owncloud-2026-11-20.db` (SQLite, 429 card).
-- **Mong muốn của người dùng khi nhập Deck:**
-  - Deck không có subtask nên người dùng đã tạo nhiều card nhỏ thay cho task lớn. Importer cần **gom các card nhỏ thành subtask** của task cha.
-    → **Đề xuất cách gom cho người dùng duyệt trước khi nhập.**
-  - Cột **"Done2"** được dùng để giữ card đã xong, vì kéo vào "Done" thì card biến mất (bị archive). Card xong **không được biến mất** nhưng cột cũng không được dài vô hạn.
-    → Gợi ý: hiện N card gần nhất, phần cũ thu gọn hoặc lọc theo thời gian. Gộp Done2 vào Done khi nhập.
-- Task tracker và Habit tracker (streak, lịch).
+### 3.2 Máy dev
 
-### 5.5 Đa ngôn ngữ (i18n)
+- **Repo:** `/mnt/ssd_1tb/Downloads-Ubuntu/Miscellaneous/NextKloud`. Ổ này **không cho `sed -i`**; dùng Edit/Write hoặc python để sửa file.
+- **Node:** `source ~/.nvm/nvm.sh` (Node 24) trước khi dùng `npx`/`npm`.
+- **Container test (đang chạy):**
 
-- Đã có sẵn `src/i18n/{en,ja,vi,zh}.ts` **nhưng chưa nối vào UI**: chuỗi tiếng Việt đang hardcode trong `App.tsx` và `UsersAdmin.tsx`.
-- Lựa chọn ngôn ngữ lưu vào `.nextkloud/settings.json` để đồng bộ giữa các thiết bị, giống cách lưu theme/nền.
+  | Container | Kết nối |
+  |---|---|
+  | `nk-pg-test` | `postgres://nk:nk@127.0.0.1:15432/nk` |
+  | `nk-rustfs-test` | `http://127.0.0.1:19000`, bucket `nktest`; key: `docker exec nk-rustfs-test printenv RUSTFS_ACCESS_KEY` (tương tự `RUSTFS_SECRET_KEY`) |
 
-### 5.6 Desktop sync (Tauri)
+- **Test backend:**
+  ```bash
+  K=$(docker exec nk-rustfs-test printenv RUSTFS_ACCESS_KEY); S=$(docker exec nk-rustfs-test printenv RUSTFS_SECRET_KEY)
+  NK_TEST_DB=postgres://nk:nk@127.0.0.1:15432/nk NK_TEST_S3=http://127.0.0.1:19000,nktest,$K,$S \
+    cargo test -p nextkloud-backend
+  ```
+  - Hiện có 27 test, tất cả pass.
+  - Thiếu `NK_TEST_DB`/`NK_TEST_S3` thì các test cần DB/S3 tự `return`. CI chạy theo cách này, nên **CI không phủ phần DB và S3**: phải chạy đầy đủ ở local trước khi push.
+- **Test frontend:** `cd apps/desktop && npx tsc --noEmit -p . && npm run build`
+- **Chạy backend local** (web tự serve từ `apps/desktop/dist`):
+  ```bash
+  BIND=127.0.0.1:18014 DATABASE_URL=postgres://nk:nk@127.0.0.1:15432/nk STORAGE_DRIVER=s3 \
+  S3_ENDPOINT=http://127.0.0.1:19000 S3_BUCKET=nktest S3_ACCESS_KEY=$K S3_SECRET_KEY=$S \
+  STAGING_DIR=/tmp/nk-staging NEXTKLOUD_WEB=apps/desktop/dist JWT_SECRET=localtest target/debug/nextkloud
+  ```
+  - DB test có user `admin` (đã tắt must_reset) và một thư mục `Big` gồm 200.000 dòng giả trong chỉ mục (không có object thật).
+  - Mật khẩu admin local: hỏi người dùng hoặc đặt lại hash trực tiếp trong DB test.
+  - Dừng backend: `kill $(pgrep -x nextkloud)`. **Không dùng `pkill -f`**: pattern có thể khớp chính shell đang chạy lệnh và kill nó.
+- **Test UI:** puppeteer-core (đã cài trong scratchpad, thư mục `pp/`) + `/usr/bin/google-chrome --no-sandbox` headless.
+  - Chụp 2 khổ: 1400×820 và 390×780 @2x.
+  - Ghi script JS bằng file, không dùng heredoc (safety-check chặn).
+  - Các bước đã kiểm: đăng nhập → mở thư mục 200k → nhảy giữa danh sách → đo ms/frame → grid → tìm kiếm → mobile; admin: tạo / trùng tên / quota / buộc đổi mật khẩu / xoá.
 
-- `src-tauri` hiện chỉ là khung rỗng.
-- **Engine sync:**
-  - Chọn thư mục cục bộ tuỳ ý.
-  - File chỉ là placeholder (free-up space); tự giải phóng sau N ngày không mở.
-  - Delta qua chỉ mục, cần thêm cột `etag` / `version`.
-- **Mobile:** chỉ duyệt, upload, download và Kanban.
+### 3.3 Biến môi trường của backend
 
-### 5.7 Notifications và auto-update
+| Biến | Mặc định | Ý nghĩa |
+|---|---|---|
+| `BIND` | `0.0.0.0:8014` | địa chỉ listen (Dockerfile đặt `NEXTKLOUD_ADDR` nhưng **code không đọc** biến đó; compose đặt `BIND`) |
+| `DATABASE_URL` | bắt buộc | Postgres |
+| `JWT_SECRET` | `dev-insecure-change-me` (có cảnh báo) | ký JWT |
+| `ADMIN_PASSWORD` | `admin` | chỉ dùng khi bảng users rỗng; seed admin với must_reset |
+| `STORAGE_DRIVER` | `fs` | `s3` hoặc `fs` |
+| `S3_ENDPOINT` / `S3_BUCKET` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` | rustfs:9000 / nextkloud / bắt buộc | RustFS |
+| `FILE_DIR` | `/data/files` | gốc dữ liệu khi `fs` |
+| `STAGING_DIR` | `/data/staging` | chunk upload |
+| `NEXTKLOUD_WEB` | — | thư mục web để serve (SPA fallback) |
+| `TTS_URL` | `http://localhost:8016` | proxy TTS |
+| `ONLYOFFICE_URL`, `REDIS_URL`, `ALLOWED_ORIGINS` | — | có trong compose, **code chưa dùng** |
 
-- Tauri updater gắn với release trên GitHub. Thông báo khi upload xong, khi được chia sẻ, khi Kanban có thay đổi.
+### 3.4 CI
 
-### 5.8 Khác
+- **`build.yml`** (push/PR lên main):
+  - web: `npm ci`, `npm audit --audit-level=high`, build.
+  - backend: `cargo test --locked`.
+  - tauri: check trên Ubuntu.
+  - docker backend + tts: multi-arch, push theo digest rồi gộp tag.
+- **`release.yml`:** khi version đổi thì tạo branch `release/vX.Y.Z`, tag, installer cho mọi OS/CPU, APK, IPA unsigned.
+- **`mobile.yml`:** build APK có ký và IPA unsigned (macos-15). Ký lại IPA bằng `scripts/resign-ios.sh`.
+- **Secrets cần có:** `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, cùng các secret ký Android/iOS (xem workflow).
 
-- **Redis:** đã chạy trong compose nhưng backend **chưa dùng**. Dùng cho trạng thái upload, rate-limit đăng nhập, cache thumbnail.
-- **Chia sẻ file/thư mục** giữa user và link công khai (chưa có trong spec chi tiết; hỏi người dùng trước).
-- iOS build theo job-spec của ipa-resign-dashboard: kiểm tra lại `mobile.yml` và `scripts/resign-ios.sh`.
-- `crates/migrate` mới là stub. Người dùng muốn migrate thủ công, không cần nhúng vào app, nên chỉ làm nếu được yêu cầu.
+## 4. Bản đồ code
 
-## 6. Nợ kỹ thuật và rủi ro đã biết (nhờ reviewer kiểm tra)
+```
+crates/backend/
+  migrations/0001_init.sql        bảng users
+  migrations/0002_file_index.sql  pg_trgm, collation nk_natural (ICU, kn=true), bảng files + 4 index
+  src/main.rs          đọc env, migrate, seed admin, tạo Store, `reindex` CLI, tự dựng chỉ mục khi khởi động, serve web
+  src/routes.rs        bảng route; content_type(); serve_web() (SPA, chặn ..)
+  src/state.rs         AppState{db, store, enc, dec, uploads(RAM), http, tts_url}; UserRow; AppError → HTTP; extractor AuthUser (Bearer JWT)
+  src/auth.rs          argon2 hash (tối thiểu 8 ký tự), JWT {sub, adm, exp}
+  src/quota.rs         Quota thuần + unit test (limit 0 = không giới hạn; thu hẹp dưới mức đang dùng → over_quota)
+  src/files.rs         Store (OpenDAL): clean_path, key, scan (đệ quy + HEAD lấy mtime), stat, write_chunk (append đúng offset), complete (multipart, user metadata mtime, quota trên bản sao), delete
+  src/index.rs         chỉ mục Postgres: list (2 truy vấn dir/file, offset), search (ILIKE trigram), add_file (upsert + thư mục cha), remove_file, rebuild
+  src/file_handlers.rs HTTP: list, search, download (Range/206/416), delete, init/put/complete upload
+  src/users.rs         login, me, change_password, create/list users, set_quota, reset_password, delete_user + test tích hợp
+  src/tts.rs           proxy voices/detect/synthesize sang service TTS
+crates/migrate/        stub (6 dòng); migrate thật đã làm bằng rclone
+apps/desktop/
+  src/api.ts           client: req() (Bearer, 401 → logout), files/search/upload(8MB tuần tự, gửi mtime)/admin API, speak()
+  src/App.tsx          toàn bộ shell: login, reset, header, sidebar, file browser (danh sách ảo), RowMenu, LookDialog, chuyển trang files/users
+  src/UsersAdmin.tsx   màn quản lý user + dialog (create, quota, reset, delete, secret)
+  src/background.ts    theme sáng/tối/auto + ảnh nền, lưu ở `.nextkloud/settings.json` và `.nextkloud/background.webp` (resize ≤ 2560px)
+  src/icons.tsx        icon SVG inline + kindOf(name) → icon/màu
+  src/format.ts        fmtSize
+  src/viewers/MarkdownView.tsx  tách md thành block, nút TTS từng đoạn (code/math bỏ qua)
+  src/i18n/*.ts        stub, chưa dùng
+  src/style.css        token màu :root / dark / prefers-color-scheme; blur chỉ bật trên desktop
+  src-tauri/           shell rỗng (lib.rs, main.rs 6 dòng)
+docker/server/         Dockerfile (web → rust → debian slim), docker-compose.yml
+docker/tts/            server.py (edge-tts + cache mp3 theo hash)
+scripts/               set-version.sh, resign-ios.sh
+```
 
-1. **Race trên `quota_used`:**
-   - `complete_upload` và `delete_file` đọc quota → tính → ghi lại. Hai request đồng thời có thể ghi đè lẫn nhau.
-   - Nên dùng `UPDATE users SET quota_used = quota_used + $delta …` kèm điều kiện giới hạn, hoặc `SELECT … FOR UPDATE`.
-2. **Store và chỉ mục không atomic:**
-   - Ghi S3 thành công nhưng ghi chỉ mục lỗi thì file bị "ẩn".
-   - Hiện chỉ có `reindex` để chữa. Cân nhắc thêm job đối soát định kỳ.
-3. **Thư mục rỗng còn lại** trong chỉ mục sau khi xoá file cuối cùng. Đây là chủ ý (giống Drive), nhưng `reindex` sẽ làm chúng biến mất vì S3 không có object.
-4. **Kích thước thư mục luôn bằng 0;** footer chỉ tính file nằm trực tiếp trong thư mục.
-5. **Offset sâu khi sort theo size** trên 1 triệu dòng mất khoảng 430ms. Nếu cần nhanh hơn thì chuyển sang keyset pagination.
-6. **JWT mang cờ `adm`:** bỏ quyền admin của ai đó không có hiệu lực cho tới khi token hết hạn.
-7. **Xoá user:** xoá object trên S3 trước, xoá DB sau. Lỗi ở giữa thì còn user nhưng mất dữ liệu.
-8. **CORS** đang là `permissive`; `ALLOWED_ORIGINS` khai báo trong compose **chưa được dùng**. Chưa có rate-limit đăng nhập.
-9. **Bản ghi upload đang dở nằm trong RAM**, mất khi restart (xem 5.2). Staging file mồ côi không có job dọn.
+## 5. API hiện có
+
+Mọi API (trừ login và health) cần header `Authorization: Bearer <jwt>`. Lỗi trả về `{"error": "..."}`.
+
+| Method | Path | Body / Query | Trả về | Ghi chú |
+|---|---|---|---|---|
+| GET | `/api/health` | — | `{status}` | |
+| POST | `/api/auth/login` | `{username,password}` | `{token,must_reset,is_admin}` | |
+| POST | `/api/auth/password` | `{old,new}` | 204 | xoá cờ must_reset |
+| GET | `/api/me` | — | UserRow | |
+| GET | `/api/users` | — | UserRow[] | admin |
+| POST | `/api/users` | `{username,password,quota_limit?,is_admin?}` | 201 UserRow | admin; trùng tên → 409; mật khẩu < 8 ký tự → 400 |
+| DELETE | `/api/users/:id` | — | 204 | admin; tự xoá mình → 409; xoá object, chỉ mục (cascade), staging |
+| POST | `/api/users/:id/quota` | `{quota_limit}` | UserRow | admin; 0 = không giới hạn |
+| POST | `/api/users/:id/password` | `{password}` | 204 | admin; bật lại must_reset |
+| GET | `/api/files` | `prefix, sort=name\|size\|modified, desc, offset, limit≤1000 (mặc định 200)` | `{entries:[{path,name,is_dir,size,modified}], dirs, files, bytes}` | thư mục đứng trước; ẩn tên bắt đầu bằng `.` |
+| GET | `/api/search` | `q, limit≤1000` | entries[] | toàn bộ cây; bỏ qua đường dẫn có `/.` |
+| GET | `/api/files/*path` | header Range | stream | 206/416; không nạp cả file vào RAM |
+| DELETE | `/api/files/*path` | — | 204 | chỉ xoá file; hoàn quota; gỡ khỏi chỉ mục |
+| POST | `/api/files/uploads` | `{path,size,mtime?}` | `{id}` | kiểm quota trước; tối đa 100GiB |
+| PUT | `/api/files/uploads/:id?offset=N` | bytes (≤64MiB) | `{received}` | offset phải khớp kích thước đã stage, sai → 409 |
+| POST | `/api/files/uploads/:id/complete` | — | 201 | multipart lên S3, cập nhật quota và chỉ mục |
+| GET | `/api/tts/voices`, `/api/tts/detect` | | | proxy |
+| POST | `/api/tts/synthesize` | `{text}` | audio/mpeg | proxy |
+
+## 6. Mô hình dữ liệu
+
+```sql
+users(id uuid pk, username text unique, pass_hash, must_reset bool, quota_limit int8 (0 = không giới hạn),
+      quota_used int8, is_admin bool, created_at)
+files(user_id uuid → users ON DELETE CASCADE, path text, parent text, name text COLLATE nk_natural,
+      is_dir bool, size int8, modified int8 /*unix giây*/, PRIMARY KEY(user_id, path))
+  index (user_id,parent,is_dir,name) | (…,size,name) | (…,modified,name) | GIN(name gin_trgm_ops)
+```
+
+- **Object key:** `<user_uuid>/<path>`. Path đã chuẩn hoá: không có `..`, không có `/` ở đầu, không có `\`.
+- **Thư mục:** chỉ tồn tại trong bảng `files` (`is_dir`), **không** có object marker trên S3. `modified` của thư mục = mtime lớn nhất của các con.
+- **mtime gốc:** lưu trong S3 user metadata `mtime`. rclone ghi dạng RFC3339 hoặc số giây; `parse_mtime` đọc được cả hai.
+- **Cài đặt giao diện:** file `.nextkloud/settings.json` `{bg, dim, v, theme}` trong không gian file của user (bị ẩn khỏi listing).
+
+## 7. Quyết định đã chốt và lý do
+
+| Quyết định | Lý do |
+|---|---|
+| RustFS thay MinIO | MinIO community đã rời Docker Hub; RustFS là Apache-2.0. Đổi khi chưa có dữ liệu. |
+| OpenDAL `services-s3` + `services-fs` | 1 API dùng cho cả prod (S3) lẫn test (fs). |
+| Chỉ mục metadata trong Postgres | S3 list tối đa 1000 object mỗi lần và không phân trang theo sort được. Thư mục 1 triệu file bắt buộc phải dùng DB. |
+| Phân trang offset (chưa dùng keyset) | UI cho kéo thanh cuộn tới vị trí bất kỳ, cần truy cập ngẫu nhiên. Đo trên 1 triệu dòng: 0,4ms (trang đầu) – 110ms (giữa) – 430ms (sort theo size, cuối danh sách). |
+| Danh sách ảo tự viết (không dùng @tanstack/solid-virtual) | Cần dạng grid theo hàng và cache theo trang server; tự viết gọn hơn. Package vẫn nằm trong package.json, **chưa gỡ**. |
+| Chunk upload stage ra đĩa local rồi mới multipart lên S3 | S3 không append được; resume dựa vào offset. |
+| Migrate Nextcloud thủ công bằng rclone, không làm trong app | Người dùng yêu cầu. |
+| Không có trusted_domains, CORS permissive | Người dùng yêu cầu; siết ở reverse proxy nếu cần. |
+| Theme: token màu, light/dark/auto | Người dùng chê UI cũ xấu; muốn tông cam, trắng, cam kiểu Claude. |
+
+## 8. Đã xong (lịch sử)
+
+- **M0:** workspace, quota + unit test, compose, CI 3 workflow, i18n stub, script resign.
+- **M1 backend:** JWT, buộc đổi mật khẩu, users/quota API, upload chunk, download stream có Range, axum body limit 64MB cho route chunk.
+- **UI:**
+  - Làm lại toàn bộ: logo squircle cam, favicon, ảnh nền như Nextcloud (preset + upload ảnh, độ tối, đồng bộ server), theme sáng/tối.
+  - Responsive ≤ 860px (sidebar thành drawer) và ≤ 600px.
+  - Sửa: menu user bị panel che (stacking context), dropdown tràn màn hình.
+- **Storage:** chuyển sang RustFS qua OpenDAL (`0135687`).
+- **Migrate:** 5.815 file / 15,39 GiB của `datlt4`, `rclone check --one-way` khớp 5.815, 0 khác biệt. Chưa chuyển: trash (854M), versions (1,7G). Log Nextcloud nặng 15GB, không cần chuyển.
+- **Chỉ mục file + danh sách ảo + tìm kiếm toàn cục + giữ mtime gốc** (`80aeed5`): mtime thật đã khôi phục (đa số rơi vào 2022–2025).
+- **Màn admin quản lý user** (`147e850`). Cùng commit này sửa 2 lỗi:
+  - Class `.ghost` va với `.btn.ghost`, làm mọi nút ghost bấm không ăn (lỗi do commit `80aeed5` gây ra).
+  - Nút đóng dialog nằm trong `<form>` mà thiếu `type="button"`, bấm vào là submit form.
+
+## 9. Backlog chi tiết
+
+**Thứ tự đề xuất:** 9.1 → 9.2 → 9.3 → 9.4 → 9.5 → các mục còn lại. Sau mỗi mục: viết test, chạy test đầy đủ, test UI 2 khổ màn hình, commit, push, deploy, báo người dùng bằng tiếng Việt kèm số đo.
+
+### 9.1 Thao tác file cơ bản ← làm tiếp theo
+
+**Backend**
+
+- **`POST /api/files/mkdir {path}`**
+  - Gọi `index::add_dir`: upsert dòng thư mục cùng các thư mục cha. Không ghi gì lên S3.
+  - Path đã tồn tại dưới dạng file → 409.
+- **`POST /api/files/move {from, to}`** (dùng chung cho đổi tên và di chuyển)
+  - **File:** `op.copy(from_key, to_key)` → `op.delete(from_key)` → `UPDATE files SET path, parent, name` trong 1 transaction.
+  - **Thư mục:**
+    - Liệt kê con từ chỉ mục bằng `path LIKE 'from/%'`. **Cần thêm index** `(user_id, path text_pattern_ops)` trong migration `0003`.
+    - Copy rồi delete từng object, song song khoảng 16 (`buffer_unordered`).
+    - Sau đó cập nhật chỉ mục bằng một câu: `UPDATE files SET path = $to || substr(path, length($from)+1), parent = …`.
+    - Thư mục lớn chạy dạng **job nền**: bảng `jobs(id, user_id, kind, total, done, state, error)` + `GET /api/jobs/:id`; UI hiện tiến độ.
+  - **Kiểm tra:**
+    - Đích nằm trong chính nguồn (`a` → `a/b`) → 400.
+    - Đích đã tồn tại → 409 (chưa làm merge).
+  - **Quota:** không đổi.
+- **Xoá thư mục:** `DELETE /api/files/*path` khi path là thư mục.
+  - Xoá đệ quy bằng `op.delete_with(prefix).recursive(true)`.
+  - Hoàn quota bằng đúng `SUM(size)` lấy từ chỉ mục; dùng `quota_used = quota_used - $n` ngay trong SQL.
+  - Xoá các dòng chỉ mục `path = p OR path LIKE 'p/%'`.
+- **Thùng rác** (nên làm cùng lúc, để xoá nhầm còn cứu được):
+  - Xoá thì chuyển vào `.trash/<ts>/<path>`; `.trash` bị ẩn khỏi listing.
+  - API `GET /api/trash`, `POST /api/trash/restore`, `DELETE /api/trash` (dọn hết).
+  - Job dọn tự động sau 30 ngày (để cấu hình được).
+  - **Quota vẫn tính file trong thùng rác** cho tới khi bị dọn.
+- **Test:**
+  - mkdir lồng nhau; rename file; move thư mục 1.000 file (fs và S3); chặn move vào chính nó.
+  - Xoá thư mục thì hoàn đúng quota.
+  - Restore từ thùng rác.
+
+**Frontend**
+
+- **RowMenu:** thêm Đổi tên (sửa inline), Di chuyển (dialog chọn thư mục; cây thư mục lazy dùng `/api/files` với filter `is_dir`), Xoá thư mục (hỏi xác nhận, ghi rõ số file và dung lượng).
+- **Toolbar:** nút "Thư mục mới".
+- **Chọn nhiều:**
+  - Checkbox hiện khi hover hoặc nhấn giữ trên mobile; shift-click chọn một dải; Ctrl/Cmd+A.
+  - Lưu tập đang chọn theo `path`, không theo chỉ số: danh sách là ảo, không phải dòng nào cũng nằm trong DOM.
+- **Kéo thả** file vào thư mục để di chuyển (desktop).
+- **Nghiệm thu:**
+  - Đổi tên thư mục chứa 10.000 file xong trong < 30 giây trên mini PC, UI có tiến độ.
+  - Không còn object hoặc dòng chỉ mục mồ côi: kiểm bằng `reindex`, số file trước và sau phải bằng nhau.
+
+### 9.2 Upload và download lớn (yêu cầu cốt lõi)
+
+**Upload**
+
+- **Kéo thả cả thư mục** (DataTransferItem.webkitGetAsEntry; dự phòng bằng `<input webkitdirectory>`).
+  - Duyệt cây trong **Web Worker**, gửi về luồng chính từng batch.
+  - Không giữ hàng triệu object `File` trên luồng chính; chỉ giữ hàng đợi `{path, size, handle}`.
+- **Hàng đợi upload** (module `uploader.ts`):
+  - Song song 4 file nhỏ; file > 64MB thì gửi 4 chunk song song.
+  - Backend hiện yêu cầu **append tuần tự theo offset** → cần đổi sang ghi chunk theo vị trí:
+    - Dùng `pwrite`/`seek` vào file `.part`, kèm bitmap các chunk đã nhận.
+    - Hoặc ghi mỗi chunk ra một file `.partN` rồi nối lại khi `complete`.
+  - **Resume:**
+    - Bản ghi upload đang dở phải chuyển khỏi RAM (`state.rs::uploads`) vào Postgres, bảng `uploads(id, user_id, path, size, mtime, received, created_at)`.
+    - Thêm `GET /api/files/uploads/:id` trả về `received` để client chạy tiếp sau khi reload hoặc mất mạng.
+    - Client lưu hàng đợi vào IndexedDB.
+  - Retry có backoff khi lỗi 5xx hoặc mất mạng. Lỗi 409 offset → hỏi server `received` rồi gửi tiếp từ đó.
+- **Nhiều file nhỏ** (1 triệu file × 3 request mỗi file là quá chậm):
+  - **API batch:** `POST /api/files/batch` nhận multipart hoặc tar stream gồm nhiều file < 1MB.
+  - Backend ghi thẳng lên S3 (không qua staging), rồi **insert chỉ mục dạng bulk** (UNNEST, như `rebuild`).
+  - Mục tiêu: ≥ 300 file/giây qua LAN.
+- **Quota:** trừ trước (reserve) lúc init hoặc batch để nhiều upload song song không cùng vượt quota; hoàn lại khi huỷ hoặc hết hạn.
+- **Dọn rác:**
+  - Job xoá `staging/*.part` và bản ghi upload quá 7 ngày.
+  - Job dọn multipart S3 dở dang (OpenDAL abort).
+
+**Download**
+
+- **Tải thư mục thành zip stream:** `GET /api/zip?path=…` (hoặc POST danh sách path khi chọn nhiều).
+  - Dùng crate `async_zip`, chế độ store (không nén) + ZIP64, stream trực tiếp từ S3 vào response.
+  - Không có file tạm, RAM giữ cố định bất kể thư mục to cỡ nào.
+  - `Content-Disposition` đặt tên `<folder>.zip`.
+- **Tải file đơn:** hiện `api.downloadUrl` tải hết thành **blob trong RAM rồi mới lưu**, nên file vài GB sẽ làm sập tab.
+  - **Phải đổi:** dùng link trực tiếp kèm token ngắn hạn, ví dụ `GET /api/files/*path?dl=<signed token>` + `<a download>`, hoặc presigned URL.
+  - Đây là **lỗi nghiêm trọng cần sửa sớm**.
+
+**UI**
+
+- Panel hàng đợi (thay toast): tổng tiến độ, tốc độ, ETA, tạm dừng/tiếp tục, huỷ, thử lại các file lỗi, danh sách lỗi.
+- Không re-render cả danh sách mỗi lần nhận progress: throttle cập nhật khoảng 4 lần/giây.
+
+**Nghiệm thu** (đo trên mini PC qua LAN; ghi số đo vào báo cáo):
+
+- Upload 100.000 file nhỏ không treo tab; RAM tab < 500MB.
+- Upload 1 file 50GB, rút mạng giữa chừng, cắm lại thì chạy tiếp.
+- Tải zip thư mục 15GB của `datlt4` thành công; RAM backend không tăng theo kích thước thư mục.
+
+### 9.3 Viewer, thumbnail, OnlyOffice
+
+- **Thumbnail:**
+  - `GET /api/thumb/*path?s=256`: tạo webp phía server bằng crate `image` (+ `webp`), cache vào S3 dưới `<uuid>/.nextkloud/thumbs/<hash>.webp`, hoặc ra đĩa.
+  - Video: lấy 1 frame bằng ffmpeg (cần thêm ffmpeg vào image).
+  - Có `ETag` và `Cache-Control`.
+  - Grid hiển thị thumbnail thật, lazy theo danh sách ảo; giới hạn số request song song.
+- **Viewer** (lazy import theo loại file):
+
+  | Loại | Cách làm |
+  |---|---|
+  | Ảnh | lightbox, vuốt trái/phải giữa các ảnh cùng thư mục |
+  | Video/audio | `<video src>` với URL có token (Range đã hỗ trợ) |
+  | PDF | pdf.js |
+  | Zip | API liệt kê nội dung (đọc central directory bằng Range) + tải 1 file trong zip |
+  | Epub | epub.js |
+  | drawio, excalidraw | nhúng editor, lưu ngược lại về file |
+  | Office | OnlyOffice: `POST /api/office/config` trả config + JWT; `POST /api/office/callback` nhận file đã lưu và ghi lại vào store và chỉ mục; JWT_ENABLED trên DocumentServer |
+
+- **Markdown kiểu Obsidian:**
+  - KaTeX, wikilink `[[...]]`, callout, sửa và xem trước.
+  - **TTS:** mỗi đoạn có 1 nút đọc; bỏ qua code fence và math.
+  - Ấn render sẽ lưu mp3 kèm hash nội dung. Sửa md mà chưa render lại thì hiện **banner "âm thanh đã cũ"** (so hash). Xem quy tắc trong `ARCHITECTURE.md`.
+- **Nghiệm thu:** bundle chính không phình (viewer nằm ở chunk riêng); mở ảnh 20MB trên A8 Star không bị đơ.
+
+### 9.4 Kanban, Task tracker, Habit tracker và nhập Deck
+
+**Dữ liệu Deck** (đọc từ backup, chỉ ghi số liệu):
+
+| | Board 1 "Personal" (archived) | Board 3 "Personal" (đang dùng) |
+|---|---|---|
+| Bigtask | 22 | 28 |
+| Subtask | 30 | 30 |
+| To do | 9 | 12 |
+| Doing | 6 | 6 |
+| Pending | 4 | 8 |
+| Done | 74 | 137 |
+| Write doc | 0 | 0 |
+| Delete | 11 | 22 |
+
+- Tổng cộng 399 card chưa xoá. **223 card có cờ `done`**: Deck ẩn card có cờ này, đây có thể chính là lý do "kéo vào Done thì card biến mất".
+- 17 label, 40 lượt gán label, không có file đính kèm.
+- 30 card có checklist `- [ ]` trong description.
+- Bảng `oc_deck_cards` có các cột: `id, title, description, stack_id, type, last_modified, created_at, owner, order, archived, duedate, done, startdate, color, deleted_at…`.
+- **Người dùng đã tự mô phỏng subtask** bằng 2 cột "Bigtask" và "Subtask".
+- Người dùng có nhắc tới cột **"Done2"**, nhưng **trong bản backup không có cột tên như vậy**. Cần hỏi lại: Done2 nằm ở board nào, hay chính là cột "Done" hiện tại?
+
+**Mong muốn của người dùng:**
+
+1. Gom card nhỏ thành **subtask** của task lớn.
+   - Importer **đề xuất** cách gom để người dùng **duyệt trước khi ghi**: card ở cột Subtask → tìm cha ở cột Bigtask theo label chung, tên giống nhau, hoặc thời gian tạo gần nhau.
+   - Cho người dùng sửa lại cách gom trên một màn xem trước.
+2. Card đã xong **không được biến mất**, nhưng cột Done cũng không được dài vô hạn.
+   - Hiện N card xong gần nhất (mặc định 10), phần còn lại gom thành "Đã xong cũ hơn (127)", bấm vào mới mở và tải dạng phân trang.
+   - Có lọc theo tuần hoặc tháng.
+   - Khi nhập: gộp Done2 vào Done; card có cờ `done` vào Done; **giữ `done_at`**.
+3. Checklist trong description: chuyển thành subtask, hoặc giữ nguyên dạng checklist (hỏi người dùng).
+
+**Schema đề xuất** (migration `0004`):
+
+```sql
+boards(id, owner, title, created_at, archived)
+board_members(board_id, user_id, role)                          -- chia sẻ: owner | edit | view
+columns(id, board_id, title, position, kind)                    -- kind: normal | done
+cards(id, board_id, column_id, parent_id NULL, title, description_md, position,
+      due_at, start_at, done_at, color, created_by, created_at, updated_at, archived)
+labels(id, board_id, title, color)
+card_labels(card_id, label_id)
+card_links(card_id, url, title, image_url, fetched_at)          -- unfurl Open Graph
+```
+
+- **position:** dùng fractional index dạng chuỗi để kéo thả không phải đánh lại thứ tự cả cột.
+- **API:** CRUD board, column, card; `POST /api/cards/:id/move {column_id, before, after}`; `GET /api/boards/:id?done_limit=10`; `GET /api/columns/:id/cards?offset=` cho phần card xong đã thu gọn.
+- **Unfurl:** server lấy title và og:image của URL trong card. Có timeout 5 giây, tối đa 1MB, **chặn IP nội bộ (SSRF)**. Ảnh lưu cache.
+- **UI:**
+  - Kéo thả bằng pointer events (chạy trên mobile, A8 Star mượt).
+  - Card cha hiện thanh tiến độ subtask (3/5).
+  - Mở card thành drawer chi tiết, sửa markdown.
+- **Task tracker:** lọc toàn bộ card có `due_at` theo hôm nay, tuần này, quá hạn.
+- **Habit tracker:** `habits(id, user_id, title, schedule)` + `habit_logs(habit_id, day)`; xem dạng lưới 7×N giống GitHub, có streak.
+- **Importer:** `nextkloud import-deck <sqlite> <username> --dry-run` in ra phương án gom subtask. Chỉ ghi DB khi người dùng duyệt và chạy với `--apply`.
+- **Nghiệm thu:** nhập đúng 399 card (trừ cột Delete nếu người dùng đồng ý bỏ); không có card nào biến mất; cột Done hiển thị gọn.
+
+### 9.5 Đa ngôn ngữ (i18n)
+
+- Viết `t(key, params)` dạng signal; dictionary nằm ở `src/i18n/{vi,en,ja,zh}.ts` (hiện chỉ có 3 key).
+- Chuyển toàn bộ chuỗi đang hardcode trong `App.tsx` và `UsersAdmin.tsx` sang key.
+- Lựa chọn ngôn ngữ lưu vào `.nextkloud/settings.json` (thêm trường `lang`, theo cơ chế của `background.ts`) để đồng bộ giữa các thiết bị; mặc định theo `navigator.language`.
+- Định dạng ngày và số theo locale đang chọn (hiện đang cố định `vi-VN`).
+- Thông báo lỗi từ backend: chuyển sang dạng mã (`{code, message}`) để client dịch.
+
+### 9.6 Desktop sync (Tauri)
+
+- Shell Tauri hiện trống; app desktop đang load web build.
+- **Engine sync** (Rust, chạy trong Tauri):
+  - Người dùng chọn thư mục cục bộ tuỳ ý; cấu hình lưu theo từng máy.
+  - Delta: thêm cột `etag` (hoặc `version`) + `updated_at` vào `files`, cùng API `GET /api/changes?since=<cursor>`.
+  - Watcher cục bộ (`notify`) để upload thay đổi. Xung đột: giữ cả hai bản, đặt tên `name (conflict ...)`.
+  - **Free-up space:** file ở dạng placeholder (Windows Cloud Files API / macOS File Provider / Linux FUSE hoặc file stub). Đây là phần khó nhất; nên làm bản đơn giản trước: "chỉ giữ metadata, mở thì tải về".
+  - **Tự giải phóng:** file không mở sau N ngày thì đưa về placeholder.
+- **Mobile** (Android/iOS qua Tauri mobile): chỉ duyệt, upload, download và Kanban; không sync.
+
+### 9.7 Notifications và auto-update
+
+- Tauri updater plugin dùng `latest.json` trong GitHub release; ký bằng updater key (CI secret).
+- **Thông báo:**
+  - Server dùng SSE `GET /api/events`.
+  - Sự kiện: upload xong, được chia sẻ board hoặc file, card được giao hoặc đến hạn.
+  - Desktop dùng notification hệ điều hành; web dùng Notification API.
+
+### 9.8 Khác
+
+- **Redis:** dùng cho rate-limit đăng nhập, trạng thái job, cache thumbnail và unfurl. Hiện container chạy nhưng không được dùng.
+- **Chia sẻ file/thư mục** (giữa user và link công khai có mật khẩu/hạn): chưa có trong spec chi tiết, **hỏi người dùng trước**.
+- **Versions:** lưu phiên bản cũ khi ghi đè; cân nhắc migrate 1,7G versions từ Nextcloud.
+- **iOS:** đối chiếu `mobile.yml` và `resign-ios.sh` với chuẩn job-spec của ipa-resign-dashboard.
+- **Migrate trash** (854M) từ Nextcloud, sau khi đã có thùng rác ở 9.1.
+- Dọn thư mục MinIO cũ `/mnt/das_8tb/nextkloud_volume/s3` (rỗng): **hỏi người dùng trước khi xoá**.
+
+## 10. Nợ kỹ thuật và rủi ro
+
+Ưu tiên giảm dần.
+
+1. **Download tải cả file vào RAM của trình duyệt** (`api.downloadUrl` → blob). File lớn làm sập tab. Xem 9.2.
+2. **Race trên `quota_used`:**
+   - `complete_upload`, `delete_file` đọc quota, tính trong Rust, rồi ghi đè giá trị tuyệt đối.
+   - Hai request đồng thời sẽ mất một cập nhật.
+   - **Sửa:** `UPDATE users SET quota_used = quota_used + $d WHERE id=$1 AND (quota_limit=0 OR quota_used + $d <= quota_limit) RETURNING …`, hoặc `SELECT … FOR UPDATE` trong transaction.
+3. **Upload tuần tự từng chunk 8MB, bản ghi upload đang dở nằm trong RAM** (mất khi restart), không dọn staging mồ côi.
+4. **Store và chỉ mục không atomic:**
+   - Ghi S3 thành công nhưng ghi chỉ mục lỗi thì file bị ẩn (chỉ cứu được bằng `reindex`).
+   - Xoá user: xoá S3 trước, DB sau.
+   - Cân nhắc job đối soát định kỳ (so số lượng và dung lượng, báo lệch).
+5. **`reindex` xoá các thư mục rỗng** (S3 không có object cho thư mục). Nếu thư mục rỗng cần sống qua reindex thì phải ghi object marker hoặc giữ lại dòng dir trong chỉ mục.
+6. **JWT mang cờ `adm`:** thu hồi quyền admin không có hiệu lực tới khi token hết hạn. Nên kiểm tra `is_admin` từ DB ở các API admin.
+7. **CORS `permissive`;** `ALLOWED_ORIGINS` có trong compose nhưng không được dùng. Chưa có rate-limit đăng nhập. JWT để trong localStorage (rủi ro XSS; markdown viewer phải sanitize HTML).
+8. **Offset phân trang sâu khi sort theo size** mất khoảng 430ms trên 1 triệu dòng; `COUNT` mỗi request mất khoảng 70ms. Có thể cache count (Redis) hoặc chỉ count khi offset = 0.
+9. **Kích thước thư mục luôn bằng 0;** footer chỉ cộng file nằm trực tiếp trong thư mục. Muốn có tổng đệ quy thì cần cột tổng hợp hoặc truy vấn `LIKE prefix`.
 10. **Lặt vặt:**
-    - `users::set_quota` còn biến thừa `let _ = q;`.
-    - `tts.rs` có import thừa (warning).
-    - `ARCHITECTURE.md` nhắc `@tanstack/solid-virtual` nhưng thực tế không dùng; danh sách ảo tự viết.
-    - Cùng file đó mô tả Redis cache nhưng thực tế chưa dùng.
-11. **Hiển thị ngày:** S3 `LastModified` là ngày upload; ngày sửa gốc lấy từ metadata `mtime`. File upload bằng client khác không gửi `mtime` thì hiển thị ngày upload.
-12. **Bẫy đã gặp, tránh lặp lại:**
-    - Solid delegate click ở `document`, nên `stopPropagation` không chặn được listener khác. Phải kiểm tra bằng `closest()`.
-    - `content-visibility` cắt menu bị tràn ra ngoài; `backdrop-filter` tạo stacking context mới.
-    - Đặt tên class chung (`.ghost`) từng va với `.btn.ghost`.
-    - Nút trong `<form>` phải có `type="button"`.
-    - OpenDAL cần `install_default()` và feature `executors-tokio`.
-    - axum `DefaultBodyLimit` mặc định chỉ 2MB.
-    - Route `/api/search` đặt ngoài `/api/files/*` để không đụng file tên "search".
-    - Không dùng `pkill -f` với pattern có thể khớp chính lệnh đang chạy.
+    - `users::set_quota` còn `let _ = q;` thừa.
+    - `tts.rs` có import thừa `IntoResponse`.
+    - Dockerfile đặt `NEXTKLOUD_ADDR` mà code không đọc.
+    - `@tanstack/solid-virtual` thừa trong package.json.
+    - `ARCHITECTURE.md` lỗi thời ở mục virtual list và Redis.
+11. **CI không chạy test DB/S3** (không có service container). Nên thêm services Postgres và RustFS vào `build.yml` rồi set `NK_TEST_DB`/`NK_TEST_S3`.
+12. **`search` dùng `ILIKE '%q%'`:** truy vấn < 3 ký tự không dùng được trigram, phải seq scan (khoảng 300ms trên 1 triệu dòng). UI chỉ gửi khi q ≥ 2 ký tự.
 
-## 7. Checklist cho reviewer
+## 11. Bẫy đã gặp
 
-- [ ] `cargo test -p nextkloud-backend` pass khi có `NK_TEST_DB` và `NK_TEST_S3`.
-- [ ] `npx tsc --noEmit` và `npm run build` sạch.
-- [ ] Mọi API admin đều kiểm tra `admin.admin`; mọi đường dẫn đều qua `clean_path` (chặn `..`, đường dẫn tuyệt đối, `\`).
-- [ ] Không có secret trong diff. Commit không ghi tác giả AI.
-- [ ] UI chạy được ở 390px, không cuộn ngang; ở chế độ tối vẫn đọc rõ.
-- [ ] Thư mục lớn: DOM chỉ chứa khoảng vài chục dòng; không tải toàn bộ danh sách.
-- [ ] Sau khi deploy: `curl http://<mini>:8011/api/health` trả 200 và log backend không có lỗi.
+- **Solid** delegate click ở `document`, nên `stopPropagation` không chặn được listener `document` khác. Phải kiểm tra `e.target.closest(".menu-wrap")`.
+- **CSS:**
+  - `content-visibility: auto` cắt mất menu bị tràn ra ngoài.
+  - `backdrop-filter` tạo stacking context mới → header phải có `z-index`.
+  - **Tên class chung** (`.ghost`) va với component khác; dùng tên riêng (`.skel`).
+- **Nút trong `<form>`** mặc định là submit → luôn ghi `type="button"`.
+- **Danh sách ảo:** đổi prefix phải `batch()` cùng lúc với cache. Nếu không, effect tải trang kế sẽ dùng prefix cũ và ghi đè số đếm.
+- **OpenDAL 0.59:**
+  - Phải gọi `opendal::install_default()` thì mới có HTTP transport.
+  - Phải bật feature `executors-tokio` mới ghi multipart song song được.
+  - Không có `.finish()`.
+  - `remove_all` đã deprecated → dùng `delete_with(p).recursive(true)`.
+  - Kiểm tra capability bằng `op.info().capability()`.
+- **axum** `DefaultBodyLimit` mặc định 2MB → route chunk được nâng lên 64MB.
+- **Route** `/api/search` đặt ngoài `/api/files/*` để không đụng file tên "search".
+- **RustFS 1.0.4:** biến môi trường `RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY` / `RUSTFS_ADDRESS` / `RUSTFS_CONSOLE_*`, chỉ hỗ trợ path-style. Tạo bucket bằng rclone, curl sigv4 không được.
+- **Shell:** `pkill -f` có thể kill chính shell đang chạy lệnh; `sed -i` không chạy trên ổ repo; heredoc chứa JS bị safety-check chặn.
+
+## 12. Checklist review
+
+- [ ] `cargo test -p nextkloud-backend` pass **khi có** `NK_TEST_DB` + `NK_TEST_S3` (không chỉ bản CI).
+- [ ] `npx tsc --noEmit` + `npm run build` sạch, không có warning mới.
+- [ ] API admin kiểm tra quyền; mọi path từ client đều qua `clean_path` / `Store::key`.
+- [ ] Thay đổi quota là atomic và có test cho trường hợp vượt quota.
+- [ ] Không có secret hay dữ liệu cá nhân trong diff (repo public). Commit không ghi tác giả AI.
+- [ ] UI ở 390px: không cuộn ngang, nút đủ to để chạm. Dark mode đọc rõ.
+- [ ] Thư mục lớn: DOM chỉ khoảng vài chục dòng; không tải toàn bộ danh sách; không giữ blob lớn trong RAM.
+- [ ] Sau deploy: health 200, log backend không có `ERROR`, đăng nhập và duyệt thư mục của `datlt4` vẫn chạy.
+- [ ] Báo cáo cho người dùng bằng tiếng Việt, ngắn gọn, kèm số đo thật (không ước lượng).
