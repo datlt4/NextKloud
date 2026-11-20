@@ -87,7 +87,9 @@ export const api = {
       headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
       body: JSON.stringify({ old: old_, new: next }),
     });
-    if (!r.ok) throw new Error("change password failed");
+    if (r.status === 401) throw new Error("Mật khẩu hiện tại không đúng");
+    if (r.status === 400) throw new Error("Mật khẩu mới phải có ít nhất 8 ký tự");
+    if (!r.ok) throw new Error(`Đổi mật khẩu thất bại (${r.status})`);
   },
   /** 1 trang của thư mục (server phân trang, thư mục luôn trước). */
   async files(prefix: string, o: ListOpts) {

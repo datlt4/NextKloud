@@ -181,6 +181,68 @@ function PasswordField(props: { value: string; onInput: (v: string) => void }) {
   );
 }
 
+// Thanh kéo phi tuyến: mỗi đoạn chiếm bề rộng bằng nhau dù khoảng GB khác nhau.
+const STOPS = [0, 5, 10, 50, 100, 500, 1000, 2000];
+const STEPS = [0.5, 1, 5, 10, 50, 100, 250];
+const SEG = 100;
+const MAX_POS = SEG * (STOPS.length - 1);
+
+export function posToGb(pos: number): number {
+  const i = Math.min(Math.floor(pos / SEG), STOPS.length - 2);
+  const g = STOPS[i] + ((pos - i * SEG) / SEG) * (STOPS[i + 1] - STOPS[i]);
+  return Math.round(g / STEPS[i]) * STEPS[i];
+}
+
+export function gbToPos(gb: number): number {
+  if (gb >= STOPS[STOPS.length - 1]) return MAX_POS;
+  const i = Math.max(0, STOPS.findIndex((s, k) => gb < STOPS[k + 1]));
+  return i * SEG + ((gb - STOPS[i]) / (STOPS[i + 1] - STOPS[i])) * SEG;
+}
+
+const fmtGb = (g: number) => (g === 0 ? "Không giới hạn" : g >= 1000 ? `${+(g / 1000).toFixed(2)} TB` : `${g} GB`);
+
+function QuotaSlider(props: { gb: number; onChange: (gb: number) => void; usedBytes?: number }) {
+  const pct = (gb: number) => `${(gbToPos(gb) / MAX_POS) * 100}%`;
+  return (
+    <div class="qslider">
+      <div class="qs-top">
+        <b>{fmtGb(props.gb)}</b>
+        <input
+          type="number"
+          min="0"
+          step="any"
+          value={props.gb}
+          onInput={(e) => props.onChange(Math.max(0, +e.currentTarget.value || 0))}
+          aria-label="GB"
+        />
+        <span class="muted sm">GB</span>
+      </div>
+      <div class="qs-track" style={{ "--p": pct(props.gb) }}>
+        <input
+          type="range"
+          min="0"
+          max={MAX_POS}
+          step="1"
+          value={gbToPos(props.gb)}
+          onInput={(e) => props.onChange(posToGb(+e.currentTarget.value))}
+        />
+        <Show when={props.usedBytes}>
+          <i class="qs-used" style={{ left: pct(props.usedBytes! / GB) }} title="Đang dùng" />
+        </Show>
+      </div>
+      <div class="qs-ticks">
+        <For each={STOPS}>
+          {(g) => (
+            <button type="button" style={{ left: pct(g) }} classList={{ on: props.gb === g }} onClick={() => props.onChange(g)}>
+              {g === 0 ? "∞" : g >= 1000 ? `${g / 1000}TB` : g}
+            </button>
+          )}
+        </For>
+      </div>
+    </div>
+  );
+}
+
 type FormProps<T> = { busy: boolean; err: string; onClose: () => void; onSubmit: (v: T) => void };
 
 function CreateForm(props: FormProps<{ username: string; password: string; quota_limit: number; is_admin: boolean }>) {
@@ -200,8 +262,8 @@ function CreateForm(props: FormProps<{ username: string; password: string; quota
       <label>Mật khẩu mặc định</label>
       <PasswordField value={pw()} onInput={setPw} />
       <p class="muted sm">Người dùng sẽ phải đổi mật khẩu ở lần đăng nhập đầu.</p>
-      <label>Dung lượng (GB, 0 = không giới hạn)</label>
-      <input type="number" min="0" step="any" value={gb()} onInput={(e) => setGb(+e.currentTarget.value)} />
+      <label>Dung lượng</label>
+      <QuotaSlider gb={gb()} onChange={setGb} />
       <label class="check">
         <input type="checkbox" checked={admin()} onChange={(e) => setAdmin(e.currentTarget.checked)} /> Quyền quản trị
       </label>
@@ -220,13 +282,8 @@ function QuotaForm(props: FormProps<number> & { u: UserRow }) {
       <Head title={`Dung lượng · ${props.u.username}`} onClose={props.onClose} />
       <Show when={props.err}><p class="err">{props.err}</p></Show>
       <p class="muted sm">Đang dùng {fmtSize(props.u.quota_used)}.</p>
-      <label>Giới hạn (GB, 0 = không giới hạn)</label>
-      <input type="number" min="0" step="any" value={gb()} onInput={(e) => setGb(+e.currentTarget.value)} />
-      <div class="chips">
-        <For each={[5, 10, 50, 100, 500, 1000]}>
-          {(n) => <button type="button" class="chip" classList={{ on: gb() === n }} onClick={() => setGb(n)}>{n >= 1000 ? `${n / 1000} TB` : `${n} GB`}</button>}
-        </For>
-      </div>
+      <label>Giới hạn</label>
+      <QuotaSlider gb={gb()} onChange={setGb} usedBytes={props.u.quota_used} />
       <Show when={bytes() > 0 && bytes() < props.u.quota_used}>
         <p class="err">Thấp hơn dung lượng đang dùng: người này sẽ không upload được cho tới khi xoá bớt file.</p>
       </Show>

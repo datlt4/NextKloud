@@ -115,9 +115,9 @@ export default function App() {
   const load = async (p: string) => {
     setErr("");
     setLoading(true);
+    setPage("files"); // ngay lúc bấm: tải xong mới đổi sẽ kéo user ra khỏi trang khác
     try {
       if (!(await fetchSet(p, [0]))) return;
-      setPage("files");
       setQuery("");
       setResults(null);
       setOpen(null);
@@ -153,13 +153,17 @@ export default function App() {
     onCleanup(() => document.removeEventListener("click", close));
   });
 
+  let loginPw = "";
   const doLogin = async () => {
     setErr("");
     try {
       localStorage.setItem("nk-server", server());
       const r = await api.login(username(), password());
       localStorage.setItem("nk-token", r.token);
-      if (r.must_reset) setNeedReset(true);
+      if (r.must_reset) {
+        loginPw = password(); // vừa đăng nhập đúng -> khỏi bắt gõ lại "mật khẩu hiện tại"
+        setNeedReset(true);
+      }
       else enter();
     } catch {
       setErr("Đăng nhập thất bại — kiểm tra server/username/password");
@@ -406,20 +410,24 @@ export default function App() {
           <div class="auth">
             <div class="auth-card glass">
               <Logo />
-              <h2>Đổi mật khẩu lần đầu</h2>
-              <p class="muted">Tài khoản mới cấp — đặt mật khẩu mới (tối thiểu 8 ký tự).</p>
+              <h2>Đặt mật khẩu mới</h2>
+              <p class="muted">Tài khoản mới hoặc vừa được quản trị viên đặt lại mật khẩu — hãy đặt mật khẩu của riêng bạn (tối thiểu 8 ký tự).</p>
               <Show when={err()}><p class="err">{err()}</p></Show>
               <ResetForm
+                current={loginPw}
                 onDone={async (o, n) => {
                   setErr("");
                   try {
                     await api.changePassword(o, n);
+                    loginPw = "";
+                    setPassword("");
                     setNeedReset(false);
                     enter();
                   } catch (e) {
-                    setErr("Đổi mật khẩu thất bại: " + String((e as Error).message));
+                    setErr((e as Error).message);
                   }
                 }}
+                onError={setErr}
               />
             </div>
           </div>
@@ -826,15 +834,25 @@ function LookDialog(props: { onClose: () => void; onError: (m: string) => void }
   );
 }
 
-function ResetForm(props: { onDone: (o: string, n: string) => void }) {
+export function ResetForm(props: { current?: string; onDone: (o: string, n: string) => void; onError: (m: string) => void }) {
   const [o, setO] = createSignal("");
   const [n, setN] = createSignal("");
+  const [n2, setN2] = createSignal("");
+  const submit = () => {
+    if (n().length < 8) return props.onError("Mật khẩu mới phải có ít nhất 8 ký tự");
+    if (n() !== n2()) return props.onError("Hai lần nhập mật khẩu mới không khớp");
+    props.onDone(props.current || o(), n());
+  };
   return (
-    <form onSubmit={(e) => { e.preventDefault(); props.onDone(o(), n()); }}>
-      <label>Mật khẩu hiện tại</label>
-      <input type="password" value={o()} onInput={(e) => setO(e.currentTarget.value)} autocomplete="current-password" />
+    <form onSubmit={(e) => { e.preventDefault(); submit(); }}>
+      <Show when={!props.current}>
+        <label>Mật khẩu hiện tại</label>
+        <input type="password" value={o()} onInput={(e) => setO(e.currentTarget.value)} autocomplete="current-password" />
+      </Show>
       <label>Mật khẩu mới</label>
       <input type="password" value={n()} onInput={(e) => setN(e.currentTarget.value)} autocomplete="new-password" />
+      <label>Nhập lại mật khẩu mới</label>
+      <input type="password" value={n2()} onInput={(e) => setN2(e.currentTarget.value)} autocomplete="new-password" />
       <button type="submit" class="btn primary block">Đổi mật khẩu</button>
     </form>
   );

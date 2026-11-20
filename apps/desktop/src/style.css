@@ -341,10 +341,30 @@ input { font: inherit; color: var(--text); }
 .pw-row { display: flex; gap: 8px; }
 .pw-row input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .5px; }
 .pw-row .btn { height: 42px; }
-.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-.chip { height: 30px; padding: 0 12px; border-radius: 15px; border: 1px solid var(--line); font-size: 13px; font-weight: 600; color: var(--muted); }
-.chip:hover { background: var(--hover); }
-.chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
+.qslider { padding: 2px 0 4px; }
+.qs-top { display: flex; align-items: center; gap: 8px; }
+.qs-top b { flex: 1; font-size: 18px; }
+.modal.form .qs-top input { width: 96px; height: 34px; text-align: right; font-size: 14px; }
+.qs-track { position: relative; height: 28px; margin: 6px 8px 0; display: flex; align-items: center; }
+.qs-track input[type=range] {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 6px; margin: 0; border-radius: 3px; cursor: pointer;
+  background: linear-gradient(to right, var(--accent) var(--p), var(--hover) var(--p));
+}
+.qs-track input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%; background: #fff;
+  border: 2px solid var(--accent); box-shadow: 0 1px 4px rgba(0,0,0,.25);
+}
+.qs-track input[type=range]::-moz-range-thumb {
+  width: 16px; height: 16px; border-radius: 50%; background: #fff; border: 2px solid var(--accent);
+}
+.qs-used { position: absolute; top: 4px; bottom: 4px; width: 2px; margin-left: -1px; background: var(--danger); border-radius: 1px; pointer-events: none; }
+.qs-ticks { position: relative; height: 22px; margin: 2px 8px 0; }
+.qs-ticks button {
+  position: absolute; transform: translateX(-50%); font-size: 11px; font-weight: 600; color: var(--muted);
+  padding: 2px 4px; border-radius: 5px;
+}
+.qs-ticks button:hover { color: var(--text); background: var(--hover); }
+.qs-ticks button.on { color: var(--accent-text); }
 .secret {
   margin: 14px 0 0; padding: 12px 14px; border-radius: 10px; background: var(--input); border: 1px solid var(--line);
   font-size: 14px; line-height: 1.6; white-space: pre-wrap; user-select: all;
