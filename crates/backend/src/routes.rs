@@ -84,6 +84,11 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/files", get(f::list_files))
         // Không đặt dưới /api/files/ để khỏi đụng file tên "search".
         .route("/api/search", get(f::search_files))
+        .route("/api/mkdir", post(f::mkdir))
+        .route("/api/move", post(f::move_entry))
+        .route("/api/trash", get(f::list_trash).delete(f::empty_trash))
+        .route("/api/trash/:id", axum::routing::delete(f::purge_trash))
+        .route("/api/trash/:id/restore", post(f::restore_trash))
         .route("/api/files/uploads", post(f::init_upload))
         // axum mặc định chặn body > 2MB; chunk cho phép tới 64MB.
         .route(

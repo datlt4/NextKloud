@@ -2,6 +2,7 @@ pub mod auth;
 pub mod file_handlers;
 pub mod files;
 pub mod index;
+pub mod ops;
 pub mod quota;
 pub mod routes;
 pub mod state;

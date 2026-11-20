@@ -120,6 +120,15 @@ const UPSERT_DIR: &str = "INSERT INTO files (user_id, path, parent, name, is_dir
      VALUES ($1, $2, $3, $4, TRUE, 0, $5)
      ON CONFLICT (user_id, path) DO UPDATE SET modified = GREATEST(files.modified, EXCLUDED.modified)";
 
+/// Tạo các dòng thư mục còn thiếu (đã có thì chỉ nâng modified).
+pub async fn ensure_dirs(c: &mut sqlx::PgConnection, user: Uuid, dirs: &[&str], modified: i64) -> Result<(), sqlx::Error> {
+    for d in dirs {
+        let (parent, name) = split(d);
+        sqlx::query(UPSERT_DIR).bind(user).bind(*d).bind(parent).bind(name).bind(modified).execute(&mut *c).await?;
+    }
+    Ok(())
+}
+
 /// Ghi 1 file (thêm/ghi đè) + tạo các thư mục cha còn thiếu.
 pub async fn add_file(db: &PgPool, user: Uuid, path: &str, size: u64, modified: i64) -> Result<(), sqlx::Error> {
     let mut tx = db.begin().await?;

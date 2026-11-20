@@ -213,7 +213,7 @@ pub mod tests {
     }
 
     /// Chạy thêm với RustFS thật: NK_TEST_S3=endpoint,bucket,key,secret cargo test
-    fn s3_store() -> Option<(Store, Uuid)> {
+    pub fn s3_store() -> Option<(Store, Uuid)> {
         let v = std::env::var("NK_TEST_S3").ok()?;
         let p: Vec<&str> = v.split(',').collect();
         let staging = std::env::temp_dir().join(format!("nk-s3-stage-{}", std::process::id()));

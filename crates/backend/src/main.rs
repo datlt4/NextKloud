@@ -104,6 +104,21 @@ async fn main() {
             }
         });
     }
+    // Dọn thùng rác quá TRASH_DAYS ngày (mặc định 30), mỗi giờ 1 lần.
+    {
+        let (db, store) = (db.clone(), store.clone());
+        let days: i64 = std::env::var("TRASH_DAYS").ok().and_then(|v| v.parse().ok()).unwrap_or(30);
+        tokio::spawn(async move {
+            loop {
+                match nextkloud_backend::ops::purge_expired(&db, &store, days).await {
+                    Ok(n) if n > 0 => tracing::info!("trash: purged {n} items"),
+                    Ok(_) => {}
+                    Err(e) => tracing::error!("trash purge: {e:?}"),
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            }
+        });
+    }
     let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| {
         tracing::warn!("JWT_SECRET unset — using dev default, set it in production");
         "dev-insecure-change-me".into()

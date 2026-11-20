@@ -8,6 +8,7 @@ import { Icon, ext, kindOf } from "./icons";
 import Settings, { type SettingsTab } from "./Settings";
 import { Avatar } from "./avatar";
 import MarkdownView from "./viewers/MarkdownView";
+import { MoveDialog, NameDialog, TrashPage, errText, joinPath } from "./fileops";
 
 type SortKey = "name" | "size" | "modified";
 
@@ -45,7 +46,19 @@ export default function App() {
   const [userMenu, setUserMenu] = createSignal(false);
   const [userMenuUp, setUserMenuUp] = createSignal(false);
   const [showLook, setShowLook] = createSignal(false);
-  const [page, setPage] = createSignal<"files" | "settings">("files");
+  const [page, setPage] = createSignal<"files" | "settings" | "trash">("files");
+  type Dlg = { kind: "mkdir" } | { kind: "rename"; f: Entry } | { kind: "move"; paths: string[] };
+  const [dlg, setDlg] = createSignal<Dlg | null>(null);
+  const [sel, setSel] = createSignal<Set<string>>(new Set());
+  const [notice, setNotice] = createSignal<{ text: string; undo?: () => Promise<void> } | null>(null);
+  const [working, setWorking] = createSignal<string | null>(null);
+  let lastIdx = -1;
+  let noticeTimer: number | undefined;
+  const flash = (text: string, undo?: () => Promise<void>) => {
+    clearTimeout(noticeTimer);
+    setNotice({ text, undo });
+    noticeTimer = window.setTimeout(() => setNotice(null), 8000);
+  };
   const [setTab, setSetTab] = createSignal<SettingsTab>("profile");
   const openSettings = (t: SettingsTab) => {
     setSetTab(t);
@@ -129,6 +142,7 @@ export default function App() {
     setPage("files"); // ngay lúc bấm: tải xong mới đổi sẽ kéo user ra khỏi trang khác
     try {
       if (!(await fetchSet(p, [0]))) return;
+      setSel(new Set<string>());
       setQuery("");
       setResults(null);
       setOpen(null);
@@ -333,17 +347,138 @@ export default function App() {
     }
   };
 
-  const remove = async (f: Entry) => {
-    if (!confirm(`Xoá "${f.name}"?`)) return;
+  /** Tải lại sau thao tác: trang đang xem hoặc kết quả tìm kiếm. */
+  const reload = async () => {
+    const q = query().trim();
+    if (results() && q.length >= 2) setResults(await api.search(q).catch(() => results()));
+    else await refresh();
+    refreshMe();
+  };
+
+  /** Chạy tuần tự trên nhiều mục, hiện tiến độ; trả về các kết quả thành công. */
+  const each = async <T,>(label: string, paths: string[], f: (p: string) => Promise<T>) => {
+    const done: T[] = [];
     try {
-      await api.remove(f.path);
-      const r = results();
-      if (r) setResults(r.filter((x) => x.path !== f.path));
-      else await refresh();
-      refreshMe();
-    } catch (e) {
-      fail(e, "Không xoá được");
+      for (let i = 0; i < paths.length; i++) {
+        setWorking(paths.length > 1 ? `${label} ${i + 1}/${paths.length}…` : `${label}…`);
+        done.push(await f(paths[i]));
+      }
+    } finally {
+      setWorking(null);
+      setSel(new Set<string>());
+      await reload();
     }
+    return done;
+  };
+
+  const remove = async (paths: string[]) => {
+    try {
+      const items = await each("Đang xoá", paths, (p) => api.remove(p));
+      flash(items.length === 1 ? `Đã chuyển "${items[0].orig_path.split("/").pop()}" vào thùng rác` : `Đã chuyển ${items.length} mục vào thùng rác`, async () => {
+        await each("Đang khôi phục", items.map((t) => t.id), (id) => api.restore(id));
+        flash("Đã khôi phục");
+      });
+    } catch (e) {
+      fail({ message: errText(e) }, "Không xoá được");
+    }
+  };
+
+  /** Chuyển các mục vào `dest`. Lỗi ném ra để dialog hiện. */
+  const moveTo = async (paths: string[], dest: string) => {
+    const todo = paths.filter((p) => parentOf(p) !== dest && dest !== p && !dest.startsWith(p + "/"));
+    if (!todo.length) return;
+    await each("Đang di chuyển", todo, (p) => api.move(p, joinPath(dest, p.split("/").pop()!)));
+    flash(`Đã chuyển ${todo.length} mục tới ${dest || "Tất cả file"}`);
+  };
+
+  // --- chọn nhiều ---
+  const toggleSel = (p: string, on?: boolean) => {
+    const n = new Set(sel());
+    (on ?? !n.has(p)) ? n.add(p) : n.delete(p);
+    setSel(n);
+  };
+  /** Click chọn: shift = chọn dải từ lần chọn trước (chỉ các dòng đã tải). */
+  const pick = (i: number, f: Entry, shift: boolean) => {
+    if (shift && lastIdx >= 0) {
+      const n = new Set(sel());
+      for (let k = Math.min(lastIdx, i); k <= Math.max(lastIdx, i); k++) {
+        const e = entryAt(k);
+        if (e) n.add(e.path);
+      }
+      setSel(n);
+    } else toggleSel(f.path);
+    lastIdx = i;
+  };
+  const selectAll = async () => {
+    if (results()) return setSel(new Set(results()!.map((e) => e.path)));
+    if (total() > 5000) return setErr("Chỉ chọn tất cả được khi thư mục có tối đa 5.000 mục");
+    const need = Array.from({ length: Math.ceil(total() / PAGE) }, (_, k) => k);
+    await Promise.all(need.map(fetchPage));
+    setSel(new Set(need.flatMap((p) => (pages.get(p) ?? []).map((e) => e.path))));
+  };
+  onMount(() => {
+    const key = (e: KeyboardEvent) => {
+      if (page() !== "files" || dlg() || (e.target as Element).closest?.("input, textarea")) return;
+      if ((e.ctrlKey || e.metaKey) && e.key === "a") {
+        e.preventDefault();
+        selectAll();
+      } else if (e.key === "Escape") setSel(new Set<string>());
+      else if (e.key === "Delete" && sel().size) remove([...sel()]);
+    };
+    document.addEventListener("keydown", key);
+    onCleanup(() => document.removeEventListener("keydown", key));
+  });
+
+  // --- kéo thả để di chuyển (desktop) ---
+  const DND = "application/x-nextkloud";
+  const canDrag = matchMedia("(pointer: fine)").matches; // cảm ứng: nhấn giữ là để chọn
+  const dragStart = (e: DragEvent, f: Entry) => {
+    const paths = sel().has(f.path) ? [...sel()] : [f.path];
+    e.dataTransfer!.setData(DND, JSON.stringify(paths));
+    e.dataTransfer!.effectAllowed = "move";
+  };
+  const [dropOn, setDropOn] = createSignal<string | null>(null);
+  const dropProps = (dest: () => string) => ({
+    onDragOver: (e: DragEvent) => {
+      if (!e.dataTransfer?.types.includes(DND)) return;
+      e.preventDefault();
+      setDropOn(dest());
+    },
+    onDragLeave: () => setDropOn(null),
+    onDrop: (e: DragEvent) => {
+      const raw = e.dataTransfer?.getData(DND);
+      setDropOn(null);
+      if (!raw) return;
+      e.preventDefault();
+      moveTo(JSON.parse(raw), dest()).catch((x) => fail({ message: errText(x) }, "Không di chuyển được"));
+    },
+  });
+
+  // Mobile: nhấn giữ 450ms để chọn.
+  let pressTimer: number | undefined;
+  let pressed = false;
+  const pressProps = (i: () => number, f: () => Entry) => ({
+    onPointerDown: (e: PointerEvent) => {
+      pressed = false;
+      if (e.pointerType !== "touch") return;
+      pressTimer = window.setTimeout(() => {
+        pressed = true;
+        pick(i(), f(), false);
+        navigator.vibrate?.(20);
+      }, 450);
+    },
+    onPointerUp: () => clearTimeout(pressTimer),
+    onPointerMove: () => clearTimeout(pressTimer),
+    onPointerCancel: () => clearTimeout(pressTimer),
+  });
+  /** Click dòng: đang chọn nhiều hoặc giữ Ctrl/Shift thì chọn, không thì mở. */
+  const rowClick = (e: MouseEvent, i: number, f: Entry) => {
+    if (pressed) {
+      pressed = false;
+      return;
+    }
+    if (e.ctrlKey || e.metaKey || e.shiftKey || sel().size) pick(i, f, e.shiftKey);
+    else openEntry(f);
   };
 
   const doUpload = async (list: FileList | null) => {
@@ -372,6 +507,10 @@ export default function App() {
     return m && m.quota_limit > 0 ? Math.min(100, (m.quota_used / m.quota_limit) * 100) : 0;
   };
 
+  const closeMenu = () => {
+    setMenuFor(null);
+    setMenuUpFor(null);
+  };
   const RowMenu = (p: { f: Entry }) => (
     <div class="menu-wrap" onClick={(e) => e.stopPropagation()}>
       <button class="icon-btn" title="Thao tác" onClick={(e) => {
@@ -385,18 +524,28 @@ export default function App() {
       <Show when={menuFor() === p.f.path}>
         <div class="menu" classList={{ up: menuUpFor() === p.f.path }}>
           <Show when={!p.f.is_dir}>
-            <button onClick={() => { setMenuFor(null); setMenuUpFor(null); download(p.f.path, p.f.name); }}>
+            <button onClick={() => { closeMenu(); download(p.f.path, p.f.name); }}>
               <Icon name="download" /> Tải xuống
-            </button>
-            <button class="danger" onClick={() => { setMenuFor(null); setMenuUpFor(null); remove(p.f); }}>
-              <Icon name="trash" /> Xoá
             </button>
           </Show>
           <Show when={p.f.is_dir}>
-            <button onClick={() => { setMenuFor(null); setMenuUpFor(null); load(p.f.path); }}>
+            <button onClick={() => { closeMenu(); load(p.f.path); }}>
               <Icon name="folder" /> Mở
             </button>
           </Show>
+          <button onClick={() => { closeMenu(); setDlg({ kind: "rename", f: p.f }); }}>
+            <Icon name="edit" /> Đổi tên
+          </button>
+          <button onClick={() => { closeMenu(); setDlg({ kind: "move", paths: [p.f.path] }); }}>
+            <Icon name="move" /> Di chuyển
+          </button>
+          <button onClick={() => { closeMenu(); toggleSel(p.f.path, true); lastIdx = -1; }}>
+            <Icon name="check" /> Chọn
+          </button>
+          <div class="menu-sep" />
+          <button class="danger" onClick={() => { closeMenu(); remove([p.f.path]); }}>
+            <Icon name="trash" /> Xoá
+          </button>
         </div>
       </Show>
     </div>
@@ -534,6 +683,9 @@ export default function App() {
                 <button class="nav" classList={{ active: page() === "files" && !prefix() && !open() }} onClick={() => load("")}>
                   <Icon name="home" /> Tất cả file
                 </button>
+                <button class="nav" classList={{ active: page() === "trash" }} onClick={() => { setPage("trash"); setSideOpen(false); }}>
+                  <Icon name="trash" /> Thùng rác
+                </button>
                 <Show when={me()?.is_admin}>
                   <button class="nav" classList={{ active: page() === "settings" && (setTab() === "users" || setTab() === "system") }} onClick={() => openSettings("users")}>
                     <Icon name="users" /> Quản trị
@@ -571,14 +723,42 @@ export default function App() {
                 </Show>
                 <Settings me={me()!} tab={setTab()} onTab={setSetTab} onMe={setMe} onError={setErr} />
               </Show>
+              <Show when={page() === "trash"}>
+                <Show when={err()}>
+                  <div class="err banner">
+                    <span>{err()}</span>
+                    <button class="icon-btn sm" onClick={() => setErr("")}><Icon name="close" size={14} /></button>
+                  </div>
+                </Show>
+                <TrashPage onError={setErr} onChanged={refreshMe} />
+              </Show>
               <Show when={page() === "files"}>
-              <div class="toolbar">
+              <Show when={sel().size}>
+                <div class="toolbar selbar">
+                  <button class="icon-btn" title="Bỏ chọn (Esc)" onClick={() => setSel(new Set<string>())}><Icon name="close" /></button>
+                  <b>Đã chọn {sel().size.toLocaleString("vi-VN")}</b>
+                  <button class="btn ghost sm" onClick={selectAll}>Chọn tất cả</button>
+                  <span class="grow" />
+                  <button class="btn ghost sm" onClick={() => setDlg({ kind: "move", paths: [...sel()] })}>
+                    <Icon name="move" /> <span class="hide-xs">Di chuyển</span>
+                  </button>
+                  <button class="btn danger sm" onClick={() => remove([...sel()])}>
+                    <Icon name="trash" /> <span class="hide-xs">Xoá</span>
+                  </button>
+                </div>
+              </Show>
+              <div class="toolbar" classList={{ hidden: sel().size > 0 }}>
                 <button class="btn primary" onClick={() => fileInput.click()} disabled={!!upload()}>
                   <Icon name="upload" /> <span class="hide-xs">Tải lên</span>
                 </button>
+                <Show when={!results()}>
+                  <button class="btn ghost" title="Thư mục mới" onClick={() => setDlg({ kind: "mkdir" })}>
+                    <Icon name="folderPlus" /> <span class="hide-xs">Thư mục mới</span>
+                  </button>
+                </Show>
                 <input ref={fileInput} type="file" multiple hidden onChange={(e) => doUpload(e.currentTarget.files)} />
                 <nav class="crumbs">
-                  <button class="crumb" onClick={() => load("")}>
+                  <button class="crumb" classList={{ drop: dropOn() === "" }} onClick={() => load("")} {...dropProps(() => "")}>
                     <Icon name="home" size={16} />
                   </button>
                   <For each={crumbs()}>
@@ -587,8 +767,9 @@ export default function App() {
                         <Icon name="chevron" size={14} class="ic dim" />
                         <button
                           class="crumb"
-                          classList={{ cur: i() === crumbs().length - 1 && !open() }}
+                          classList={{ cur: i() === crumbs().length - 1 && !open(), drop: dropOn() === crumbs().slice(0, i() + 1).join("/") }}
                           onClick={() => load(crumbs().slice(0, i() + 1).join("/"))}
+                          {...dropProps(() => crumbs().slice(0, i() + 1).join("/"))}
                         >
                           {c}
                         </button>
@@ -632,7 +813,7 @@ export default function App() {
               >
                 <div
                   class="scroll"
-                  classList={{ busy: loading() }}
+                  classList={{ busy: loading(), selecting: sel().size > 0 }}
                   onScroll={onScroll}
                   ref={(el) => {
                     scrollEl = el;
@@ -662,8 +843,20 @@ export default function App() {
                               {(f) => {
                                 const k = () => kindOf(f().name, f().is_dir);
                                 return (
-                                  <div class="row vrow" style={pos()} classList={{ "menu-open": menuFor() === f().path }} onClick={() => openEntry(f())}>
+                                  <div
+                                    class="row vrow"
+                                    style={pos()}
+                                    classList={{ "menu-open": menuFor() === f().path, sel: sel().has(f().path), drop: f().is_dir && dropOn() === f().path }}
+                                    onClick={(e) => rowClick(e, i(), f())}
+                                    draggable={canDrag}
+                                    onDragStart={(e) => dragStart(e, f())}
+                                    {...(f().is_dir ? dropProps(() => f().path) : {})}
+                                    {...pressProps(i, f)}
+                                  >
                                     <span class="c-name">
+                                      <span class="ck" onClick={(e) => { e.stopPropagation(); pick(i(), f(), e.shiftKey); }}>
+                                        <Icon name="check" size={14} />
+                                      </span>
                                       <span class="fi" style={{ color: k().color }}>
                                         <Icon name={k().icon} size={20} />
                                       </span>
@@ -703,7 +896,18 @@ export default function App() {
                                   {(f) => {
                                     const k = () => kindOf(f().name, f().is_dir);
                                     return (
-                                      <div class="tile" classList={{ "menu-open": menuFor() === f().path }} onClick={() => openEntry(f())}>
+                                      <div
+                                        class="tile"
+                                        classList={{ "menu-open": menuFor() === f().path, sel: sel().has(f().path), drop: f().is_dir && dropOn() === f().path }}
+                                        onClick={(e) => rowClick(e, i(), f())}
+                                        draggable={canDrag}
+                                        onDragStart={(e) => dragStart(e, f())}
+                                        {...(f().is_dir ? dropProps(() => f().path) : {})}
+                                        {...pressProps(i, f)}
+                                      >
+                                        <span class="ck" onClick={(e) => { e.stopPropagation(); pick(i(), f(), e.shiftKey); }}>
+                                          <Icon name="check" size={14} />
+                                        </span>
                                         <div class="tile-art" style={{ color: k().color }}>
                                           <Icon name={k().icon} size={44} />
                                           <Show when={!f().is_dir && ext(f().name)}>
@@ -767,6 +971,56 @@ export default function App() {
                 <span class="muted sm">còn {upload()!.left - 1} file</span>
               </Show>
             </div>
+          </Show>
+
+          <Show when={working() || notice()}>
+            <div class="toast glass note" classList={{ lift: !!upload() }}>
+              <Show when={working()} fallback={
+                <div class="toast-row">
+                  <Icon name="check" />
+                  <span class="fname">{notice()!.text}</span>
+                  <Show when={notice()!.undo}>
+                    <button class="btn ghost sm" onClick={() => { const u = notice()!.undo!; setNotice(null); u().catch((e) => fail({ message: errText(e) }, "Không hoàn tác được")); }}>
+                      Hoàn tác
+                    </button>
+                  </Show>
+                  <button class="icon-btn sm" onClick={() => setNotice(null)}><Icon name="close" size={14} /></button>
+                </div>
+              }>
+                <div class="toast-row"><span class="spin" /><span class="fname">{working()}</span></div>
+              </Show>
+            </div>
+          </Show>
+
+          <Show when={dlg()}>
+            {(d) => (
+              <Switch>
+                <Match when={d().kind === "mkdir"}>
+                  <NameDialog title="Thư mục mới" label={`Tạo trong ${prefix() || "Tất cả file"}`} ok="Tạo" onClose={() => setDlg(null)} onSubmit={async (n) => {
+                    await api.mkdir(join(n));
+                    setDlg(null);
+                    await reload();
+                  }} />
+                </Match>
+                <Match when={d().kind === "rename" && (d() as { f: Entry }).f}>
+                  {(f) => (
+                    <NameDialog title={f().is_dir ? "Đổi tên thư mục" : "Đổi tên file"} label="Tên mới" initial={f().name} ok="Đổi tên" onClose={() => setDlg(null)} onSubmit={async (n) => {
+                      await api.move(f().path, joinPath(parentOf(f().path), n));
+                      setDlg(null);
+                      await reload();
+                    }} />
+                  )}
+                </Match>
+                <Match when={d().kind === "move" && (d() as { paths: string[] }).paths}>
+                  {(paths) => (
+                    <MoveDialog paths={paths()} start={prefix()} onClose={() => setDlg(null)} onSubmit={async (dest) => {
+                      await moveTo(paths(), dest);
+                      setDlg(null);
+                    }} />
+                  )}
+                </Match>
+              </Switch>
+            )}
           </Show>
 
           <Show when={showLook()}>

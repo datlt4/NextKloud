@@ -33,6 +33,15 @@ export interface ListOpts {
   limit: number;
 }
 
+export interface TrashItem {
+  id: string;
+  orig_path: string;
+  is_dir: boolean;
+  size: number;
+  files: number;
+  deleted_at: number;
+}
+
 export interface UserRow {
   id: string;
   username: string;
@@ -167,8 +176,29 @@ export const api = {
     const r = await req("/api/me");
     return r.json() as Promise<Me>;
   },
+  /** Xoá = chuyển vào thùng rác. */
   async remove(path: string) {
-    await req(`/api/files/${encPath(path)}`, { method: "DELETE" });
+    return (await req(`/api/files/${encPath(path)}`, { method: "DELETE" })).json() as Promise<TrashItem>;
+  },
+  async mkdir(path: string) {
+    await req("/api/mkdir", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
+  },
+  /** Đổi tên hoặc di chuyển (file/thư mục). */
+  async move(from: string, to: string) {
+    const r = await req("/api/move", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ from, to }) });
+    return r.json() as Promise<{ files: number }>;
+  },
+  async trash() {
+    return (await req("/api/trash")).json() as Promise<TrashItem[]>;
+  },
+  async restore(id: string) {
+    await req(`/api/trash/${id}/restore`, { method: "POST" });
+  },
+  async purge(id: string) {
+    await req(`/api/trash/${id}`, { method: "DELETE" });
+  },
+  async emptyTrash() {
+    await req("/api/trash", { method: "DELETE" });
   },
   async readBlob(path: string) {
     return (await req(`/api/files/${encPath(path)}`)).blob();

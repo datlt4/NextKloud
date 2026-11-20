@@ -14,6 +14,7 @@ use uuid::Uuid;
 use crate::{
     files::clean_path,
     index::{self, SortKey},
+    ops,
     quota::Quota,
     state::{AppError, AppState, AuthUser, PendingUpload, load_user},
 };
@@ -124,25 +125,64 @@ pub async fn download(
     Ok(res.body(Body::from_stream(stream)).unwrap())
 }
 
+/// Xoá = chuyển vào thùng rác (file hoặc cả thư mục).
 pub async fn delete_file(
     State(s): State<AppState>,
     user: AuthUser,
     Path(path): Path<String>,
-) -> Result<StatusCode, AppError> {
-    let mut row = load_user(&s.db, user.id).await?;
-    let mut q = Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64);
-    let r = s.store.delete(user.id, &path, &mut q).await;
-    // Mất trên store (hoặc vừa xoá) -> bỏ khỏi chỉ mục luôn để không còn dòng "ma".
-    if matches!(r, Ok(_) | Err(crate::files::StoreError::NotFound)) {
-        index::remove_file(&s.db, user.id, &clean_path(&path)?).await?;
+) -> Result<Json<ops::TrashItem>, AppError> {
+    let p = ops::user_path(&path)?;
+    Ok(Json(ops::trash(&s.db, &s.store, user.id, &p).await?))
+}
+
+#[derive(Deserialize)]
+pub struct MkdirBody {
+    pub path: String,
+}
+
+pub async fn mkdir(State(s): State<AppState>, user: AuthUser, Json(b): Json<MkdirBody>) -> Result<StatusCode, AppError> {
+    ops::mkdir(&s.db, user.id, &ops::user_path(&b.path)?).await?;
+    Ok(StatusCode::CREATED)
+}
+
+#[derive(Deserialize)]
+pub struct MoveBody {
+    pub from: String,
+    pub to: String,
+}
+
+/// Đổi tên + di chuyển. Trả về số file đã chuyển.
+pub async fn move_entry(
+    State(s): State<AppState>,
+    user: AuthUser,
+    Json(b): Json<MoveBody>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let (from, to) = (ops::user_path(&b.from)?, ops::user_path(&b.to)?);
+    let n = ops::move_path(&s.db, &s.store, user.id, &from, &to).await?;
+    Ok(Json(serde_json::json!({ "files": n })))
+}
+
+pub async fn list_trash(State(s): State<AppState>, user: AuthUser) -> Result<Json<Vec<ops::TrashItem>>, AppError> {
+    Ok(Json(ops::list_trash(&s.db, user.id).await?))
+}
+
+pub async fn restore_trash(
+    State(s): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ops::TrashItem>, AppError> {
+    Ok(Json(ops::restore(&s.db, &s.store, user.id, id).await?))
+}
+
+pub async fn purge_trash(State(s): State<AppState>, user: AuthUser, Path(id): Path<Uuid>) -> Result<StatusCode, AppError> {
+    ops::purge(&s.db, &s.store, user.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn empty_trash(State(s): State<AppState>, user: AuthUser) -> Result<StatusCode, AppError> {
+    for t in ops::list_trash(&s.db, user.id).await? {
+        ops::purge(&s.db, &s.store, user.id, t.id).await?;
     }
-    r?;
-    row.quota_used = q.used_bytes as i64;
-    sqlx::query("UPDATE users SET quota_used = $1 WHERE id = $2")
-        .bind(row.quota_used)
-        .bind(user.id)
-        .execute(&s.db)
-        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -171,7 +211,7 @@ pub async fn init_upload(
     let row = load_user(&s.db, user.id).await?;
     let q = Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64);
     q.can_add(b.size).map_err(|e| AppError::Conflict(format!("quota exceeded: {e}")))?;
-    s.store.key(user.id, &b.path)?; // validate early
+    ops::user_path(&b.path)?; // validate early, chặn ghi vào .nextkloud
     let id = Uuid::new_v4().to_string();
     s.uploads.lock().await.insert(
         id.clone(),
