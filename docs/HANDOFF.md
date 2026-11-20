@@ -122,15 +122,15 @@ NextKloud là bản thay thế Nextcloud **không dùng PHP**: Tauri v2 + Rust (
   | Container | Kết nối |
   |---|---|
   | `nk-pg-test` | `postgres://nk:nk@127.0.0.1:15432/nk` |
-  | `nk-rustfs-test` | `http://127.0.0.1:19000`, bucket `nktest`; key: `docker exec nk-rustfs-test printenv RUSTFS_ACCESS_KEY` (tương tự `RUSTFS_SECRET_KEY`) |
+  | `nk-rustfs-test2` | `http://127.0.0.1:19000`, bucket `nktest`; key: `docker exec nk-rustfs-test2 printenv RUSTFS_ACCESS_KEY` (tương tự `RUSTFS_SECRET_KEY`). Dữ liệu nằm trong scratchpad nên mất khi reboot: tạo lại thư mục với quyền uid 1000 rồi chạy `rclone mkdir nk:nktest`. Container cũ `nk-rustfs-test` hỏng vì thư mục dữ liệu bị Docker tạo lại dưới quyền root. |
 
 - **Test backend:**
   ```bash
-  K=$(docker exec nk-rustfs-test printenv RUSTFS_ACCESS_KEY); S=$(docker exec nk-rustfs-test printenv RUSTFS_SECRET_KEY)
+  K=$(docker exec nk-rustfs-test2 printenv RUSTFS_ACCESS_KEY); S=$(docker exec nk-rustfs-test2 printenv RUSTFS_SECRET_KEY)
   NK_TEST_DB=postgres://nk:nk@127.0.0.1:15432/nk NK_TEST_S3=http://127.0.0.1:19000,nktest,$K,$S \
     cargo test -p nextkloud-backend
   ```
-  - Hiện có 27 test, tất cả pass.
+  - Hiện có 29 test, tất cả pass.
   - Thiếu `NK_TEST_DB`/`NK_TEST_S3` thì các test cần DB/S3 tự `return`. CI chạy theo cách này, nên **CI không phủ phần DB và S3**: phải chạy đầy đủ ở local trước khi push.
 - **Test frontend:** `cd apps/desktop && npx tsc --noEmit -p . && npm run build`
 - **Chạy backend local** (web tự serve từ `apps/desktop/dist`):
@@ -180,6 +180,7 @@ NextKloud là bản thay thế Nextcloud **không dùng PHP**: Tauri v2 + Rust (
 crates/backend/
   migrations/0001_init.sql        bảng users
   migrations/0002_file_index.sql  pg_trgm, collation nk_natural (ICU, kn=true), bảng files + 4 index
+  migrations/0003_profile.sql     users.display_name, users.avatar_v
   src/main.rs          đọc env, migrate, seed admin, tạo Store, `reindex` CLI, tự dựng chỉ mục khi khởi động, serve web
   src/routes.rs        bảng route; content_type(); serve_web() (SPA, chặn ..)
   src/state.rs         AppState{db, store, enc, dec, uploads(RAM), http, tts_url}; UserRow; AppError → HTTP; extractor AuthUser (Bearer JWT)
@@ -194,7 +195,11 @@ crates/migrate/        stub (6 dòng); migrate thật đã làm bằng rclone
 apps/desktop/
   src/api.ts           client: req() (Bearer, 401 → logout), files/search/upload(8MB tuần tự, gửi mtime)/admin API, speak()
   src/App.tsx          toàn bộ shell: login, reset, header, sidebar, file browser (danh sách ảo), RowMenu, LookDialog, chuyển trang files/users
-  src/UsersAdmin.tsx   màn quản lý user + dialog (create, quota, reset, delete, secret)
+  src/UsersAdmin.tsx   màn quản lý user + dialog (create, quota có slider phi tuyến, reset, delete, secret)
+  src/Settings.tsx     trang cài đặt: Profile, Security, LookPanel, UsersAdmin, System
+  src/avatar.tsx       <Avatar> (tải blob có token, cache theo id+v) + squareAvatar() cắt 256px webp
+  src/look.tsx         LookPanel / LookDialog (theme + nền)
+  src/forms.tsx        ResetForm (mật khẩu mới + nhập lại; ẩn ô hiện tại khi đã biết)
   src/background.ts    theme sáng/tối/auto + ảnh nền, lưu ở `.nextkloud/settings.json` và `.nextkloud/background.webp` (resize ≤ 2560px)
   src/icons.tsx        icon SVG inline + kindOf(name) → icon/màu
   src/format.ts        fmtSize
@@ -217,6 +222,11 @@ Mọi API (trừ login và health) cần header `Authorization: Bearer <jwt>`. L
 | POST | `/api/auth/login` | `{username,password}` | `{token,must_reset,is_admin}` | |
 | POST | `/api/auth/password` | `{old,new}` | 204 | xoá cờ must_reset |
 | GET | `/api/me` | — | UserRow | |
+| PATCH | `/api/me` | `{display_name}` | UserRow | rỗng = bỏ tên hiển thị; tối đa 64 ký tự |
+| PUT / DELETE | `/api/me/avatar` | ảnh webp/png/jpeg ≤ 1MB (client cắt vuông 256px) | UserRow | lưu ở `<uuid>/.nextkloud/avatar`; `avatar_v` tăng mỗi lần đổi |
+| GET | `/api/users/:id/avatar?v=` | — | ảnh | mọi user đã đăng nhập; cache immutable; client tải blob vì `<img>` không gửi được Bearer |
+| GET | `/api/admin/stats` | — | `{version,storage,users,files,dirs,bytes}` | admin |
+| POST | `/api/admin/reindex/:id` | — | `{files,bytes}` | admin; như lệnh CLI `reindex` |
 | GET | `/api/users` | — | UserRow[] | admin |
 | POST | `/api/users` | `{username,password,quota_limit?,is_admin?}` | 201 UserRow | admin; trùng tên → 409; mật khẩu < 8 ký tự → 400 |
 | DELETE | `/api/users/:id` | — | 204 | admin; tự xoá mình → 409; xoá object, chỉ mục (cascade), staging |
@@ -236,7 +246,7 @@ Mọi API (trừ login và health) cần header `Authorization: Bearer <jwt>`. L
 
 ```sql
 users(id uuid pk, username text unique, pass_hash, must_reset bool, quota_limit int8 (0 = không giới hạn),
-      quota_used int8, is_admin bool, created_at)
+      quota_used int8, is_admin bool, created_at, display_name text null, avatar_v int /*0 = chưa có*/)
 files(user_id uuid → users ON DELETE CASCADE, path text, parent text, name text COLLATE nk_natural,
       is_dir bool, size int8, modified int8 /*unix giây*/, PRIMARY KEY(user_id, path))
   index (user_id,parent,is_dir,name) | (…,size,name) | (…,modified,name) | GIN(name gin_trgm_ops)
@@ -275,6 +285,10 @@ files(user_id uuid → users ON DELETE CASCADE, path text, parent text, name tex
 - **Màn admin quản lý user** (`147e850`). Cùng commit này sửa 2 lỗi:
   - Class `.ghost` va với `.btn.ghost`, làm mọi nút ghost bấm không ăn (lỗi do commit `80aeed5` gây ra).
   - Nút đóng dialog nằm trong `<form>` mà thiếu `type="button"`, bấm vào là submit form.
+- **Đổi mật khẩu lần đầu và slider quota** (`d33cee5`):
+  - Màn đặt mật khẩu mới sau khi admin reset không còn ô "mật khẩu hiện tại" (dùng luôn mật khẩu vừa đăng nhập), có ô nhập lại. Người dùng từng báo lỗi "change password failed", khả năng cao do trình duyệt tự điền mật khẩu cũ.
+  - Slider quota phi tuyến 0–5–10–50–100–500–1TB–2TB, có vạch đánh dấu dung lượng đang dùng.
+- **Hồ sơ & Cài đặt:** `Settings.tsx` có các tab Hồ sơ (ảnh đại diện, tên hiển thị, dung lượng), Mật khẩu, Giao diện, và cho admin: Người dùng, Hệ thống (thống kê + nút dựng lại chỉ mục). Menu user mới; header và danh sách user hiện ảnh đại diện.
 
 ## 9. Backlog chi tiết
 

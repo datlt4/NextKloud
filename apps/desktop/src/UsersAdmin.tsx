@@ -1,5 +1,6 @@
 import { For, Match, Show, Switch, createSignal, onMount } from "solid-js";
 import { api, type UserRow } from "./api";
+import { Avatar } from "./avatar";
 import { fmtSize } from "./format";
 import { Icon } from "./icons";
 
@@ -74,10 +75,11 @@ export default function UsersAdmin(props: { meId: string; onError: (m: string) =
         <For each={users()}>
           {(u) => (
             <div class="ucard">
-              <div class="avatar static">{u.username.slice(0, 1).toUpperCase()}</div>
+              <Avatar id={u.id} v={u.avatar_v} name={u.display_name || u.username} size={40} />
               <div class="ubody">
                 <div class="uname">
-                  <b>{u.username}</b>
+                  <b>{u.display_name || u.username}</b>
+                  <Show when={u.display_name}><span class="muted sm">@{u.username}</span></Show>
                   <Show when={u.is_admin}><span class="tag">admin</span></Show>
                   <Show when={u.id === props.meId}><span class="tag soft">bạn</span></Show>
                   <Show when={u.must_reset}><span class="tag warn">chờ đổi mật khẩu</span></Show>

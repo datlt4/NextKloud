@@ -45,6 +45,8 @@ pub struct UserRow {
     pub quota_limit: i64,
     pub quota_used: i64,
     pub is_admin: bool,
+    pub display_name: Option<String>,
+    pub avatar_v: i32,
 }
 
 #[derive(Debug)]

@@ -36,6 +36,8 @@ export interface ListOpts {
 export interface UserRow {
   id: string;
   username: string;
+  display_name: string | null;
+  avatar_v: number;
   must_reset: boolean;
   is_admin: boolean;
   quota_limit: number;
@@ -45,6 +47,8 @@ export interface UserRow {
 export interface Me {
   id: string;
   username: string;
+  display_name: string | null;
+  avatar_v: number;
   is_admin: boolean;
   quota_limit: number;
   quota_used: number;
@@ -127,6 +131,37 @@ export const api = {
   },
   async deleteUser(id: string) {
     await req(`/api/users/${id}`, { method: "DELETE" });
+  },
+  async adminStats() {
+    return (await req("/api/admin/stats")).json() as Promise<{
+      version: string;
+      storage: string;
+      users: number;
+      files: number;
+      dirs: number;
+      bytes: number;
+    }>;
+  },
+  async adminReindex(id: string) {
+    return (await req(`/api/admin/reindex/${id}`, { method: "POST" })).json() as Promise<{ files: number; bytes: number }>;
+  },
+  // --- hồ sơ ---
+  async updateMe(display_name: string) {
+    const r = await req("/api/me", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ display_name }),
+    });
+    return r.json() as Promise<Me>;
+  },
+  async putAvatar(img: Blob) {
+    return (await req("/api/me/avatar", { method: "PUT", body: img })).json() as Promise<Me>;
+  },
+  async deleteAvatar() {
+    return (await req("/api/me/avatar", { method: "DELETE" })).json() as Promise<Me>;
+  },
+  async avatarBlob(id: string, v: number) {
+    return (await req(`/api/users/${id}/avatar?v=${v}`)).blob();
   },
   async me() {
     const r = await req("/api/me");

@@ -1,9 +1,12 @@
 import { For, Index, Match, Show, Switch, batch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { api, isSelfHostedWeb, serverOrigin, type Entry, type Me } from "./api";
-import { PRESETS, previewDim, setDim, setImage, setPreset, setTheme, syncFromServer, ui, wallCss } from "./background";
+import { syncFromServer, ui, wallCss } from "./background";
+import { ResetForm } from "./forms";
+import { LookDialog } from "./look";
 import { fmtSize } from "./format";
 import { Icon, ext, kindOf } from "./icons";
-import UsersAdmin from "./UsersAdmin";
+import Settings, { type SettingsTab } from "./Settings";
+import { Avatar } from "./avatar";
 import MarkdownView from "./viewers/MarkdownView";
 
 type SortKey = "name" | "size" | "modified";
@@ -42,7 +45,15 @@ export default function App() {
   const [userMenu, setUserMenu] = createSignal(false);
   const [userMenuUp, setUserMenuUp] = createSignal(false);
   const [showLook, setShowLook] = createSignal(false);
-  const [page, setPage] = createSignal<"files" | "users">("files");
+  const [page, setPage] = createSignal<"files" | "settings">("files");
+  const [setTab, setSetTab] = createSignal<SettingsTab>("profile");
+  const openSettings = (t: SettingsTab) => {
+    setSetTab(t);
+    setPage("settings");
+    setSideOpen(false);
+    setUserMenu(false);
+  };
+  const shownName = () => me()?.display_name || me()?.username || "";
   const [upload, setUpload] = createSignal<{ name: string; pct: number; left: number } | null>(null);
   let fileInput!: HTMLInputElement;
   let scrollEl: HTMLDivElement | undefined;
@@ -472,18 +483,39 @@ export default function App() {
                 if (userMenu()) { setUserMenu(false); return; }
                 setUserMenuUp(flipIfNeeded(e.currentTarget as HTMLElement));
                 setUserMenu(true);
-              }} title={me()?.username}>
-                {(me()?.username ?? "?").slice(0, 1).toUpperCase()}
+              }} title={shownName()}>
+                <Show when={me()} fallback="?">
+                  <Avatar id={me()!.id} v={me()!.avatar_v} name={shownName()} />
+                </Show>
               </button>
               <Show when={userMenu()}>
                 <div class="menu right" classList={{ up: userMenuUp() }}>
-                  <div class="menu-head">
-                    <b>{me()?.username}</b>
-                    <Show when={me()?.is_admin}><span class="tag">admin</span></Show>
-                  </div>
+                  <button class="menu-head profile" onClick={() => openSettings("profile")}>
+                    <Show when={me()}><Avatar id={me()!.id} v={me()!.avatar_v} name={shownName()} size={40} /></Show>
+                    <span class="mh-text">
+                      <b>{shownName()}</b>
+                      <span class="muted sm">@{me()?.username}<Show when={me()?.is_admin}> · admin</Show></span>
+                    </span>
+                  </button>
+                  <button onClick={() => openSettings("profile")}>
+                    <Icon name="user" /> Hồ sơ & cài đặt
+                  </button>
+                  <button onClick={() => openSettings("security")}>
+                    <Icon name="key" /> Đổi mật khẩu
+                  </button>
                   <button onClick={() => { setUserMenu(false); setShowLook(true); }}>
                     <Icon name="palette" /> Giao diện & nền
                   </button>
+                  <Show when={me()?.is_admin}>
+                    <div class="menu-sep" />
+                    <button onClick={() => openSettings("users")}>
+                      <Icon name="users" /> Quản lý người dùng
+                    </button>
+                    <button onClick={() => openSettings("system")}>
+                      <Icon name="server" /> Hệ thống
+                    </button>
+                  </Show>
+                  <div class="menu-sep" />
                   <button onClick={logout}>
                     <Icon name="logout" /> Đăng xuất
                   </button>
@@ -503,12 +535,12 @@ export default function App() {
                   <Icon name="home" /> Tất cả file
                 </button>
                 <Show when={me()?.is_admin}>
-                  <button class="nav" classList={{ active: page() === "users" }} onClick={() => { setSideOpen(false); setPage("users"); }}>
-                    <Icon name="users" /> Người dùng
+                  <button class="nav" classList={{ active: page() === "settings" && (setTab() === "users" || setTab() === "system") }} onClick={() => openSettings("users")}>
+                    <Icon name="users" /> Quản trị
                   </button>
                 </Show>
-                <button class="nav" onClick={() => { setSideOpen(false); setShowLook(true); }}>
-                  <Icon name="palette" /> Giao diện & nền
+                <button class="nav" classList={{ active: page() === "settings" && !["users", "system"].includes(setTab()) }} onClick={() => openSettings("profile")}>
+                  <Icon name="settings" /> Cài đặt
                 </button>
               </nav>
               <div class="side-foot">
@@ -530,14 +562,14 @@ export default function App() {
             </aside>
 
             <main class="panel glass">
-              <Show when={page() === "users" && me()}>
+              <Show when={page() === "settings" && me()}>
                 <Show when={err()}>
                   <div class="err banner">
                     <span>{err()}</span>
                     <button class="icon-btn sm" onClick={() => setErr("")}><Icon name="close" size={14} /></button>
                   </div>
                 </Show>
-                <UsersAdmin meId={me()!.id} onError={setErr} onChanged={refreshMe} />
+                <Settings me={me()!} tab={setTab()} onTab={setSetTab} onMe={setMe} onError={setErr} />
               </Show>
               <Show when={page() === "files"}>
               <div class="toolbar">
@@ -743,117 +775,5 @@ export default function App() {
         </Match>
       </Switch>
     </div>
-  );
-}
-
-function LookDialog(props: { onClose: () => void; onError: (m: string) => void }) {
-  const [busy, setBusy] = createSignal(false);
-  let pick!: HTMLInputElement;
-  const run = async (f: () => Promise<unknown>) => {
-    setBusy(true);
-    try {
-      await f();
-    } catch (e) {
-      props.onError("Không lưu được giao diện: " + String((e as Error).message));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <div class="modal-bg" onClick={props.onClose}>
-      <div class="modal glass" onClick={(e) => e.stopPropagation()}>
-        <div class="modal-head">
-          <h3>Giao diện & nền</h3>
-          <button class="icon-btn" onClick={props.onClose}><Icon name="close" /></button>
-        </div>
-        <p class="muted sm">Lưu trên server — đồng bộ mọi thiết bị.</p>
-        <div class="field-label">Chế độ màu</div>
-        <div class="seg wide">
-          <For each={[["auto", "Theo hệ thống"], ["light", "Sáng"], ["dark", "Tối"]] as const}>
-            {([id, label]) => (
-              <button classList={{ on: ui().theme === id }} disabled={busy()} onClick={() => run(() => setTheme(id))}>
-                {label}
-              </button>
-            )}
-          </For>
-        </div>
-        <div class="field-label">Hình nền</div>
-        <div class="swatches">
-          <button
-            class="swatch upload"
-            classList={{ on: ui().bg === "image" }}
-            disabled={busy()}
-            onClick={() => pick.click()}
-            title="Ảnh của bạn"
-          >
-            <Icon name={busy() ? "cloud" : "image"} size={22} />
-            <span>{busy() ? "Đang lưu…" : "Ảnh của bạn"}</span>
-          </button>
-          <For each={PRESETS}>
-            {(p) => (
-              <button
-                class="swatch"
-                classList={{ on: ui().bg === p.id }}
-                style={{ background: p.css }}
-                disabled={busy()}
-                onClick={() => run(() => setPreset(p.id))}
-              >
-                <Show when={ui().bg === p.id}><Icon name="check" size={20} /></Show>
-                <span>{p.name}</span>
-              </button>
-            )}
-          </For>
-        </div>
-        <input
-          ref={pick}
-          type="file"
-          accept="image/*"
-          hidden
-          onChange={(e) => {
-            const f = e.currentTarget.files?.[0];
-            if (f) run(() => setImage(f));
-            e.currentTarget.value = "";
-          }}
-        />
-        <Show when={ui().bg === "image"}>
-          <label class="slider">
-            <span>Làm tối ảnh nền</span>
-            <input
-              type="range"
-              min="0"
-              max="0.8"
-              step="0.05"
-              value={ui().dim}
-              onInput={(e) => previewDim(+e.currentTarget.value)}
-              onChange={(e) => run(() => setDim(+e.currentTarget.value))}
-            />
-          </label>
-        </Show>
-      </div>
-    </div>
-  );
-}
-
-export function ResetForm(props: { current?: string; onDone: (o: string, n: string) => void; onError: (m: string) => void }) {
-  const [o, setO] = createSignal("");
-  const [n, setN] = createSignal("");
-  const [n2, setN2] = createSignal("");
-  const submit = () => {
-    if (n().length < 8) return props.onError("Mật khẩu mới phải có ít nhất 8 ký tự");
-    if (n() !== n2()) return props.onError("Hai lần nhập mật khẩu mới không khớp");
-    props.onDone(props.current || o(), n());
-  };
-  return (
-    <form onSubmit={(e) => { e.preventDefault(); submit(); }}>
-      <Show when={!props.current}>
-        <label>Mật khẩu hiện tại</label>
-        <input type="password" value={o()} onInput={(e) => setO(e.currentTarget.value)} autocomplete="current-password" />
-      </Show>
-      <label>Mật khẩu mới</label>
-      <input type="password" value={n()} onInput={(e) => setN(e.currentTarget.value)} autocomplete="new-password" />
-      <label>Nhập lại mật khẩu mới</label>
-      <input type="password" value={n2()} onInput={(e) => setN2(e.currentTarget.value)} autocomplete="new-password" />
-      <button type="submit" class="btn primary block">Đổi mật khẩu</button>
-    </form>
   );
 }
