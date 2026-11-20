@@ -157,6 +157,14 @@ impl Store {
         if staged != size {
             return Err(StoreError::Conflict(format!("incomplete: staged {staged}, want {size}")));
         }
+        let mtime = self.put_local(user, path, &tmp, mtime, quota).await?;
+        let _ = tokio::fs::remove_file(&tmp).await;
+        Ok(mtime)
+    }
+
+    /// Ghi 1 file từ đĩa local lên store (ghi đè được), tính quota. Trả về mtime đã lưu.
+    pub async fn put_local(&self, user: Uuid, path: &str, src: &Path, mtime: Option<i64>, quota: &mut Quota) -> Result<i64, StoreError> {
+        let size = tokio::fs::metadata(src).await?.len();
         let key = self.key(user, path)?;
         // Overwrite = delete+add: tính trên bản sao, chỉ commit khi ghi xong.
         let mut q = *quota;
@@ -171,8 +179,8 @@ impl Store {
             w = w.user_metadata([("mtime".to_string(), mtime.to_string())]);
         }
         let mut w = w.await?;
-        let mut f = tokio::fs::File::open(&tmp).await?;
-        let mut buf = vec![0u8; 8 * 1024 * 1024];
+        let mut f = tokio::fs::File::open(src).await?;
+        let mut buf = vec![0u8; (size as usize).clamp(1, 8 * 1024 * 1024)]; // file nhỏ (vault md) khỏi cấp 8MB
         use tokio::io::AsyncReadExt;
         loop {
             let n = f.read(&mut buf).await?;
@@ -182,7 +190,6 @@ impl Store {
             w.write(buf[..n].to_vec()).await?;
         }
         w.close().await?;
-        let _ = tokio::fs::remove_file(&tmp).await;
         *quota = q;
         Ok(mtime)
     }

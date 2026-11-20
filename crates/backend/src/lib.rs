@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod file_handlers;
 pub mod files;
+pub mod git;
 pub mod index;
 pub mod ops;
 pub mod quota;

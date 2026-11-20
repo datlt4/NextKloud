@@ -6,13 +6,15 @@ import { ResetForm } from "./forms";
 import { Icon } from "./icons";
 import { LookPanel } from "./look";
 import UsersAdmin from "./UsersAdmin";
+import { GitPanel } from "./gitsync";
 
-export type SettingsTab = "profile" | "security" | "look" | "users" | "system";
+export type SettingsTab = "profile" | "security" | "look" | "git" | "users" | "system";
 
 const TABS: { id: SettingsTab; label: string; icon: string; admin?: boolean }[] = [
   { id: "profile", label: "Hồ sơ", icon: "user" },
   { id: "security", label: "Mật khẩu", icon: "key" },
   { id: "look", label: "Giao diện & nền", icon: "palette" },
+  { id: "git", label: "Đồng bộ Git", icon: "code" },
   { id: "users", label: "Người dùng", icon: "users", admin: true },
   { id: "system", label: "Hệ thống", icon: "server", admin: true },
 ];
@@ -23,6 +25,7 @@ export default function Settings(props: {
   onTab: (t: SettingsTab) => void;
   onMe: (m: Me) => void;
   onError: (m: string) => void;
+  onOpen: (folder: string) => void;
 }) {
   const tabs = () => TABS.filter((t) => !t.admin || props.me.is_admin);
   return (
@@ -59,6 +62,9 @@ export default function Settings(props: {
             <h2>Giao diện & nền</h2>
             <LookPanel onError={props.onError} />
           </section>
+        </Show>
+        <Show when={props.tab === "git"}>
+          <GitPanel onOpen={props.onOpen} onError={props.onError} />
         </Show>
         <Show when={props.tab === "users" && props.me.is_admin}>
           <UsersAdmin meId={props.me.id} onError={props.onError} onChanged={() => api.me().then(props.onMe).catch(() => {})} />

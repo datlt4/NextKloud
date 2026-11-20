@@ -89,6 +89,9 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/trash", get(f::list_trash).delete(f::empty_trash))
         .route("/api/trash/:id", axum::routing::delete(f::purge_trash))
         .route("/api/trash/:id/restore", post(f::restore_trash))
+        .route("/api/git", get(crate::git::list).post(crate::git::create))
+        .route("/api/git/:id", axum::routing::patch(crate::git::update).delete(crate::git::remove))
+        .route("/api/git/:id/sync", post(crate::git::sync_now))
         .route("/api/files/uploads", post(f::init_upload))
         // axum mặc định chặn body > 2MB; chunk cho phép tới 64MB.
         .route(

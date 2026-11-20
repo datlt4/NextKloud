@@ -721,7 +721,7 @@ export default function App() {
                     <button class="icon-btn sm" onClick={() => setErr("")}><Icon name="close" size={14} /></button>
                   </div>
                 </Show>
-                <Settings me={me()!} tab={setTab()} onTab={setSetTab} onMe={setMe} onError={setErr} />
+                <Settings me={me()!} tab={setTab()} onTab={setSetTab} onMe={setMe} onError={setErr} onOpen={(f) => load(f)} />
               </Show>
               <Show when={page() === "trash"}>
                 <Show when={err()}>

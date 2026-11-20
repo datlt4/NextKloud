@@ -119,6 +119,24 @@ async fn main() {
             }
         });
     }
+    // Mirror git: kiểm tra mỗi 5 phút repo nào tới hạn (mặc định 8 giờ/lần), chạy lần lượt.
+    {
+        let (db, store) = (db.clone(), store.clone());
+        tokio::spawn(async move {
+            use nextkloud_backend::git;
+            if let Err(e) = git::reset_stuck(&db).await {
+                tracing::error!("git reset: {e}");
+            }
+            loop {
+                for id in git::due(&db).await.unwrap_or_default() {
+                    if let Ok(r) = git::begin(&db, id, None).await {
+                        git::finish(&db, &store, r).await;
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+            }
+        });
+    }
     let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| {
         tracing::warn!("JWT_SECRET unset — using dev default, set it in production");
         "dev-insecure-change-me".into()

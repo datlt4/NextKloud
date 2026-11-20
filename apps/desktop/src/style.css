@@ -279,6 +279,35 @@ input { font: inherit; color: var(--text); }
 .row.trow { grid-template-columns: minmax(0, 1fr) auto; cursor: default; }
 .tact { display: flex; gap: 6px; }
 
+/* đồng bộ git */
+.git-top { display: flex; align-items: flex-start; gap: 16px; justify-content: space-between; }
+.git-top .btn { flex-shrink: 0; }
+.repo-head { display: flex; align-items: center; gap: 12px; }
+.repo-ic { color: var(--accent-text); }
+.repo-title { flex: 1; min-width: 0; display: grid; }
+.repo-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repo-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin: 12px 0 0; }
+.repo-meta .link { display: inline-flex; align-items: center; gap: 4px; color: var(--accent-text); font-weight: 600; }
+.repo-meta .link:hover { text-decoration: underline; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.repo .err.sm { margin: 10px 0 0; font-size: 12px; word-break: break-word; }
+.keybox { margin-top: 12px; padding: 12px; border-radius: 10px; background: var(--hover); }
+.keybox p { margin: 0 0 8px; }
+.keybox .secret { margin: 0 0 8px; word-break: break-all; white-space: pre-wrap; font-size: 12px; }
+.repo-act { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+.interval { display: inline-flex; align-items: center; gap: 6px; }
+.repo-act .interval select { height: 32px; width: auto; border-radius: 8px; padding: 0 6px; background: var(--input); border: 1px solid var(--line); }
+.tag.good { background: var(--accent-soft); color: var(--accent-text); }
+.tag.err { background: var(--danger); color: #fff; }
+.modal.form .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.modal.form select { width: 100%; height: 42px; padding: 0 10px; background: var(--input); border: 1px solid var(--line); border-radius: 10px; font-size: 15px; }
+.keyarea { width: 100%; height: 120px; margin-top: 10px; padding: 10px; border-radius: 10px; background: var(--input); border: 1px solid var(--line); font: 12px ui-monospace, monospace; resize: vertical; }
+.modal.form .muted.sm { margin: 6px 0 0; }
+@media (max-width: 600px) {
+  .git-top { flex-direction: column; }
+  .modal.form .two { grid-template-columns: 1fr; }
+}
+
 .empty { display: grid; justify-items: center; gap: 4px; padding: 70px 16px; color: var(--muted); }
 .empty p { margin: 4px 0 12px; font-size: 15px; }
 

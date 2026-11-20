@@ -130,7 +130,7 @@ NextKloud là bản thay thế Nextcloud **không dùng PHP**: Tauri v2 + Rust (
   NK_TEST_DB=postgres://nk:nk@127.0.0.1:15432/nk NK_TEST_S3=http://127.0.0.1:19000,nktest,$K,$S \
     cargo test -p nextkloud-backend
   ```
-  - Hiện có 31 test, tất cả pass (`ops_s3` mất khoảng 1 phút).
+  - Hiện có 35 test, tất cả pass (`ops_s3` mất khoảng 1 phút). Test git cần lệnh `git` và `ssh-keygen` trên máy.
   - Thiếu `NK_TEST_DB`/`NK_TEST_S3` thì các test cần DB/S3 tự `return`. CI chạy theo cách này, nên **CI không phủ phần DB và S3**: phải chạy đầy đủ ở local trước khi push.
 - **Test frontend:** `cd apps/desktop && npx tsc --noEmit -p . && npm run build`
 - **Chạy backend local** (web tự serve từ `apps/desktop/dist`):
@@ -238,6 +238,9 @@ Mọi API (trừ login và health) cần header `Authorization: Bearer <jwt>`. L
 | DELETE | `/api/files/*path` | — | TrashItem | file hoặc thư mục → thùng rác (`.nextkloud/trash/<id>/<name>`); quota giữ nguyên |
 | POST | `/api/mkdir` | `{path}` | 201 | chỉ ghi chỉ mục; đã có → 409; cha là file → 409 |
 | POST | `/api/move` | `{from,to}` | `{files}` | đổi tên + di chuyển file/thư mục; đích có rồi → 409; vào chính nó → 400; đồng bộ, copy+delete song song 64 |
+| GET / POST | `/api/git` | POST `{url, branch?, folder?, key: generate\|paste\|none, private_key?, interval_h?}` | Repo[] / 201 Repo | mirror git 1 chiều; URL chỉ https/http/ssh/scp (chặn `ext::`, `file://`, `-` đầu); `key=generate` → state `pending` tới khi bấm sync; không bao giờ trả `ssh_key`, URL bị che token |
+| PATCH / DELETE | `/api/git/:id` | `{interval_h?, branch?, url?}` / `?files=true` | Repo / 204 | đổi nhánh → clone lại; `files=true` chuyển thư mục vào thùng rác |
+| POST | `/api/git/:id/sync` | — | 202 Repo | đang sync → 409 |
 | GET / DELETE | `/api/trash` | — | TrashItem[] / 204 | DELETE = dọn sạch |
 | POST | `/api/trash/:id/restore` | — | TrashItem | chỗ cũ đã có thứ khác → 409 |
 | DELETE | `/api/trash/:id` | — | 204 | xoá hẳn, hoàn quota bằng SUM(size) trong chỉ mục |
@@ -256,7 +259,11 @@ files(user_id uuid → users ON DELETE CASCADE, path text, parent text, name tex
       is_dir bool, size int8, modified int8 /*unix giây*/, PRIMARY KEY(user_id, path))
   index (user_id,parent,is_dir,name) | (…,size,name) | (…,modified,name) | GIN(name gin_trgm_ops) | (user_id, path text_pattern_ops)
 trash(id uuid pk, user_id → users CASCADE, orig_path, is_dir, size, files, deleted_at int8)
+git_repos(id, user_id → users CASCADE, url, branch, folder, ssh_key, ssh_pub, interval_h, state pending|idle|syncing|error,
+          last_sync, last_commit, last_error, files, created_at)
 ```
+
+- **Mirror git** (`git.rs`): git CLI trong container. Bản clone nông ở `<STAGING_DIR>/../git/<id>`, khoá ở `<id>.key` (0600), `known_hosts` chung (accept-new). Lần đầu (hoặc mất bản clone) thì đồng bộ toàn bộ: ghi mọi file và dọn file lạ trong thư mục. Các lần sau `fetch --depth 1` + `diff --name-status` giữa commit cũ và mới, chỉ ghi và xoá phần thay đổi. Bỏ qua symlink/submodule. mtime = thời điểm commit HEAD (clone nông nên không có giờ từng file). Scheduler kiểm tra 5 phút một lần, chạy lần lượt. Khởi động lại khi đang sync → state `error`. ssh cần uid có trong `/etc/passwd`: image tạo user 1000, **PUID khác 1000 thì ssh lỗi** (https + token vẫn chạy).
 
 - **Thùng rác:** object nằm ở `<uuid>/.nextkloud/trash/<id>/<tên>`, dòng chỉ mục cũng dời theo (bị ẩn vì tên bắt đầu bằng `.`). Dòng `trash` chỉ được ghi **sau khi** chuyển xong, để "dọn sạch" không chạy đè lúc đang copy. Task nền mỗi giờ dọn mục quá `TRASH_DAYS` (mặc định 30). User không được ghi/di chuyển vào `.nextkloud` (`ops::user_path`).
 
@@ -297,6 +304,8 @@ trash(id uuid pk, user_id → users CASCADE, orig_path, is_dir, size, files, del
   - Màn đặt mật khẩu mới sau khi admin reset không còn ô "mật khẩu hiện tại" (dùng luôn mật khẩu vừa đăng nhập), có ô nhập lại. Người dùng từng báo lỗi "change password failed", khả năng cao do trình duyệt tự điền mật khẩu cũ.
   - Slider quota phi tuyến 0–5–10–50–100–500–1TB–2TB, có vạch đánh dấu dung lượng đang dùng.
 - **9.1 Thao tác file** (`ops.rs`, `fileops.tsx`): thư mục mới, đổi tên, di chuyển (dialog duyệt cây), xoá thư mục, thùng rác (khôi phục, xoá hẳn, dọn sạch, tự dọn 30 ngày), toast "Hoàn tác"; chọn nhiều (checkbox, Ctrl-click, Shift-click dải, Ctrl+A ≤ 5.000 mục, Esc, phím Delete, nhấn giữ trên mobile); kéo thả vào thư mục/breadcrumb (chỉ chuột). Đo local (RustFS, bản debug): đổi tên thư mục 300 file mất 1,5 giây. **Chưa làm:** job nền có tiến độ cho thư mục rất lớn (request đang chạy đồng bộ, ước 10.000 file khoảng 50 giây), merge khi đích trùng tên.
+- **Mirror git cho vault Obsidian** (tab Cài đặt → Đồng bộ Git, `gitsync.tsx`): thêm repo (tạo khoá ed25519 / dán private key / không khoá), hiện public key để thêm vào Deploy keys, đồng bộ ngay, chu kỳ 1–24 giờ (mặc định 8), gỡ repo (tuỳ chọn chuyển thư mục vào thùng rác). Đo local: clone + đẩy `octocat/Hello-World` mất 1,9 giây.
+- **Sửa lỗi** (`869fdfb`): 9.1 chặn ghi vào `.nextkloud` làm hỏng lưu giao diện/ảnh nền; giờ cho phép riêng `settings.json` và `background.webp` (`ops::upload_path`).
 - **Hồ sơ & Cài đặt:** `Settings.tsx` có các tab Hồ sơ (ảnh đại diện, tên hiển thị, dung lượng), Mật khẩu, Giao diện, và cho admin: Người dùng, Hệ thống (thống kê + nút dựng lại chỉ mục). Menu user mới; header và danh sách user hiện ảnh đại diện.
 
 ## 9. Backlog chi tiết

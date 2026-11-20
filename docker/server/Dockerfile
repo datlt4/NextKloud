@@ -20,9 +20,11 @@ RUN --mount=type=cache,id=cargo-registry-$TARGETPLATFORM,target=/usr/local/cargo
     cargo build --release --locked -p nextkloud-backend && cp target/release/nextkloud /nextkloud
 
 FROM debian:bookworm-slim
+# git + ssh cho mirror vault. ssh đòi uid có trong /etc/passwd -> tạo user 1000 (PUID mặc định).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+ && apt-get install -y --no-install-recommends ca-certificates git openssh-client \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd -u 1000 -M -d /data nextkloud
 COPY --from=build /nextkloud /usr/local/bin/nextkloud
 COPY --from=web /app/dist /web
 ENV NEXTKLOUD_ADDR=0.0.0.0:8014 NEXTKLOUD_WEB=/web

@@ -42,6 +42,21 @@ export interface TrashItem {
   deleted_at: number;
 }
 
+export interface GitRepo {
+  id: string;
+  url: string;
+  branch: string;
+  folder: string;
+  ssh_pub: string | null;
+  interval_h: number;
+  state: "pending" | "idle" | "syncing" | "error";
+  last_sync: number | null;
+  last_commit: string | null;
+  last_error: string | null;
+  files: number;
+  created_at: number;
+}
+
 export interface UserRow {
   id: string;
   username: string;
@@ -187,6 +202,24 @@ export const api = {
   async move(from: string, to: string) {
     const r = await req("/api/move", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ from, to }) });
     return r.json() as Promise<{ files: number }>;
+  },
+  // --- git mirror ---
+  async gitRepos() {
+    return (await req("/api/git")).json() as Promise<GitRepo[]>;
+  },
+  async gitAdd(b: { url: string; branch: string; folder: string; key: "generate" | "paste" | "none"; private_key?: string; interval_h: number }) {
+    const r = await req("/api/git", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) });
+    return r.json() as Promise<GitRepo>;
+  },
+  async gitUpdate(id: string, b: { interval_h?: number; branch?: string; url?: string }) {
+    const r = await req(`/api/git/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) });
+    return r.json() as Promise<GitRepo>;
+  },
+  async gitSync(id: string) {
+    await req(`/api/git/${id}/sync`, { method: "POST" });
+  },
+  async gitRemove(id: string, files: boolean) {
+    await req(`/api/git/${id}?files=${files}`, { method: "DELETE" });
   },
   async trash() {
     return (await req("/api/trash")).json() as Promise<TrashItem[]>;
