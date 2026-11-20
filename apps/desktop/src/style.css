@@ -183,7 +183,7 @@ input { font: inherit; color: var(--text); }
 .seg button { width: 32px; height: 28px; border-radius: 7px; display: grid; place-items: center; color: var(--muted); }
 .seg button.on { background: var(--elev); color: var(--accent-text); box-shadow: var(--shadow); }
 
-.scroll { flex: 1; overflow: auto; padding: 0 8px 8px; overscroll-behavior: contain; }
+.scroll { position: relative; flex: 1; overflow: auto; padding: 0 8px 8px; overscroll-behavior: contain; }
 .scroll.busy { opacity: .6; transition: opacity .15s .1s; }
 .foot { display: flex; justify-content: space-between; padding: 8px 18px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); }
 
@@ -217,6 +217,18 @@ input { font: inherit; color: var(--text); }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; padding-top: 4px; }
 .tile { border-radius: 12px; padding: 8px; cursor: pointer; border: 1px solid transparent; content-visibility: auto; contain-intrinsic-size: auto 180px; }
 .tile:hover { background: var(--hover); border-color: var(--line); }
+
+/* danh sách ảo: chỉ các dòng đang thấy nằm trong DOM */
+.vbox { position: relative; }
+.vrow { position: absolute; left: 0; right: 0; top: 0; height: 48px; content-visibility: visible; }
+.vgrid { margin-top: 4px; }
+.vgrid-row { position: absolute; left: 0; right: 0; top: 0; padding-top: 0; }
+.vgrid .tile { content-visibility: visible; }
+.ghost { pointer-events: none; }
+.sk { display: block; height: 12px; width: 40%; margin-left: 46px; border-radius: 6px; background: var(--hover); }
+.tile.ghost .tile-art { background: var(--hover); }
+.fcol { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.fpath { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile-art {
   position: relative; aspect-ratio: 4/3; border-radius: 10px; display: grid; place-items: center;
   background: var(--hover);

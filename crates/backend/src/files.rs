@@ -36,15 +36,6 @@ pub struct Store {
     pub staging: PathBuf,
 }
 
-#[derive(Debug, Clone)]
-pub struct Entry {
-    pub name: String,
-    pub is_dir: bool,
-    pub size: u64,
-    /// Unix seconds.
-    pub modified: i64,
-}
-
 /// Chuẩn hoá path user gửi: bỏ "", ".", chặn ".." và path tuyệt đối.
 pub fn clean_path(req: &str) -> Result<String, StoreError> {
     if req.starts_with('/') || req.contains('\\') {
@@ -61,8 +52,19 @@ pub fn clean_path(req: &str) -> Result<String, StoreError> {
     Ok(parts.join("/"))
 }
 
-fn ts(m: &opendal::Metadata) -> i64 {
-    m.last_modified().map_or(0, |t| t.into_inner().as_second())
+/// Giây hoặc RFC3339 (rclone lưu mtime gốc vào user metadata "mtime").
+pub fn parse_mtime(s: &str) -> Option<i64> {
+    if let Ok(f) = s.trim().parse::<f64>() {
+        return Some(f as i64);
+    }
+    chrono::DateTime::parse_from_rfc3339(s.trim()).ok().map(|d| d.timestamp())
+}
+
+/// mtime gốc nếu có, không thì thời điểm ghi lên store.
+pub fn mtime_of(m: &opendal::Metadata) -> i64 {
+    m.user_metadata()
+        .and_then(|u| u.get("mtime").and_then(parse_mtime))
+        .unwrap_or_else(|| m.last_modified().map_or(0, |t| t.into_inner().as_second()))
 }
 
 impl Store {
@@ -93,34 +95,29 @@ impl Store {
         Ok(format!("{user}/{p}"))
     }
 
-    pub async fn list(&self, user: Uuid, prefix: &str) -> Result<Vec<Entry>, StoreError> {
-        let p = clean_path(prefix)?;
-        let dir = if p.is_empty() { format!("{user}/") } else { format!("{user}/{p}/") };
-        let entries = match self.op.list(&dir).await {
-            Ok(v) => v,
+    /// Toàn bộ file của user (đệ quy): (path tương đối, size, mtime). Dùng để dựng lại chỉ mục.
+    pub async fn scan(&self, user: Uuid) -> Result<Vec<(String, u64, i64)>, StoreError> {
+        use futures::{StreamExt, TryStreamExt};
+        let root = format!("{user}/");
+        let keys: Vec<String> = match self.op.lister_with(&root).recursive(true).await {
+            Ok(l) => l
+                .try_filter(|e| futures::future::ready(!e.metadata().is_dir()))
+                .map_ok(|e| e.path().to_string())
+                .try_collect()
+                .await?,
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(vec![]),
             Err(e) => return Err(e.into()),
         };
-        let mut out = vec![];
-        for e in entries {
-            if e.path() == dir {
-                continue; // chính thư mục (fs/dir marker)
-            }
-            let name = e.name().trim_end_matches('/').to_string();
-            let is_dir = e.metadata().is_dir();
-            let mut size = e.metadata().content_length();
-            let mut modified = ts(e.metadata());
-            // fs backend không trả metadata trong list -> stat bù (S3 list có sẵn).
-            if !is_dir && modified == 0 {
-                if let Ok(m) = self.op.stat(e.path()).await {
-                    size = m.content_length();
-                    modified = ts(&m);
-                }
-            }
-            out.push(Entry { name, is_dir, size: if is_dir { 0 } else { size }, modified });
-        }
-        out.sort_by(|a, b| (b.is_dir, &a.name).cmp(&(a.is_dir, &b.name)));
-        Ok(out)
+        // List S3 không kèm user metadata (mtime gốc) -> HEAD từng object, song song.
+        let skip = root.len();
+        futures::stream::iter(keys)
+            .map(|k| async move {
+                let m = self.op.stat(&k).await?;
+                Ok((k[skip..].to_string(), m.content_length(), mtime_of(&m)))
+            })
+            .buffer_unordered(32)
+            .try_collect()
+            .await
     }
 
     pub async fn stat(&self, user: Uuid, path: &str) -> Result<opendal::Metadata, StoreError> {
@@ -145,7 +142,16 @@ impl Store {
     }
 
     /// Finish an upload: size must match, quota charged, staged file streamed to store.
-    pub async fn complete(&self, user: Uuid, id: &str, path: &str, size: u64, quota: &mut Quota) -> Result<(), StoreError> {
+    /// Trả về mtime đã lưu (mtime client gửi, mặc định là bây giờ).
+    pub async fn complete(
+        &self,
+        user: Uuid,
+        id: &str,
+        path: &str,
+        size: u64,
+        mtime: Option<i64>,
+        quota: &mut Quota,
+    ) -> Result<i64, StoreError> {
         let tmp = self.stage_path(user, id);
         let staged = std::fs::metadata(&tmp).map(|m| m.len()).map_err(|_| StoreError::NotFound)?;
         if staged != size {
@@ -159,7 +165,12 @@ impl Store {
         }
         q.add(size)?;
         // Multipart 16MB x4 song song: file trăm GB không nạp vào RAM.
-        let mut w = self.op.writer_with(&key).chunk(16 * 1024 * 1024).concurrent(4).await?;
+        let mtime = mtime.unwrap_or_else(|| chrono::Utc::now().timestamp());
+        let mut w = self.op.writer_with(&key).chunk(16 * 1024 * 1024).concurrent(4);
+        if self.op.info().capability().write_with_user_metadata {
+            w = w.user_metadata([("mtime".to_string(), mtime.to_string())]);
+        }
+        let mut w = w.await?;
         let mut f = tokio::fs::File::open(&tmp).await?;
         let mut buf = vec![0u8; 8 * 1024 * 1024];
         use tokio::io::AsyncReadExt;
@@ -173,7 +184,7 @@ impl Store {
         w.close().await?;
         let _ = tokio::fs::remove_file(&tmp).await;
         *quota = q;
-        Ok(())
+        Ok(mtime)
     }
 
     /// Delete a file, refunding quota. Directories are refused (M1).
@@ -210,6 +221,13 @@ pub mod tests {
     }
 
     #[test]
+    fn mtime_formats() {
+        assert_eq!(parse_mtime("1728372187.123456789"), Some(1728372187));
+        assert_eq!(parse_mtime("2024-10-08T07:23:07Z"), Some(1728372187));
+        assert_eq!(parse_mtime("garbage"), None);
+    }
+
+    #[test]
     fn traversal_rejected() {
         let (s, u) = tmp_store("trav");
         assert!(s.key(u, "../x").is_err());
@@ -225,32 +243,32 @@ pub mod tests {
         s.write_chunk(u, "id1", 0, b"hello ").unwrap();
         assert!(s.write_chunk(u, "id1", 0, b"nope").is_err()); // must be 6
         s.write_chunk(u, "id1", 6, b"world").unwrap();
-        assert!(s.complete(u, "id1", "a/b.txt", 12, &mut q).await.is_err()); // staged 11 vs 12
-        s.complete(u, "id1", "a/b.txt", 11, &mut q).await.unwrap();
+        assert!(s.complete(u, "id1", "a/b.txt", 12, None, &mut q).await.is_err()); // staged 11 vs 12
+        s.complete(u, "id1", "a/b.txt", 11, Some(1_500_000_000), &mut q).await.unwrap();
         assert_eq!(q.used_bytes, 11);
         assert!(!s.stage_path(u, "id1").exists()); // staging dọn sạch
 
-        let root = s.list(u, "").await.unwrap();
-        assert_eq!(root.len(), 1);
-        assert!(root[0].is_dir && root[0].name == "a");
-        let got = s.list(u, "a").await.unwrap();
-        assert_eq!(got.len(), 1);
-        assert_eq!(got[0].name, "b.txt");
-        assert_eq!(got[0].size, 11);
-        assert!(got[0].modified > 0);
+        let all = s.scan(u).await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!((all[0].0.as_str(), all[0].1), ("a/b.txt", 11));
+        if s.op.info().capability().write_with_user_metadata {
+            assert_eq!(all[0].2, 1_500_000_000); // mtime gốc giữ qua user metadata
+        } else {
+            assert!(all[0].2 > 0);
+        }
         let body = s.op.read(&s.key(u, "a/b.txt").unwrap()).await.unwrap().to_vec();
         assert_eq!(body, b"hello world");
 
         // overwrite: quota tính lại theo size mới
         s.write_chunk(u, "id2", 0, b"hey").unwrap();
-        s.complete(u, "id2", "a/b.txt", 3, &mut q).await.unwrap();
+        s.complete(u, "id2", "a/b.txt", 3, None, &mut q).await.unwrap();
         assert_eq!(q.used_bytes, 3);
 
         let freed = s.delete(u, "a/b.txt", &mut q).await.unwrap();
         assert_eq!(freed, 3);
         assert_eq!(q.used_bytes, 0);
         assert!(s.delete(u, "nope.txt", &mut q).await.is_err());
-        assert!(s.list(u, "missing").await.unwrap().is_empty());
+        assert!(s.scan(Uuid::new_v4()).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -270,7 +288,7 @@ pub mod tests {
         let (s, u) = tmp_store("q");
         let mut q = Quota::new(10, 0);
         s.write_chunk(u, "id9", 0, b"0123456789ABCDEF").unwrap();
-        assert!(s.complete(u, "id9", "big.bin", 16, &mut q).await.is_err());
+        assert!(s.complete(u, "id9", "big.bin", 16, None, &mut q).await.is_err());
         assert_eq!(q.used_bytes, 0);
         assert!(s.stat(u, "big.bin").await.is_err()); // không ghi gì
     }
@@ -280,9 +298,9 @@ pub mod tests {
         let (s, u) = tmp_store("ow");
         let mut q = Quota::new(10, 0);
         s.write_chunk(u, "a", 0, b"12345").unwrap();
-        s.complete(u, "a", "f.bin", 5, &mut q).await.unwrap();
+        s.complete(u, "a", "f.bin", 5, None, &mut q).await.unwrap();
         s.write_chunk(u, "b", 0, b"0123456789AB").unwrap();
-        assert!(s.complete(u, "b", "f.bin", 12, &mut q).await.is_err());
+        assert!(s.complete(u, "b", "f.bin", 12, None, &mut q).await.is_err());
         assert_eq!(q.used_bytes, 5);
         assert_eq!(s.stat(u, "f.bin").await.unwrap().content_length(), 5);
     }

@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    files::Entry,
+    files::clean_path,
+    index::{self, SortKey},
     quota::Quota,
     state::{AppError, AppState, AuthUser, PendingUpload, load_user},
 };
@@ -21,23 +22,42 @@ use crate::{
 pub struct ListQuery {
     #[serde(default)]
     pub prefix: String,
+    #[serde(default)]
+    pub sort: SortKey,
+    #[serde(default)]
+    pub desc: bool,
+    #[serde(default)]
+    pub offset: i64,
+    pub limit: Option<i64>,
 }
 
-#[derive(Serialize)]
-pub struct EntryOut {
-    pub name: String,
-    pub is_dir: bool,
-    pub size: u64,
-    pub modified: i64,
-}
-
+/// 1 trang của thư mục, đọc từ chỉ mục Postgres (không hỏi S3).
 pub async fn list_files(
     State(s): State<AppState>,
     user: AuthUser,
     Query(q): Query<ListQuery>,
-) -> Result<Json<Vec<EntryOut>>, AppError> {
-    let entries: Vec<Entry> = s.store.list(user.id, &q.prefix).await?;
-    Ok(Json(entries.into_iter().map(|e| EntryOut { name: e.name, is_dir: e.is_dir, size: e.size, modified: e.modified }).collect()))
+) -> Result<Json<index::Page>, AppError> {
+    let parent = clean_path(&q.prefix)?;
+    let limit = q.limit.unwrap_or(200).clamp(0, 1000);
+    Ok(Json(index::list(&s.db, user.id, &parent, q.sort, q.desc, q.offset.max(0), limit).await?))
+}
+
+#[derive(Deserialize)]
+pub struct SearchQuery {
+    pub q: String,
+    pub limit: Option<i64>,
+}
+
+pub async fn search_files(
+    State(s): State<AppState>,
+    user: AuthUser,
+    Query(q): Query<SearchQuery>,
+) -> Result<Json<Vec<index::Row>>, AppError> {
+    let term = q.q.trim();
+    if term.is_empty() {
+        return Ok(Json(vec![]));
+    }
+    Ok(Json(index::search(&s.db, user.id, term, q.limit.unwrap_or(200).clamp(1, 1000)).await?))
 }
 
 /// Parse "bytes=a-b" | "bytes=a-" | "bytes=-n" -> [start, end). None = không hợp lệ/không có.
@@ -111,7 +131,12 @@ pub async fn delete_file(
 ) -> Result<StatusCode, AppError> {
     let mut row = load_user(&s.db, user.id).await?;
     let mut q = Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64);
-    let _freed = s.store.delete(user.id, &path, &mut q).await?;
+    let r = s.store.delete(user.id, &path, &mut q).await;
+    // Mất trên store (hoặc vừa xoá) -> bỏ khỏi chỉ mục luôn để không còn dòng "ma".
+    if matches!(r, Ok(_) | Err(crate::files::StoreError::NotFound)) {
+        index::remove_file(&s.db, user.id, &clean_path(&path)?).await?;
+    }
+    r?;
     row.quota_used = q.used_bytes as i64;
     sqlx::query("UPDATE users SET quota_used = $1 WHERE id = $2")
         .bind(row.quota_used)
@@ -125,6 +150,8 @@ pub async fn delete_file(
 pub struct InitBody {
     pub path: String,
     pub size: u64,
+    /// mtime gốc của file (unix giây), giữ lại thay vì lấy giờ upload.
+    pub mtime: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -148,7 +175,7 @@ pub async fn init_upload(
     let id = Uuid::new_v4().to_string();
     s.uploads.lock().await.insert(
         id.clone(),
-        PendingUpload { user_id: user.id, path: b.path, size: b.size },
+        PendingUpload { user_id: user.id, path: b.path, size: b.size, mtime: b.mtime },
     );
     Ok(Json(InitOut { id }))
 }
@@ -194,17 +221,18 @@ pub async fn complete_upload(
     }
     let row = load_user(&s.db, user.id).await?;
     let mut q = Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64);
-    let r = s.store.complete(user.id, &id, &pend.path, pend.size, &mut q).await;
+    let r = s.store.complete(user.id, &id, &pend.path, pend.size, pend.mtime, &mut q).await;
     // Clean staging on failure so retries start fresh.
     if r.is_err() {
         let _ = std::fs::remove_file(s.store.stage_path(user.id, &id));
     }
-    r?;
+    let mtime = r?;
     sqlx::query("UPDATE users SET quota_used = $1 WHERE id = $2")
         .bind(q.used_bytes as i64)
         .bind(user.id)
         .execute(&s.db)
         .await?;
+    index::add_file(&s.db, user.id, &clean_path(&pend.path)?, pend.size, mtime).await?;
     Ok(StatusCode::CREATED)
 }
 

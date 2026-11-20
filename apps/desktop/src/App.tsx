@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Index, Match, Show, Switch, batch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { api, isSelfHostedWeb, serverOrigin, type Entry, type Me } from "./api";
 import { PRESETS, previewDim, setDim, setImage, setPreset, setTheme, syncFromServer, ui, wallCss } from "./background";
 import { Icon, ext, kindOf } from "./icons";
@@ -17,6 +17,11 @@ const fmtSize = (n: number) => {
   return `${n.toFixed(n < 10 ? 1 : 0)} ${u[i]}`;
 };
 const fmtDate = (s: number) => (s ? new Date(s * 1000).toLocaleDateString("vi-VN") : "");
+const parentOf = (p: string) => p.split("/").slice(0, -1).join("/");
+
+// Danh sách ảo: chỉ render dòng đang thấy, tải từng trang PAGE dòng từ server.
+const PAGE = 200;
+const ROW_H = 48;
 
 export default function App() {
   const [server, setServer] = createSignal(serverOrigin());
@@ -27,7 +32,13 @@ export default function App() {
   const [needReset, setNeedReset] = createSignal(false);
   const [err, setErr] = createSignal("");
   const [prefix, setPrefix] = createSignal("");
-  const [files, setFiles] = createSignal<Entry[]>([]);
+  const [stats, setStats] = createSignal({ dirs: 0, files: 0, bytes: 0 });
+  const [ver, setVer] = createSignal(0); // tăng mỗi khi cache trang thay đổi
+  const [results, setResults] = createSignal<Entry[] | null>(null); // chế độ tìm kiếm
+  const [scrollTop, setScrollTop] = createSignal(0);
+  const [viewH, setViewH] = createSignal(800);
+  const [viewW, setViewW] = createSignal(800);
+  const [tileH, setTileH] = createSignal(0);
   const [loading, setLoading] = createSignal(false);
   const [open, setOpen] = createSignal<{ path: string; text: string } | null>(null);
   const [query, setQuery] = createSignal("");
@@ -41,6 +52,11 @@ export default function App() {
   const [showLook, setShowLook] = createSignal(false);
   const [upload, setUpload] = createSignal<{ name: string; pct: number; left: number } | null>(null);
   let fileInput!: HTMLInputElement;
+  let scrollEl: HTMLDivElement | undefined;
+  let vbox: HTMLDivElement | undefined;
+  let pages = new Map<number, Entry[]>();
+  let inflight = new Set<number>();
+  let gen = 0;
 
   const join = (name: string) => (prefix() ? `${prefix()}/${name}` : name);
 
@@ -64,16 +80,55 @@ export default function App() {
     else setErr(`${what}: ${String(e?.message ?? e)}`);
   };
 
+  const listOpts = (p: number) => {
+    const { key, asc } = sort();
+    return { sort: key, desc: !asc, offset: p * PAGE, limit: PAGE };
+  };
+
+  /** Tải các trang `need` của `pre`, thay cache 1 lần (giữ nội dung cũ tới khi có dữ liệu mới). */
+  const fetchSet = async (pre: string, need: number[]) => {
+    const g = ++gen;
+    const got = await Promise.all(need.map((p) => api.files(pre, listOpts(p))));
+    if (g !== gen) return false;
+    pages = new Map(need.map((p, i) => [p, got[i].entries]));
+    inflight = new Set();
+    // Đổi prefix cùng lúc với cache: effect tải trang kế không được thấy prefix cũ.
+    batch(() => {
+      setPrefix(pre);
+      setStats({ dirs: got[0].dirs, files: got[0].files, bytes: got[0].bytes });
+      setVer((v) => v + 1);
+    });
+    return true;
+  };
+
+  const fetchPage = async (p: number) => {
+    if (pages.has(p) || inflight.has(p)) return;
+    const g = gen;
+    inflight.add(p);
+    try {
+      const r = await api.files(prefix(), listOpts(p));
+      if (g !== gen) return;
+      pages.set(p, r.entries);
+      setStats({ dirs: r.dirs, files: r.files, bytes: r.bytes });
+      setVer((v) => v + 1);
+    } catch (e) {
+      if (g === gen) fail(e, "Không tải được danh sách file");
+    } finally {
+      if (g === gen) inflight.delete(p);
+    }
+  };
+
   const load = async (p: string) => {
     setErr("");
     setLoading(true);
     try {
-      // Ẩn dotfile (.nextkloud chứa cài đặt/nền).
-      setFiles((await api.files(p)).filter((f) => !f.name.startsWith(".")));
-      setPrefix(p);
+      if (!(await fetchSet(p, [0]))) return;
       setQuery("");
+      setResults(null);
       setOpen(null);
       setSideOpen(false);
+      if (scrollEl) scrollEl.scrollTop = 0;
+      setScrollTop(0);
     } catch (e) {
       fail(e, "Không tải được danh sách file");
     } finally {
@@ -116,26 +171,136 @@ export default function App() {
     }
   };
 
-  const shown = createMemo(() => {
-    const q = query().trim().toLowerCase();
+  const sortedResults = createMemo(() => {
+    const r = results();
+    if (!r) return null;
     const { key, asc } = sort();
-    const list = q ? files().filter((f) => f.name.toLowerCase().includes(q)) : files().slice();
     const dir = asc ? 1 : -1;
-    return list.sort((a, b) => {
+    return r.slice().sort((a, b) => {
       if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
       const d = key === "name" ? a.name.localeCompare(b.name, undefined, { numeric: true }) : a[key] - b[key];
       return d * dir;
     });
   });
-  const totalSize = createMemo(() => files().reduce((s, f) => s + f.size, 0));
+  const total = () => sortedResults()?.length ?? stats().dirs + stats().files;
+  const entryAt = (i: number): Entry | undefined => {
+    ver();
+    const r = sortedResults();
+    return r ? r[i] : pages.get(Math.floor(i / PAGE))?.[i % PAGE];
+  };
+
+  const small = () => window.innerWidth <= 600; // khớp media query trong style.css
+  const gap = () => (small() ? 6 : 10);
+  const cols = () => (view() === "grid" ? Math.max(1, Math.floor((viewW() + gap()) / ((small() ? 120 : 150) + gap()))) : 1);
+  const rowH = () => {
+    if (view() === "list") return ROW_H;
+    const w = (viewW() - gap() * (cols() - 1)) / cols();
+    return tileH() || Math.ceil((w - 16) * 0.75 + 66) + gap();
+  };
+  const nRows = () => Math.ceil(total() / cols());
+  const range = createMemo(() => {
+    const h = rowH();
+    const a = Math.max(0, Math.floor(scrollTop() / h) - 4);
+    const b = Math.min(nRows(), Math.ceil((scrollTop() + viewH()) / h) + 4);
+    return [a, Math.max(a, b)] as const;
+  });
+  const visibleRows = createMemo(() => {
+    const [a, b] = range();
+    return Array.from({ length: b - a }, (_, k) => a + k);
+  });
+  const pagesInView = () => {
+    const [a, b] = range();
+    const c = cols();
+    const first = Math.floor((a * c) / PAGE);
+    const last = Math.floor(Math.max(a * c, b * c - 1) / PAGE);
+    return Array.from({ length: last - first + 1 }, (_, k) => first + k).filter((p) => p * PAGE < Math.max(total(), 1));
+  };
+
+  // Kéo thanh cuộn nhanh qua 1 triệu dòng: chỉ tải khi dừng ~80ms, kèm trang kế tiếp.
+  let fetchTimer: number | undefined;
+  createEffect(() => {
+    if (results()) return;
+    const need = pagesInView();
+    ver();
+    clearTimeout(fetchTimer);
+    if (need.every((p) => pages.has(p))) {
+      const next = need[need.length - 1] + 1;
+      if (next * PAGE < total()) fetchPage(next);
+      return;
+    }
+    fetchTimer = window.setTimeout(() => need.forEach(fetchPage), 80);
+  });
+
+  /** Tải lại trang đang xem (sau xoá/upload) — giữ nguyên vị trí cuộn. */
+  const refresh = async () => {
+    try {
+      await fetchSet(prefix(), pagesInView());
+    } catch (e) {
+      fail(e, "Không tải được danh sách file");
+    }
+  };
+
+  const ro = new ResizeObserver(() => {
+    if (!scrollEl) return;
+    setViewH(scrollEl.clientHeight);
+    setViewW(scrollEl.clientWidth - 16); // padding 8px 2 bên
+    measureTile();
+  });
+  onCleanup(() => ro.disconnect());
+  const measureTile = () =>
+    requestAnimationFrame(() => {
+      const t = scrollEl?.querySelector<HTMLElement>(".vgrid .tile:not(.ghost)");
+      if (t) setTileH(t.offsetHeight + gap());
+    });
+  createEffect(() => {
+    if (view() === "grid" && ver() >= 0) measureTile();
+  });
+  let rafPending = false;
+  const onScroll = () => {
+    if (rafPending) return;
+    rafPending = true;
+    requestAnimationFrame(() => {
+      rafPending = false;
+      if (scrollEl && vbox) setScrollTop(Math.max(0, scrollEl.scrollTop - vbox.offsetTop));
+    });
+  };
+
+  // Tìm trên toàn bộ file (server), gõ xong 250ms mới gửi.
+  let searchTimer: number | undefined;
+  createEffect(() => {
+    const q = query().trim();
+    clearTimeout(searchTimer);
+    if (q.length < 2) {
+      setResults(null);
+      return;
+    }
+    searchTimer = window.setTimeout(async () => {
+      try {
+        const r = await api.search(q);
+        if (query().trim() !== q) return;
+        setResults(r);
+        if (scrollEl) scrollEl.scrollTop = 0;
+        setScrollTop(0);
+      } catch (e) {
+        fail(e, "Tìm kiếm lỗi");
+      }
+    }, 250);
+  });
+
   const crumbs = createMemo(() => prefix().split("/").filter(Boolean));
 
-  const toggleSort = (key: SortKey) =>
+  const toggleSort = (key: SortKey) => {
     setSort((s) => ({ key, asc: s.key === key ? !s.asc : true }));
+    if (!results()) {
+      if (scrollEl) scrollEl.scrollTop = 0;
+      setScrollTop(0);
+      fetchSet(prefix(), [0]).catch((e) => fail(e, "Không tải được danh sách file"));
+    }
+  };
 
   const openEntry = async (f: Entry) => {
-    if (f.is_dir) return load(join(f.name));
-    const path = join(f.name);
+    if (f.is_dir) return load(f.path);
+    const path = f.path;
     setErr("");
     try {
       if (/\.md$/i.test(f.name)) setOpen({ path, text: await api.readText(path) });
@@ -161,8 +326,10 @@ export default function App() {
   const remove = async (f: Entry) => {
     if (!confirm(`Xoá "${f.name}"?`)) return;
     try {
-      await api.remove(join(f.name));
-      await load(prefix());
+      await api.remove(f.path);
+      const r = results();
+      if (r) setResults(r.filter((x) => x.path !== f.path));
+      else await refresh();
       refreshMe();
     } catch (e) {
       fail(e, "Không xoá được");
@@ -185,7 +352,7 @@ export default function App() {
     } finally {
       setUpload(null);
       fileInput.value = "";
-      load(prefix());
+      refresh();
       refreshMe();
     }
   };
@@ -198,17 +365,17 @@ export default function App() {
   const RowMenu = (p: { f: Entry }) => (
     <div class="menu-wrap" onClick={(e) => e.stopPropagation()}>
       <button class="icon-btn" title="Thao tác" onClick={(e) => {
-        const n = p.f.name;
+        const n = p.f.path;
         if (menuFor() === n) { setMenuFor(null); setMenuUpFor(null); return; }
         setMenuUpFor(flipIfNeeded(e.currentTarget as HTMLElement) ? n : null);
         setMenuFor(n);
       }}>
         <Icon name="more" />
       </button>
-      <Show when={menuFor() === p.f.name}>
-        <div class="menu" classList={{ up: menuUpFor() === p.f.name }}>
+      <Show when={menuFor() === p.f.path}>
+        <div class="menu" classList={{ up: menuUpFor() === p.f.path }}>
           <Show when={!p.f.is_dir}>
-            <button onClick={() => { setMenuFor(null); setMenuUpFor(null); download(join(p.f.name), p.f.name); }}>
+            <button onClick={() => { setMenuFor(null); setMenuUpFor(null); download(p.f.path, p.f.name); }}>
               <Icon name="download" /> Tải xuống
             </button>
             <button class="danger" onClick={() => { setMenuFor(null); setMenuUpFor(null); remove(p.f); }}>
@@ -216,7 +383,7 @@ export default function App() {
             </button>
           </Show>
           <Show when={p.f.is_dir}>
-            <button onClick={() => { setMenuFor(null); setMenuUpFor(null); load(join(p.f.name)); }}>
+            <button onClick={() => { setMenuFor(null); setMenuUpFor(null); load(p.f.path); }}>
               <Icon name="folder" /> Mở
             </button>
           </Show>
@@ -292,7 +459,7 @@ export default function App() {
             </a>
             <div class="hdr-search">
               <Icon name="search" />
-              <input value={query()} onInput={(e) => setQuery(e.currentTarget.value)} placeholder="Tìm trong thư mục này" />
+              <input value={query()} onInput={(e) => setQuery(e.currentTarget.value)} placeholder="Tìm tất cả file" />
               <Show when={query()}>
                 <button class="icon-btn sm" onClick={() => setQuery("")}><Icon name="close" size={14} /></button>
               </Show>
@@ -413,7 +580,16 @@ export default function App() {
                   </div>
                 }
               >
-                <div class="scroll" classList={{ busy: loading() }}>
+                <div
+                  class="scroll"
+                  classList={{ busy: loading() }}
+                  onScroll={onScroll}
+                  ref={(el) => {
+                    scrollEl = el;
+                    setScrollTop(0);
+                    ro.observe(el);
+                  }}
+                >
                   <Show when={view() === "list"}>
                     <div class="row head">
                       <span class="c-name sortable" onClick={() => toggleSort("name")}>
@@ -427,58 +603,85 @@ export default function App() {
                       </span>
                       <span class="c-act" />
                     </div>
-                    <For each={shown()}>
-                      {(f) => {
-                        const k = kindOf(f.name, f.is_dir);
-                        return (
-                          <div class="row" classList={{ "menu-open": menuFor() === f.name }} onClick={() => openEntry(f)}>
-                            <span class="c-name">
-                              <span class="fi" style={{ color: k.color }}>
-                                <Icon name={k.icon} size={20} />
-                              </span>
-                              <span class="fname" title={f.name}>{f.name}</span>
-                            </span>
-                            <span class="c-size">{f.is_dir ? "—" : fmtSize(f.size)}</span>
-                            <span class="c-date">{fmtDate(f.modified)}</span>
-                            <span class="c-act">
-                              <RowMenu f={f} />
-                            </span>
-                          </div>
-                        );
-                      }}
-                    </For>
-                  </Show>
-
-                  <Show when={view() === "grid"}>
-                    <div class="grid">
-                      <For each={shown()}>
-                        {(f) => {
-                          const k = kindOf(f.name, f.is_dir);
+                    <div class="vbox" ref={vbox} style={{ height: `${nRows() * ROW_H}px` }}>
+                      <Index each={visibleRows()}>
+                        {(i) => {
+                          const pos = () => ({ transform: `translateY(${i() * ROW_H}px)` });
                           return (
-                            <div class="tile" classList={{ "menu-open": menuFor() === f.name }} onClick={() => openEntry(f)}>
-                              <div class="tile-art" style={{ color: k.color }}>
-                                <Icon name={k.icon} size={44} />
-                                <Show when={!f.is_dir && ext(f.name)}>
-                                  <span class="ext" style={{ background: k.color }}>{ext(f.name)}</span>
-                                </Show>
-                              </div>
-                              <div class="tile-meta">
-                                <span class="fname" title={f.name}>{f.name}</span>
-                                <RowMenu f={f} />
-                              </div>
-                              <span class="tile-sub">{f.is_dir ? "Thư mục" : `${fmtSize(f.size)} · ${fmtDate(f.modified)}`}</span>
-                            </div>
+                            <Show when={entryAt(i())} fallback={<div class="row vrow ghost" style={pos()}><span class="sk" /></div>}>
+                              {(f) => {
+                                const k = () => kindOf(f().name, f().is_dir);
+                                return (
+                                  <div class="row vrow" style={pos()} classList={{ "menu-open": menuFor() === f().path }} onClick={() => openEntry(f())}>
+                                    <span class="c-name">
+                                      <span class="fi" style={{ color: k().color }}>
+                                        <Icon name={k().icon} size={20} />
+                                      </span>
+                                      <span class="fcol">
+                                        <span class="fname" title={f().path}>{f().name}</span>
+                                        <Show when={results() && parentOf(f().path)}>
+                                          <span class="fpath">{parentOf(f().path)}</span>
+                                        </Show>
+                                      </span>
+                                    </span>
+                                    <span class="c-size">{f().is_dir ? "—" : fmtSize(f().size)}</span>
+                                    <span class="c-date">{fmtDate(f().modified)}</span>
+                                    <span class="c-act">
+                                      <RowMenu f={f()} />
+                                    </span>
+                                  </div>
+                                );
+                              }}
+                            </Show>
                           );
                         }}
-                      </For>
+                      </Index>
                     </div>
                   </Show>
 
-                  <Show when={!loading() && shown().length === 0}>
+                  <Show when={view() === "grid"}>
+                    <div class="vbox vgrid" ref={vbox} style={{ height: `${nRows() * rowH()}px` }}>
+                      <Index each={visibleRows()}>
+                        {(r) => (
+                          <div
+                            class="grid vgrid-row"
+                            style={{ transform: `translateY(${r() * rowH()}px)`, "grid-template-columns": `repeat(${cols()}, minmax(0, 1fr))` }}
+                          >
+                            <Index each={Array.from({ length: Math.min(cols(), total() - r() * cols()) }, (_, k) => r() * cols() + k)}>
+                              {(i) => (
+                                <Show when={entryAt(i())} fallback={<div class="tile ghost"><div class="tile-art" /></div>}>
+                                  {(f) => {
+                                    const k = () => kindOf(f().name, f().is_dir);
+                                    return (
+                                      <div class="tile" classList={{ "menu-open": menuFor() === f().path }} onClick={() => openEntry(f())}>
+                                        <div class="tile-art" style={{ color: k().color }}>
+                                          <Icon name={k().icon} size={44} />
+                                          <Show when={!f().is_dir && ext(f().name)}>
+                                            <span class="ext" style={{ background: k().color }}>{ext(f().name)}</span>
+                                          </Show>
+                                        </div>
+                                        <div class="tile-meta">
+                                          <span class="fname" title={f().path}>{f().name}</span>
+                                          <RowMenu f={f()} />
+                                        </div>
+                                        <span class="tile-sub">{f().is_dir ? "Thư mục" : `${fmtSize(f().size)} · ${fmtDate(f().modified)}`}</span>
+                                      </div>
+                                    );
+                                  }}
+                                </Show>
+                              )}
+                            </Index>
+                          </div>
+                        )}
+                      </Index>
+                    </div>
+                  </Show>
+
+                  <Show when={!loading() && total() === 0}>
                     <div class="empty">
-                      <Icon name={query() ? "search" : "folder"} size={48} />
-                      <p>{query() ? "Không có kết quả" : "Thư mục trống"}</p>
-                      <Show when={!query()}>
+                      <Icon name={results() ? "search" : "folder"} size={48} />
+                      <p>{results() ? "Không có kết quả" : "Thư mục trống"}</p>
+                      <Show when={!results()}>
                         <button class="btn primary" onClick={() => fileInput.click()}>
                           <Icon name="upload" /> Tải file lên
                         </button>
@@ -487,10 +690,15 @@ export default function App() {
                   </Show>
                 </div>
                 <div class="foot">
-                  <span>
-                    {files().filter((f) => f.is_dir).length} thư mục · {files().filter((f) => !f.is_dir).length} file
-                  </span>
-                  <span>{fmtSize(totalSize())}</span>
+                  <Show
+                    when={!results()}
+                    fallback={<span>{results()!.length >= 300 ? "300+ kết quả (gõ cụ thể hơn)" : `${results()!.length} kết quả`}</span>}
+                  >
+                    <span>
+                      {stats().dirs.toLocaleString("vi-VN")} thư mục · {stats().files.toLocaleString("vi-VN")} file
+                    </span>
+                    <span>{fmtSize(stats().bytes)}</span>
+                  </Show>
                 </div>
               </Show>
             </main>

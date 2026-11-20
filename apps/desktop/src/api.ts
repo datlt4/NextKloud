@@ -12,10 +12,25 @@ export function serverOrigin(): string {
 }
 
 export interface Entry {
+  path: string;
   name: string;
   is_dir: boolean;
   size: number;
   modified: number;
+}
+
+export interface Page {
+  entries: Entry[];
+  dirs: number;
+  files: number;
+  bytes: number;
+}
+
+export interface ListOpts {
+  sort: "name" | "size" | "modified";
+  desc: boolean;
+  offset: number;
+  limit: number;
 }
 
 export interface Me {
@@ -64,8 +79,15 @@ export const api = {
     });
     if (!r.ok) throw new Error("change password failed");
   },
-  async files(prefix: string) {
-    const r = await req(`/api/files?prefix=${encodeURIComponent(prefix)}`);
+  /** 1 trang của thư mục (server phân trang, thư mục luôn trước). */
+  async files(prefix: string, o: ListOpts) {
+    const q = new URLSearchParams({ prefix, sort: o.sort, desc: String(o.desc), offset: String(o.offset), limit: String(o.limit) });
+    const r = await req(`/api/files?${q}`);
+    return r.json() as Promise<Page>;
+  },
+  /** Tìm theo tên trên toàn bộ file. */
+  async search(q: string) {
+    const r = await req(`/api/search?q=${encodeURIComponent(q)}&limit=300`);
     return r.json() as Promise<Entry[]>;
   },
   async me() {
@@ -84,7 +106,11 @@ export const api = {
     const init = await req("/api/files/uploads", {
       method: "POST",
       headers: json,
-      body: JSON.stringify({ path, size: data.size }),
+      body: JSON.stringify({
+        path,
+        size: data.size,
+        mtime: data instanceof File ? Math.floor(data.lastModified / 1000) : undefined,
+      }),
     });
     const { id } = (await init.json()) as { id: string };
     const CHUNK = 8 * 1024 * 1024;

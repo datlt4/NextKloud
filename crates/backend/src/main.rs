@@ -30,6 +30,28 @@ async fn ensure_admin(db: &PgPool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+async fn reindex(db: &PgPool, store: &Store, username: Option<&str>) {
+    let users: Vec<(Uuid, String)> = sqlx::query_as("SELECT id, username FROM users WHERE $1::text IS NULL OR username = $1")
+        .bind(username)
+        .fetch_all(db)
+        .await
+        .expect("load users");
+    if users.is_empty() {
+        eprintln!("no such user");
+        std::process::exit(1);
+    }
+    for (id, name) in users {
+        let t = std::time::Instant::now();
+        match nextkloud_backend::index::rebuild(db, store, id).await {
+            Ok((n, b)) => println!("{name}: {n} files, {b} bytes ({:.1}s)", t.elapsed().as_secs_f32()),
+            Err(e) => {
+                eprintln!("{name}: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt().with_env_filter("info").init();
@@ -57,6 +79,31 @@ async fn main() {
     .expect("storage init");
     // Fail sớm nếu bucket chưa có / sai key, thay vì lỗi lúc upload.
     store.op.check().await.expect("storage check (bucket tồn tại? key đúng?)");
+    // `nextkloud reindex [username]`: dựng lại chỉ mục từ store (sau migrate thủ công).
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("reindex") {
+        reindex(&db, &store, args.get(2).map(String::as_str)).await;
+        return;
+    }
+    // User chưa có chỉ mục (lần đầu nâng cấp) -> dựng nền, không chặn khởi động.
+    {
+        let (db, store) = (db.clone(), store.clone());
+        tokio::spawn(async move {
+            let ids: Vec<(Uuid,)> = sqlx::query_as(
+                "SELECT id FROM users u WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.user_id = u.id)",
+            )
+            .fetch_all(&db)
+            .await
+            .unwrap_or_default();
+            for (id,) in ids {
+                match nextkloud_backend::index::rebuild(&db, &store, id).await {
+                    Ok((n, b)) if n > 0 => tracing::info!("indexed user {id}: {n} files, {b} bytes"),
+                    Ok(_) => {}
+                    Err(e) => tracing::error!("index user {id}: {e}"),
+                }
+            }
+        });
+    }
     let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| {
         tracing::warn!("JWT_SECRET unset — using dev default, set it in production");
         "dev-insecure-change-me".into()

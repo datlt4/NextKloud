@@ -21,6 +21,7 @@ pub struct PendingUpload {
     pub user_id: Uuid,
     pub path: String,
     pub size: u64,
+    pub mtime: Option<i64>,
 }
 
 #[derive(Clone)]

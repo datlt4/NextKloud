@@ -77,6 +77,8 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/users/:id/quota", post(u::set_quota))
         .route("/api/users/:id/password", post(u::reset_password))
         .route("/api/files", get(f::list_files))
+        // Không đặt dưới /api/files/ để khỏi đụng file tên "search".
+        .route("/api/search", get(f::search_files))
         .route("/api/files/uploads", post(f::init_upload))
         // axum mặc định chặn body > 2MB; chunk cho phép tới 64MB.
         .route(
