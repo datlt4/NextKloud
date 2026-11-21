@@ -25,6 +25,7 @@ const P: Record<string, string> = {
   download: "M12 4v12M7 11l5 5 5-5M4 20h16",
   close: "M6 6l12 12M18 6L6 18",
   back: "M15 18l-6-6 6-6",
+  next: "M9 6l6 6-6 6",
   cloud: "M7 18h10a4 4 0 0 0 .5-8A6 6 0 0 0 6 9.5 4.3 4.3 0 0 0 7 18z",
   check: "M5 12l5 5 9-10",
   edit: "M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4",

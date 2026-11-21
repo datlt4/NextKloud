@@ -1,11 +1,15 @@
 pub mod auth;
+pub mod config;
 pub mod file_handlers;
 pub mod files;
 pub mod git;
 pub mod index;
+pub mod office;
 pub mod ops;
 pub mod quota;
 pub mod routes;
 pub mod state;
+pub mod thumb;
 pub mod tts;
 pub mod users;
+pub mod zip;

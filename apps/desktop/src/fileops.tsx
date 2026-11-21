@@ -170,6 +170,7 @@ const fmtWhen = (s: number) => new Date(s * 1000).toLocaleString("vi-VN", { date
 
 export function TrashPage(props: { onError: (m: string) => void; onChanged: () => void }) {
   const [items, { refetch }] = createResource(() => api.trash());
+  const [cfg] = createResource(() => api.config().catch(() => ({ trash_days: 30 })));
   const [busy, setBusy] = createSignal<string | null>(null);
   const total = () => (items() ?? []).reduce((a, t) => a + t.size, 0);
   const run = async (key: string, f: () => Promise<void>) => {
@@ -191,7 +192,7 @@ export function TrashPage(props: { onError: (m: string) => void; onChanged: () =
     <div class="trash">
       <div class="toolbar">
         <h2 class="tb-title"><Icon name="trash" /> Thùng rác</h2>
-        <span class="muted sm hide-xs">Tự xoá sau 30 ngày · vẫn tính vào dung lượng</span>
+        <span class="muted sm hide-xs">Tự xoá sau {cfg()?.trash_days ?? 30} ngày · vẫn tính vào dung lượng</span>
         <button class="btn danger sm" style={{ "margin-left": "auto" }} disabled={!items()?.length || !!busy()} onClick={() => {
           if (confirm(`Xoá vĩnh viễn ${items()!.length} mục (${fmtSize(total())})? Không thể hoàn tác.`)) run("all", () => api.emptyTrash());
         }}>

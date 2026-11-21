@@ -80,12 +80,16 @@ pub fn parse_range(h: &str, size: u64) -> Option<(u64, u64)> {
 }
 
 /// Stream từ store, không nạp cả file vào RAM. Hỗ trợ Range (tua video, tải tiếp).
+/// <video>/<audio> không gửi được Bearer -> chấp nhận token qua ?t=.
 pub async fn download(
     State(s): State<AppState>,
-    user: AuthUser,
-    Path(path): Path<String>,
     headers: HeaderMap,
+    Path(path): Path<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Response, AppError> {
+    let user = crate::thumb::auth_opt(&headers, &q, &s)
+        .await
+        .ok_or_else(|| AppError::Auth("missing token".into()))?;
     let meta = s.store.stat(user.id, &path).await?;
     if meta.is_dir() {
         return Err(AppError::BadRequest("not a file (use ?prefix= to list)".into()));

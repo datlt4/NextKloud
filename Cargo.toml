@@ -20,3 +20,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 opendal = { version = "0.59", default-features = false, features = ["services-s3", "services-fs", "reqwest-rustls-tls", "executors-tokio"] }
 futures = "0.3"
+image = "0.25"
+sha2 = "0.10"
+flate2 = "1"
+crc32fast = "1"

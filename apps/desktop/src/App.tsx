@@ -1,4 +1,4 @@
-import { For, Index, Match, Show, Switch, batch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Index, Match, Show, Switch, batch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, Suspense } from "solid-js";
 import { api, isSelfHostedWeb, serverOrigin, type Entry, type Me } from "./api";
 import { syncFromServer, ui, wallCss } from "./background";
 import { ResetForm } from "./forms";
@@ -8,6 +8,26 @@ import { Icon, ext, kindOf } from "./icons";
 import Settings, { type SettingsTab } from "./Settings";
 import { Avatar } from "./avatar";
 import MarkdownView from "./viewers/MarkdownView";
+import { viewerKind, hasThumb, type VKind } from "./viewers/kinds";
+const TextView = lazy(() => import("./viewers/TextView"));
+const ImageView = lazy(() => import("./viewers/ImageView"));
+const VideoView = lazy(() => import("./viewers/VideoView"));
+const PdfView = lazy(() => import("./viewers/PdfView"));
+const ZipView = lazy(() => import("./viewers/ZipView"));
+const EpubView = lazy(() => import("./viewers/EpubView"));
+const DrawioView = lazy(() => import("./viewers/DrawioView"));
+const ExcalidrawView = lazy(() => import("./viewers/ExcalidrawView"));
+const OfficeView = lazy(() => import("./viewers/OfficeView"));
+
+/** Thumbnail server cho tile grid; lỗi thì ẩn, giữ icon mặc định. */
+function ThumbImg(props: { path: string; name: string }) {
+  const [ok, setOk] = createSignal(true);
+  return (
+    <Show when={ok() && hasThumb(props.name)}>
+      <img class="tile-thumb" loading="lazy" decoding="async" src={api.thumbUrl(props.path)} alt="" onError={() => setOk(false)} />
+    </Show>
+  );
+}
 import { MoveDialog, NameDialog, TrashPage, errText, joinPath } from "./fileops";
 
 type SortKey = "name" | "size" | "modified";
@@ -36,7 +56,7 @@ export default function App() {
   const [viewW, setViewW] = createSignal(800);
   const [tileH, setTileH] = createSignal(0);
   const [loading, setLoading] = createSignal(false);
-  const [open, setOpen] = createSignal<{ path: string; text: string } | null>(null);
+  const [open, setOpen] = createSignal<{ path: string; name: string; kind: VKind; text?: string } | null>(null);
   const [query, setQuery] = createSignal("");
   const [sort, setSort] = createSignal<{ key: SortKey; asc: boolean }>({ key: "name", asc: true });
   const [view, setView] = createSignal<"list" | "grid">((localStorage.getItem("nk-view") as "grid") || "list");
@@ -325,13 +345,29 @@ export default function App() {
   const openEntry = async (f: Entry) => {
     if (f.is_dir) return load(f.path);
     const path = f.path;
+    const name = f.name;
     setErr("");
     try {
-      if (/\.md$/i.test(f.name)) setOpen({ path, text: await api.readText(path) });
-      else download(path, f.name);
+      const kind = viewerKind(name);
+      if (kind === "markdown") setOpen({ path, name, kind, text: await api.readText(path) });
+      else if (kind === "other") download(path, name);
+      else setOpen({ path, name, kind });
     } catch (e) {
       fail(e, "Không mở được file");
     }
+  };
+
+  /** Ảnh cùng thư mục (để lightbox vuốt qua lại). Ưu tiên cache trang đang xem. */
+  const siblingImages = (path: string) => {
+    const all: Entry[] = results()
+      ? sortedResults()!
+      : [...pages.keys()].sort((a, b) => a - b).flatMap((p) => pages.get(p) ?? []);
+    const imgs = all.filter((e) => !e.is_dir && viewerKind(e.name) === "image");
+    let idx = imgs.findIndex((e) => e.path === path);
+    if (idx < 0) {
+      return { files: [{ path, name: path.split("/").pop() ?? path }], index: 0 };
+    }
+    return { files: imgs.map((e) => ({ path: e.path, name: e.name })), index: idx };
   };
 
   const download = async (path: string, name: string) => {
@@ -807,7 +843,43 @@ export default function App() {
                     <button class="btn ghost" onClick={() => setOpen(null)}>
                       <Icon name="back" /> Quay lại
                     </button>
-                    <MarkdownView path={open()!.path} text={open()!.text} />
+                    <Suspense fallback={<p class="muted">Đang mở…</p>}>
+                      <Switch>
+                        <Match when={open()!.kind === "markdown"}>
+                          <MarkdownView path={open()!.path} text={open()!.text ?? ""} />
+                        </Match>
+                        <Match when={open()!.kind === "text"}>
+                          <TextView path={open()!.path} />
+                        </Match>
+                        <Match when={open()!.kind === "image"}>
+                          {(() => {
+                            const s = siblingImages(open()!.path);
+                            return <ImageView files={s.files} index={s.index} />;
+                          })()}
+                        </Match>
+                        <Match when={open()!.kind === "video" || open()!.kind === "audio"}>
+                          <VideoView path={open()!.path} />
+                        </Match>
+                        <Match when={open()!.kind === "pdf"}>
+                          <PdfView path={open()!.path} />
+                        </Match>
+                        <Match when={open()!.kind === "zip"}>
+                          <ZipView path={open()!.path} />
+                        </Match>
+                        <Match when={open()!.kind === "epub"}>
+                          <EpubView path={open()!.path} />
+                        </Match>
+                        <Match when={open()!.kind === "drawio"}>
+                          <DrawioView path={open()!.path} />
+                        </Match>
+                        <Match when={open()!.kind === "excalidraw"}>
+                          <ExcalidrawView path={open()!.path} />
+                        </Match>
+                        <Match when={open()!.kind === "office"}>
+                          <OfficeView path={open()!.path} />
+                        </Match>
+                      </Switch>
+                    </Suspense>
                   </div>
                 }
               >
@@ -909,6 +981,7 @@ export default function App() {
                                           <Icon name="check" size={14} />
                                         </span>
                                         <div class="tile-art" style={{ color: k().color }}>
+                                          <ThumbImg path={f().path} name={f().name} />
                                           <Icon name={k().icon} size={44} />
                                           <Show when={!f().is_dir && ext(f().name)}>
                                             <span class="ext" style={{ background: k().color }}>{ext(f().name)}</span>

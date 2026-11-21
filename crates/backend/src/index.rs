@@ -166,17 +166,36 @@ pub async fn remove_file(db: &PgPool, user: Uuid, path: &str) -> Result<(), sqlx
 /// Trả về (số file, tổng bytes).
 pub async fn rebuild(db: &PgPool, store: &Store, user: Uuid) -> Result<(u64, u64), StoreError> {
     let objs = store.scan(user).await?;
-    let mut dirs: HashMap<&str, i64> = HashMap::new();
+    let mut dirs: HashMap<String, i64> = HashMap::new();
     for (p, _, m) in &objs {
         for d in ancestors(p) {
-            let e = dirs.entry(d).or_insert(*m);
+            let e = dirs.entry(d.to_string()).or_insert(*m);
             *e = (*e).max(*m);
+        }
+    }
+    // Giữ lại thư mục rỗng do user tạo: S3 không có thư mục rỗng nên quét không thấy.
+    // So sánh bằng Rust để khỏi dính wildcard SQL khi tên có '%' hoặc '_'.
+    // Bỏ qua thư mục hệ thống (dấu chấm): avatar/cài đặt vẫn được quét lại bình thường.
+    let old: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT path, modified FROM files WHERE user_id = $1 AND is_dir AND left(path, 1) <> '.' ORDER BY path",
+    )
+    .bind(user)
+    .fetch_all(db)
+    .await
+    .map_err(db_err)?;
+    {
+        let scanned: std::collections::HashSet<&str> = objs.iter().map(|(p, _, _)| p.as_str()).collect();
+        for (p, m) in old {
+            if scanned.iter().any(|f| f.starts_with(&format!("{p}/"))) {
+                continue;
+            }
+            dirs.entry(p).or_insert(m);
         }
     }
     let total: u64 = objs.iter().map(|o| o.1).sum();
     let rows = dirs
         .iter()
-        .map(|(p, m)| (*p, true, 0u64, *m))
+        .map(|(p, m)| (p.as_str(), true, 0u64, *m))
         .chain(objs.iter().map(|(p, s, m)| (p.as_str(), false, *s, *m)));
     let rows: Vec<_> = rows.collect();
 

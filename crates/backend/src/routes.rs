@@ -25,6 +25,31 @@ pub fn content_type(path: &str) -> &'static str {
         "png" => "image/png",
         "ico" => "image/x-icon",
         "woff2" => "font/woff2",
+        "mp4" | "m4v" => "video/mp4",
+        "webm" => "video/webm",
+        "mkv" => "video/x-matroska",
+        "mov" => "video/quicktime",
+        "avi" => "video/x-msvideo",
+        "mp3" => "audio/mpeg",
+        "m4a" => "audio/mp4",
+        "ogg" | "oga" | "opus" => "audio/ogg",
+        "wav" => "audio/wav",
+        "flac" => "audio/flac",
+        "pdf" => "application/pdf",
+        "zip" => "application/zip",
+        "epub" => "application/epub+zip",
+        "doc" => "application/msword",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls" => "application/vnd.ms-excel",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "ppt" => "application/vnd.ms-powerpoint",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "odt" => "application/vnd.oasis.opendocument.text",
+        "ods" => "application/vnd.oasis.opendocument.spreadsheet",
+        "odp" => "application/vnd.oasis.opendocument.presentation",
+        "csv" => "text/csv",
+        "md" => "text/markdown; charset=utf-8",
+        "txt" => "text/plain; charset=utf-8",
         _ => "application/octet-stream",
     }
 }
@@ -86,6 +111,7 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/search", get(f::search_files))
         .route("/api/mkdir", post(f::mkdir))
         .route("/api/move", post(f::move_entry))
+        .route("/api/config", get(crate::config::get))
         .route("/api/trash", get(f::list_trash).delete(f::empty_trash))
         .route("/api/trash/:id", axum::routing::delete(f::purge_trash))
         .route("/api/trash/:id/restore", post(f::restore_trash))
@@ -103,6 +129,12 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/tts/voices", get(crate::tts::voices))
         .route("/api/tts/detect", get(crate::tts::detect))
         .route("/api/tts/synthesize", post(crate::tts::synthesize))
+        .route("/api/zip/list", get(crate::zip::list))
+        .route("/api/zip/file", get(crate::zip::extract))
+        .route("/api/thumb/*path", get(crate::thumb::thumb))
+        .route("/api/office/config", post(crate::office::config))
+        .route("/api/office/file", get(crate::office::file_dl))
+        .route("/api/office/callback", post(crate::office::callback))
         .with_state(state)
 }
 

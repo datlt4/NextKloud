@@ -109,8 +109,14 @@ impl Store {
             Err(e) => return Err(e.into()),
         };
         // List S3 không kèm user metadata (mtime gốc) -> HEAD từng object, song song.
+        // Bỏ qua cache thumbnail (.nextkloud/thumbs/): file hệ thống, không tính quota.
+        // Mọi thứ khác dưới .nextkloud (avatar, cài đặt, thùng rác) vẫn quét bình thường.
         let skip = root.len();
         futures::stream::iter(keys)
+            .filter(|k: &String| {
+                let rel = k.as_str().get(skip..).unwrap_or("");
+                futures::future::ready(!rel.starts_with(".nextkloud/thumbs/"))
+            })
             .map(|k| async move {
                 let m = self.op.stat(&k).await?;
                 Ok((k[skip..].to_string(), m.content_length(), mtime_of(&m)))

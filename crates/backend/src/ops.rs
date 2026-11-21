@@ -174,7 +174,27 @@ pub async fn move_path(db: &PgPool, store: &Store, user: Uuid, from: &str, to: &
             ensure_dirs(&mut tx, user, &ancestors(&np), modified).await?;
         }
     }
-    tx.commit().await?;
+    if let Err(e) = tx.commit().await {
+        // Ghi chỉ mục lỗi nhưng file đã chuyển xong trên S3: dời S3 về chỗ cũ
+        // để khỏi mồ côi (chỉ mục chưa đổi nên không cần đụng database).
+        for p in &ok {
+            let (a, b) = (format!("{user}/{}", dest(p)), format!("{user}/{p}"));
+            let r = if rename {
+                store.op.rename(&a, &b).await.map(|_| ())
+            } else {
+                match store.op.copy(&a, &b).await {
+                    Ok(_) => store.op.delete(&a).await,
+                    Err(e) => Err(e),
+                }
+            };
+            if let Err(e) = r.map_err(crate::files::StoreError::from) {
+                if !matches!(e, crate::files::StoreError::NotFound) {
+                    tracing::warn!("hoàn tác move thất bại {a} -> {b}: {e}");
+                }
+            }
+        }
+        return Err(e.into());
+    }
     if let Some(Err(e)) = results.into_iter().find(|r| r.is_err()) {
         return Err(AppError::Internal(format!("chuyển được {}/{} file: {e}", ok.len(), files.len())));
     }
@@ -212,22 +232,22 @@ pub async fn trash(db: &PgPool, store: &Store, user: Uuid, path: &str) -> Result
     .fetch_one(db)
     .await?;
     let t = TrashItem { id: Uuid::new_v4(), orig_path: path.into(), is_dir, size, files, deleted_at: now() };
-    // Chỉ hiện trong thùng rác khi đã chuyển xong (dọn sớm sẽ đụng lúc đang copy).
-    // Hỏng giữa chừng vẫn ghi mục để phần đã chuyển không thành mồ côi.
-    let r = move_path(db, store, user, path, &trash_path(&t)).await;
-    if matches!(r, Ok(_) | Err(AppError::Internal(_))) {
-        sqlx::query("INSERT INTO trash (id, user_id, orig_path, is_dir, size, files, deleted_at) VALUES ($1,$2,$3,$4,$5,$6,$7)")
-            .bind(t.id)
-            .bind(user)
-            .bind(&t.orig_path)
-            .bind(t.is_dir)
-            .bind(t.size)
-            .bind(t.files)
-            .bind(t.deleted_at)
-            .execute(db)
-            .await?;
+    // Ghi mục TRƯỚC khi chuyển file: nếu ghi lỗi thì chưa đụng gì tới dữ liệu.
+    // move_path đã tự hoàn tác phần S3 dở dang khi ghi chỉ mục lỗi, nên sau đó gỡ mục là sạch.
+    sqlx::query("INSERT INTO trash (id, user_id, orig_path, is_dir, size, files, deleted_at) VALUES ($1,$2,$3,$4,$5,$6,$7)")
+        .bind(t.id)
+        .bind(user)
+        .bind(&t.orig_path)
+        .bind(t.is_dir)
+        .bind(t.size)
+        .bind(t.files)
+        .bind(t.deleted_at)
+        .execute(db)
+        .await?;
+    if let Err(e) = move_path(db, store, user, path, &trash_path(&t)).await {
+        let _ = sqlx::query("DELETE FROM trash WHERE id = $1").bind(t.id).execute(db).await;
+        return Err(e);
     }
-    r?;
     Ok(t)
 }
 
@@ -281,16 +301,26 @@ pub async fn purge(db: &PgPool, store: &Store, user: Uuid, id: Uuid) -> Result<i
     Ok(freed)
 }
 
-/// Dọn các mục cũ hơn `days` ngày (mọi user). Trả về số mục đã dọn.
+/// Số ngày giữ thùng rác (env TRASH_DAYS, mặc định 30).
+pub fn trash_days() -> i64 {
+    std::env::var("TRASH_DAYS").ok().and_then(|v| v.parse().ok()).unwrap_or(30)
+}
+
+/// Dọn các mục quá `days` ngày (mọi user). Trả về số mục đã dọn.
+/// Một mục lỗi không chặn các mục khác.
 pub async fn purge_expired(db: &PgPool, store: &Store, days: i64) -> Result<usize, AppError> {
     let old: Vec<(Uuid, Uuid)> = sqlx::query_as("SELECT user_id, id FROM trash WHERE deleted_at < $1")
         .bind(now() - days * 86400)
         .fetch_all(db)
         .await?;
+    let mut done = 0;
     for (u, id) in &old {
-        purge(db, store, *u, *id).await?;
+        match purge(db, store, *u, *id).await {
+            Ok(_) => done += 1,
+            Err(e) => tracing::warn!("dọn thùng rác thất bại user={u} id={id}: {e:?}"),
+        }
     }
-    Ok(old.len())
+    Ok(done)
 }
 
 #[cfg(test)]

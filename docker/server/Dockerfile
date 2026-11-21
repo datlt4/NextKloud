@@ -22,7 +22,7 @@ RUN --mount=type=cache,id=cargo-registry-$TARGETPLATFORM,target=/usr/local/cargo
 FROM debian:bookworm-slim
 # git + ssh cho mirror vault. ssh đòi uid có trong /etc/passwd -> tạo user 1000 (PUID mặc định).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates git openssh-client \
+ && apt-get install -y --no-install-recommends ca-certificates git openssh-client ffmpeg \
  && rm -rf /var/lib/apt/lists/* \
  && useradd -u 1000 -M -d /data nextkloud
 COPY --from=build /nextkloud /usr/local/bin/nextkloud

@@ -198,6 +198,31 @@ export const api = {
   async mkdir(path: string) {
     await req("/api/mkdir", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
   },
+  /** Ghi đè / tạo file text (dùng khi editor drawio/excalidraw lưu). */
+  async saveText(path: string, text: string) {
+    await this.upload(path, new Blob([text], { type: "text/plain;charset=utf-8" }));
+  },
+  /** URL stream trực tiếp (kèm ?t= cho <video>/<audio>/<img> không gửi được Bearer). */
+  streamUrl(path: string) {
+    const t = token();
+    return `${serverOrigin()}/api/files/${encPath(path)}?t=${encodeURIComponent(t ?? "")}`;
+  },
+  thumbUrl(path: string, s = 256) {
+    const t = token();
+    return `${serverOrigin()}/api/thumb/${encPath(path)}?s=${s}&t=${encodeURIComponent(t ?? "")}`;
+  },
+  async officeConfig(path: string) {
+    const r = await req("/api/office/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
+    return r.json() as Promise<{ config: any; token: string }>;
+  },
+  async zipList(path: string, limit = 20000) {
+    const r = await req(`/api/zip/list?path=${encodeURIComponent(path)}&limit=${limit}`);
+    return r.json() as Promise<{ entries: { name: string; size: number; is_dir: boolean }[]; total: number; truncated: boolean }>;
+  },
+  zipFileUrl(path: string, entry: string) {
+    const t = token();
+    return `${serverOrigin()}/api/zip/file?path=${encodeURIComponent(path)}&entry=${encodeURIComponent(entry)}&t=${encodeURIComponent(t ?? "")}`;
+  },
   /** Đổi tên hoặc di chuyển (file/thư mục). */
   async move(from: string, to: string) {
     const r = await req("/api/move", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ from, to }) });
@@ -223,6 +248,9 @@ export const api = {
   },
   async trash() {
     return (await req("/api/trash")).json() as Promise<TrashItem[]>;
+  },
+  async config() {
+    return (await req("/api/config")).json() as Promise<{ trash_days: number }>;
   },
   async restore(id: string) {
     await req(`/api/trash/${id}/restore`, { method: "POST" });

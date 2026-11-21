@@ -45,12 +45,15 @@ pub struct Repo {
     pub created_at: i64,
 }
 
-/// Ẩn mật khẩu/token trong URL https://user:token@host.
+/// Ẩn mật khẩu/token trong URL: `https://user:token@host` và `https://token@host`.
 pub fn redact(url: &str) -> String {
     if let Some((scheme, rest)) = url.split_once("://") {
         if let Some((cred, host)) = rest.split_once('@') {
             if let Some((user, _)) = cred.split_once(':') {
                 return format!("{scheme}://{user}:***@{host}");
+            }
+            if !cred.is_empty() {
+                return format!("{scheme}://***@{host}");
             }
         }
     }
@@ -78,6 +81,12 @@ pub fn check_branch(b: &str) -> Result<(), String> {
             && !b.contains("..")
             && b.chars().all(|c| c.is_ascii_alphanumeric() || "._/-".contains(c)));
     if ok { Ok(()) } else { Err("Tên nhánh không hợp lệ".into()) }
+}
+
+/// Hai thư mục có chồng lấn nhau không (bằng nhau hoặc một cái nằm trong cái kia).
+/// So sánh segment chính xác, tránh wildcard SQL khi tên có `_` hoặc `%`.
+pub fn path_clash(a: &str, b: &str) -> bool {
+    a == b || a.starts_with(&format!("{b}/")) || b.starts_with(&format!("{a}/"))
 }
 
 /// "git@github.com:me/My Vault.git" -> "My Vault".
@@ -280,10 +289,12 @@ async fn run(db: &PgPool, store: &Store, r: &Repo) -> Result<String, String> {
 
     let row = load_user(db, r.user_id).await.map_err(|e| format!("{e:?}"))?;
     let mut q = Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64);
+    let start_used = row.quota_used;
     let res = apply(db, store, r.user_id, &prefix, &wd, &upsert, &delete, ctime, &mut q).await;
-    // Ghi quota cả khi lỗi giữa chừng: các file đã ghi vẫn phải được tính.
-    sqlx::query("UPDATE users SET quota_used = $1 WHERE id = $2")
-        .bind(q.used_bytes as i64)
+    // Cộng dồn thay vì ghi đè: trong lúc sync, user có thể tải file/dọn thùng rác ở chỗ khác.
+    let delta = q.used_bytes as i64 - start_used;
+    sqlx::query("UPDATE users SET quota_used = GREATEST(0, quota_used + $1) WHERE id = $2")
+        .bind(delta)
         .bind(r.user_id)
         .execute(db)
         .await
@@ -338,6 +349,14 @@ async fn apply(
         // Bỏ symlink, submodule: chỉ mirror file thường.
         let Ok(m) = std::fs::symlink_metadata(&src) else { continue };
         if !m.is_file() {
+            // Upstream đổi file thành symlink/submodule: xoá bản thường cũ còn sót trong mirror.
+            let dest = format!("{prefix}{p}");
+            match store.delete(user, &dest, q).await {
+                Ok(_) | Err(StoreError::NotFound) => {
+                    index::remove_file(db, user, &dest).await.map_err(|e| e.to_string())?
+                }
+                Err(e) => return Err(format!("{dest}: {e}")),
+            }
             continue;
         }
         let dest = format!("{prefix}{p}");
@@ -425,15 +444,11 @@ pub async fn create(State(s): State<AppState>, user: AuthUser, Json(b): Json<Cre
     check_branch(&branch).map_err(AppError::BadRequest)?;
     let folder = ops::user_path(b.folder.as_deref().filter(|f| !f.trim().is_empty()).unwrap_or(&format!("Vaults/{}", repo_name(&url))))?;
     let interval = b.interval_h.unwrap_or(8).clamp(1, 24 * 7);
-    // 2 repo không được ghi chồng lên nhau.
-    let clash: Option<(String,)> = sqlx::query_as(
-        "SELECT folder FROM git_repos WHERE user_id = $1 AND (folder = $2 OR $2 LIKE folder || '/%' OR folder LIKE $2 || '/%')",
-    )
-    .bind(user.id)
-    .bind(&folder)
-    .fetch_optional(&s.db)
-    .await?;
-    if let Some((f,)) = clash {
+    // 2 repo không được ghi chồng lên nhau (so từng segment trong Rust,
+    // không dùng LIKE để khỏi dính wildcard %/_ trong tên thư mục).
+    let existing: Vec<(String,)> =
+        sqlx::query_as("SELECT folder FROM git_repos WHERE user_id = $1").bind(user.id).fetch_all(&s.db).await?;
+    if let Some(f) = existing.into_iter().map(|(f,)| f).find(|f| path_clash(f, &folder)) {
         return Err(AppError::Conflict(format!("thư mục trùng với repo đang mirror vào '{f}'")));
     }
     let base = base_dir(&s.store);
@@ -516,7 +531,11 @@ pub async fn update(
         .execute(&s.db)
         .await?;
     // Đổi nhánh: clone lại từ đầu cho sạch.
+    // Chặn khi đang sync: xoá workdir giữa chừng làm lần đồng bộ đó hỏng.
     if branch != r.branch {
+        if get(&s.db, id, user.id).await?.state == "syncing" {
+            return Err(AppError::Conflict("đang đồng bộ, thử lại sau".into()));
+        }
         let _ = std::fs::remove_dir_all(base_dir(&s.store).join(id.to_string()));
     }
     Ok(Json(get(&s.db, id, user.id).await?))
@@ -568,10 +587,25 @@ mod tests {
         assert!(check_branch("main").is_ok() && check_branch("feat/x-1").is_ok() && check_branch("").is_ok());
         assert!(check_branch("-x").is_err() && check_branch("a..b").is_err() && check_branch("a b").is_err());
         assert_eq!(redact("https://me:secret@host/r.git"), "https://me:***@host/r.git");
+        assert_eq!(redact("https://TOKEN123@github.com/me/r.git"), "https://***@github.com/me/r.git");
+        assert_eq!(redact("https://host/r.git"), "https://host/r.git");
         assert_eq!(redact("git@github.com:me/r.git"), "git@github.com:me/r.git");
         assert_eq!(repo_name("git@github.com:me/My-Vault.git"), "My-Vault");
         assert_eq!(repo_name("https://gitea.local/me/notes/"), "notes");
         assert_eq!(parse_diff("M\0a.md\0D\0b/c.md\0A\0n.md\0"), (vec!["a.md".into(), "n.md".into()], vec!["b/c.md".into()]));
+    }
+
+    #[test]
+    fn folder_clash_ignores_like_wildcards() {
+        // "_" và "%" trong tên thư mục là ký tự thường, không phải wildcard.
+        assert!(path_clash("a", "a"));
+        assert!(path_clash("a/b", "a"));
+        assert!(path_clash("a", "a/b"));
+        assert!(!path_clash("a", "ab"));
+        assert!(!path_clash("Vault_backup", "VaultXbackup"));
+        assert!(!path_clash("100%_done", "100Xdone"));
+        assert!(path_clash("a_b/c", "a_b"));
+        assert!(!path_clash("a_b", "a/b"));
     }
 
     fn sh(dir: &Path, args: &[&str]) {

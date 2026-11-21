@@ -519,3 +519,26 @@ input { font: inherit; color: var(--text); }
   .hdr { gap: 8px; padding: 0 8px; }
   .viewer { padding: 4px 12px 32px; }
 }
+
+/* --- viewers 9.3 --- */
+.tile-art { position: relative; overflow: hidden; }
+.tile-thumb { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
+.lightbox { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 60vh; }
+.lb-main { margin: 0; max-width: min(100%, 1100px); text-align: center; }
+.lb-main img { max-width: 100%; max-height: 72dvh; object-fit: contain; border-radius: 12px; background: #000; }
+.lb-main figcaption { margin-top: 6px; }
+.lb-nav { flex-shrink: 0; }
+.media-wrap video, .media-wrap audio { width: 100%; max-height: 75dvh; border-radius: 12px; background: #000; }
+.media-wrap audio { max-height: none; margin-top: 12px; }
+.pdf-wrap { display: flex; flex-direction: column; gap: 8px; }
+.pdf-bar { display: flex; align-items: center; gap: 8px; }
+.pdf-page { overflow: auto; display: grid; justify-items: center; }
+.pdf-page canvas { max-width: 100%; border-radius: 8px; box-shadow: var(--shadow); }
+.epub-wrap { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+.epub-book { height: 70dvh; min-height: 420px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.zip-wrap ul.files { margin-top: 8px; }
+.code-view pre { white-space: pre-wrap; word-break: break-word; background: var(--code-bg); padding: 12px; border-radius: 10px; overflow: auto; max-height: 75dvh; }
+.drawio-wrap iframe { width: 100%; height: 74dvh; min-height: 480px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.excali-wrap { height: 74dvh; min-height: 480px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.office-wrap { display: flex; flex-direction: column; gap: 8px; }
+.office-box { height: 76dvh; min-height: 480px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }

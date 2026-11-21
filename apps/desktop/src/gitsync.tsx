@@ -144,11 +144,16 @@ function RepoCard(props: { r: GitRepo; onOpen: (f: string) => void; act: (f: () 
 }
 
 function EditDialog(props: { r: GitRepo; onClose: () => void; onDone: () => void }) {
-  const [url, setUrl] = createSignal(props.r.url);
+  // URL để trống = giữ nguyên (server chỉ che *** khi gửi về, không bao giờ gửi token thật).
+  const [url, setUrl] = createSignal("");
   const [branch, setBranch] = createSignal(props.r.branch ?? "");
   const [err, setErr] = createSignal("");
   const [busy, setBusy] = createSignal(false);
-  const changed = () => url().trim() !== props.r.url || branch().trim() !== (props.r.branch ?? "");
+  const urlChanged = () => {
+    const u = url().trim();
+    return u !== "" && u !== props.r.url;
+  };
+  const changed = () => urlChanged() || branch().trim() !== (props.r.branch ?? "");
   return (
     <div class="modal-bg" onClick={() => !busy() && props.onClose()}>
       <form
@@ -156,10 +161,18 @@ function EditDialog(props: { r: GitRepo; onClose: () => void; onDone: () => void
         onClick={(e) => e.stopPropagation()}
         onSubmit={async (e) => {
           e.preventDefault();
+          const u = url().trim();
+          // Chặn gửi nhầm URL đã che: token thật không bao giờ rời server.
+          if (u.includes("***")) {
+            setErr("URL còn chứa ***, hãy dán lại URL đầy đủ (kèm token nếu repo riêng tư), hoặc để trống để giữ nguyên.");
+            return;
+          }
           setBusy(true);
           setErr("");
           try {
-            await api.gitUpdate(props.r.id, { url: url().trim(), branch: branch().trim() });
+            const body: { url?: string; branch: string } = { branch: branch().trim() };
+            if (urlChanged()) body.url = u;
+            await api.gitUpdate(props.r.id, body);
             props.onDone();
           } catch (e) {
             setErr(errText(e));
@@ -173,13 +186,13 @@ function EditDialog(props: { r: GitRepo; onClose: () => void; onDone: () => void
           <button type="button" class="icon-btn" onClick={props.onClose}><Icon name="close" /></button>
         </div>
         <label>URL repo</label>
-        <input value={url()} onInput={(e) => setUrl(e.currentTarget.value)} placeholder="git@github.com:ban/vault.git" autocomplete="off" spellcheck={false} />
-        <p class="muted sm">Đổi URL áp dụng ngay lần đồng bộ kế tiếp, giữ nguyên deploy key. Repo riêng tư qua https: dùng dạng https://user:token@host/ban/vault.git.</p>
+        <input value={url()} onInput={(e) => setUrl(e.currentTarget.value)} placeholder={props.r.url} autocomplete="off" spellcheck={false} />
+        <p class="muted sm">Để trống để giữ nguyên URL hiện tại. Dán URL đầy đủ khi muốn đổi (kèm token nếu repo riêng tư); đổi URL áp dụng ngay lần đồng bộ kế tiếp, giữ nguyên deploy key.</p>
         <label>Nhánh <span class="muted">(trống = mặc định của repo)</span></label>
         <input value={branch()} onInput={(e) => setBranch(e.currentTarget.value)} placeholder="mặc định của repo" spellcheck={false} />
         <p class="muted sm">Đổi nhánh sẽ clone lại từ đầu.</p>
         <Show when={err()}><p class="err">{err()}</p></Show>
-        <button type="submit" class="btn primary block" disabled={busy() || !url().trim() || !changed()}>
+        <button type="submit" class="btn primary block" disabled={busy() || !changed()}>
           {busy() ? "Đang lưu…" : "Lưu"}
         </button>
       </form>

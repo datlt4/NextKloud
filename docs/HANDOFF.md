@@ -536,7 +536,7 @@ card_links(card_id, url, title, image_url, fetched_at)          -- unfurl Open G
    - Ghi S3 thành công nhưng ghi chỉ mục lỗi thì file bị ẩn (chỉ cứu được bằng `reindex`).
    - Xoá user: xoá S3 trước, DB sau.
    - Cân nhắc job đối soát định kỳ (so số lượng và dung lượng, báo lệch).
-5. **`reindex` xoá các thư mục rỗng** (S3 không có object cho thư mục). Nếu thư mục rỗng cần sống qua reindex thì phải ghi object marker hoặc giữ lại dòng dir trong chỉ mục.
+5. ~~**`reindex` xoá các thư mục rỗng**~~ (đã sửa): `rebuild` giờ giữ lại các thư mục rỗng do user tạo (không có file con trong lần quét, bỏ qua thư mục hệ thống `.`); scan bỏ qua cache `.nextkloud/thumbs/` nên thumbnail không tính vào quota.
 6. **JWT mang cờ `adm`:** thu hồi quyền admin không có hiệu lực tới khi token hết hạn. Nên kiểm tra `is_admin` từ DB ở các API admin.
 7. **CORS `permissive`;** `ALLOWED_ORIGINS` có trong compose nhưng không được dùng. Chưa có rate-limit đăng nhập. JWT để trong localStorage (rủi ro XSS; markdown viewer phải sanitize HTML).
 8. **Offset phân trang sâu khi sort theo size** mất khoảng 430ms trên 1 triệu dòng; `COUNT` mỗi request mất khoảng 70ms. Có thể cache count (Redis) hoặc chỉ count khi offset = 0.
