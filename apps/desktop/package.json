@@ -9,7 +9,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@excalidraw/excalidraw": "^0.18.1",
+    "@excalidraw/excalidraw": "^0.17.6",
     "@tanstack/solid-virtual": "^3.10.0",
     "epubjs": "^0.3.93",
     "marked": "^18.2.1",
@@ -23,5 +23,8 @@
     "typescript": "^5.6.2",
     "vite": "^6.0.0",
     "vite-plugin-solid": "^2.11.0"
+  },
+  "overrides": {
+    "@xmldom/xmldom": "^0.9.12"
   }
 }
