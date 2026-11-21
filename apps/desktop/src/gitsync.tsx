@@ -76,6 +76,7 @@ export function GitPanel(props: { onOpen: (folder: string) => void; onError: (m:
 function RepoCard(props: { r: GitRepo; onOpen: (f: string) => void; act: (f: () => Promise<unknown>) => void }) {
   const r = () => props.r;
   const [showKey, setShowKey] = createSignal(false);
+  const [editing, setEditing] = createSignal(false);
   const chip = () =>
     ({ pending: ["Chờ thêm khoá", "warn"], idle: ["Đã đồng bộ", "good"], syncing: ["Đang đồng bộ…", "soft"], error: ["Lỗi", "err"] })[r().state];
   return (
@@ -119,6 +120,11 @@ function RepoCard(props: { r: GitRepo; onOpen: (f: string) => void; act: (f: () 
           </select>
         </label>
         <span class="grow" />
+        <Show when={r().state !== "syncing"}>
+          <button class="btn ghost sm" title="Sửa link remote / nhánh" onClick={() => setEditing(true)}>
+            <Icon name="edit" /> <span class="hide-xs">Sửa link</span>
+          </button>
+        </Show>
         <Show when={r().ssh_pub && r().state !== "pending"}>
           <button class="btn ghost sm" onClick={() => setShowKey(!showKey())}><Icon name="key" /> <span class="hide-xs">Khoá</span></button>
         </Show>
@@ -130,7 +136,54 @@ function RepoCard(props: { r: GitRepo; onOpen: (f: string) => void; act: (f: () 
           <Icon name="trash" />
         </button>
       </div>
+      <Show when={editing()}>
+        <EditDialog r={r()} onClose={() => setEditing(false)} onDone={() => { setEditing(false); props.act(async () => {}); }} />
+      </Show>
     </section>
+  );
+}
+
+function EditDialog(props: { r: GitRepo; onClose: () => void; onDone: () => void }) {
+  const [url, setUrl] = createSignal(props.r.url);
+  const [branch, setBranch] = createSignal(props.r.branch ?? "");
+  const [err, setErr] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+  const changed = () => url().trim() !== props.r.url || branch().trim() !== (props.r.branch ?? "");
+  return (
+    <div class="modal-bg" onClick={() => !busy() && props.onClose()}>
+      <form
+        class="modal glass form"
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          setErr("");
+          try {
+            await api.gitUpdate(props.r.id, { url: url().trim(), branch: branch().trim() });
+            props.onDone();
+          } catch (e) {
+            setErr(errText(e));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <div class="modal-head">
+          <h3>Sửa link remote</h3>
+          <button type="button" class="icon-btn" onClick={props.onClose}><Icon name="close" /></button>
+        </div>
+        <label>URL repo</label>
+        <input value={url()} onInput={(e) => setUrl(e.currentTarget.value)} placeholder="git@github.com:ban/vault.git" autocomplete="off" spellcheck={false} />
+        <p class="muted sm">Đổi URL áp dụng ngay lần đồng bộ kế tiếp, giữ nguyên deploy key. Repo riêng tư qua https: dùng dạng https://user:token@host/ban/vault.git.</p>
+        <label>Nhánh <span class="muted">(trống = mặc định của repo)</span></label>
+        <input value={branch()} onInput={(e) => setBranch(e.currentTarget.value)} placeholder="mặc định của repo" spellcheck={false} />
+        <p class="muted sm">Đổi nhánh sẽ clone lại từ đầu.</p>
+        <Show when={err()}><p class="err">{err()}</p></Show>
+        <button type="submit" class="btn primary block" disabled={busy() || !url().trim() || !changed()}>
+          {busy() ? "Đang lưu…" : "Lưu"}
+        </button>
+      </form>
+    </div>
   );
 }
 
