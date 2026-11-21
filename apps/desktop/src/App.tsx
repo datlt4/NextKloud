@@ -56,7 +56,7 @@ export default function App() {
   const [viewW, setViewW] = createSignal(800);
   const [tileH, setTileH] = createSignal(0);
   const [loading, setLoading] = createSignal(false);
-  const [open, setOpen] = createSignal<{ path: string; name: string; kind: VKind; text?: string } | null>(null);
+  const [open, setOpen] = createSignal<{ path: string; name: string; kind: VKind; text?: string; anchor?: string | null } | null>(null);
   const [query, setQuery] = createSignal("");
   const [sort, setSort] = createSignal<{ key: SortKey; asc: boolean }>({ key: "name", asc: true });
   const [view, setView] = createSignal<"list" | "grid">((localStorage.getItem("nk-view") as "grid") || "list");
@@ -368,6 +368,93 @@ export default function App() {
       return { files: [{ path, name: path.split("/").pop() ?? path }], index: 0 };
     }
     return { files: imgs.map((e) => ({ path: e.path, name: e.name })), index: idx };
+  };
+
+  /** Mở wikilink Obsidian [[note|alias]] / [[note#head]]: thử đường dẫn tương đối
+   *  trước, rồi tìm theo tên file trong cả vault (giống Obsidian). */
+  const normPath = (parts: string[]): string | null => {
+    const out: string[] = [];
+    for (const seg of parts) {
+      if (!seg || seg === ".") continue;
+      if (seg === "..") {
+        if (!out.length) return null;
+        out.pop();
+      } else out.push(seg);
+    }
+    return out.join("/");
+  };
+  const openWikiLink = async (target: string, anchor?: string) => {
+    const t = target.trim();
+    if (!t) {
+      if (anchor) scrollToAnchor(anchor);
+      return;
+    }
+    setErr("");
+    const cur = open()?.path ?? "";
+    const dir = cur.includes("/") ? cur.slice(0, cur.lastIndexOf("/")) : "";
+    const cands: string[] = [];
+    const pushCand = (p: string | null) => {
+      if (!p) return;
+      cands.push(p);
+      if (!/\.[a-zA-Z0-9]{1,5}$/.test(p)) cands.push(`${p}.md`);
+    };
+    if (t.startsWith("/")) pushCand(normPath(t.slice(1).split("/")));
+    else {
+      pushCand(normPath([...(dir ? dir.split("/") : []), ...t.split("/")]));
+      const base = t.split("/").pop()!;
+      if (base !== t && !t.startsWith("./") && !t.startsWith("../")) {
+        pushCand(normPath([...(dir ? dir.split("/") : []), base]));
+      }
+    }
+    for (const c of [...new Set(cands)]) {
+      try {
+        const name = c.split("/").pop() ?? c;
+        const kind = viewerKind(name);
+        if (kind === "markdown") {
+          const text = await api.readText(c);
+          setOpen({ path: c, name, kind, text, anchor: anchor ?? null });
+        } else if (kind !== "other") {
+          setOpen({ path: c, name, kind });
+        } else continue;
+        return;
+      } catch {
+        /* thử ứng viên tiếp theo */
+      }
+    }
+    // fallback: tìm theo tên file trong cả vault (giống Obsidian resolve by basename)
+    try {
+      const base = t.split("/").pop()!.replace(/\.md$/i, "");
+      const hits = (await api.search(base)).filter(
+        (e) => !e.is_dir && (e.name === `${base}.md` || e.name === base),
+      );
+      hits.sort((a, b) => a.path.length - b.path.length);
+      if (hits.length) {
+        const h = hits[0];
+        setOpen({ path: h.path, name: h.name, kind: "markdown", text: await api.readText(h.path), anchor: anchor ?? null });
+        return;
+      }
+    } catch {
+      /* bỏ qua, báo lỗi chung bên dưới */
+    }
+    fail(new Error("404"), `Không tìm thấy "${t}" trong vault`);
+  };
+
+  /** Cuộn tới heading sau khi mở file (link dạng [[note#section]]). */
+  const scrollToAnchor = (a: string) => {
+    const needle = a.toLowerCase().replace(/[-_]+/g, " ");
+    let tries = 0;
+    const tick = () => {
+      tries += 1;
+      const hs = document.querySelectorAll(".md-body h1, .md-body h2, .md-body h3, .md-body h4, .md-body h5, .md-body h6");
+      for (const h of Array.from(hs)) {
+        if ((h.textContent ?? "").toLowerCase().includes(needle)) {
+          h.scrollIntoView({ block: "start" });
+          return;
+        }
+      }
+      if (tries < 20) setTimeout(tick, 100);
+    };
+    setTimeout(tick, 60);
   };
 
   const download = async (path: string, name: string) => {
@@ -846,7 +933,7 @@ export default function App() {
                     <Suspense fallback={<p class="muted">Đang mở…</p>}>
                       <Switch>
                         <Match when={open()!.kind === "markdown"}>
-                          <MarkdownView path={open()!.path} text={open()!.text ?? ""} />
+                          <MarkdownView path={open()!.path} text={open()!.text ?? ""} anchor={open()!.anchor ?? null} onOpenLink={openWikiLink} />
                         </Match>
                         <Match when={open()!.kind === "text"}>
                           <TextView path={open()!.path} />

@@ -304,7 +304,7 @@ export function hashText(s: string): string {
 
 const audioCache = new Map<string, string>();
 
-export async function speak(text: string): Promise<string> {
+export async function speak(text: string, provider?: "auto" | "edge" | "google"): Promise<string> {
   // Qua backend proxy (/api/tts/*) để chạy được trên domain public,
   // không cần mở port 8016 ra ngoài.
   const key = hashText(text);
@@ -314,7 +314,7 @@ export async function speak(text: string): Promise<string> {
   const r = await fetch(serverOrigin() + "/api/tts/synthesize", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, provider: provider ?? "auto" }),
   });
   if (!r.ok) throw new Error("tts failed");
   const url = URL.createObjectURL(await r.blob());

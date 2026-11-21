@@ -27,6 +27,8 @@ const P: Record<string, string> = {
   back: "M15 18l-6-6 6-6",
   next: "M9 6l6 6-6 6",
   cloud: "M7 18h10a4 4 0 0 0 .5-8A6 6 0 0 0 6 9.5 4.3 4.3 0 0 0 7 18z",
+  listen: "M11 5l-5 4H3v6h3l5 4V5zM15.5 8.5a5 5 0 0 1 0 7M18.4 5.6a9 9 0 0 1 0 12.8",
+  pause: "M9 5v14M15 5v14",
   check: "M5 12l5 5 9-10",
   edit: "M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4",
   move: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM10 13h6M13 10l3 3-3 3",

@@ -52,6 +52,7 @@ pub struct SynthBody {
     pub text: String,
     pub voice: Option<String>,
     pub rate: Option<String>,
+    pub provider: Option<String>,
 }
 
 pub async fn synthesize(State(s): State<AppState>, _u: AuthUser, Json(b): Json<SynthBody>) -> Result<Response, AppError> {
@@ -65,6 +66,7 @@ pub async fn synthesize(State(s): State<AppState>, _u: AuthUser, Json(b): Json<S
             "text": b.text,
             "voice": b.voice.unwrap_or_default(),
             "rate": b.rate.unwrap_or_default(),
+            "provider": b.provider.unwrap_or_default(),
         }))
         .send()
         .await
