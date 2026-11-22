@@ -1,5 +1,6 @@
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { api, serverOrigin } from "../api";
+import { Icon } from "../icons";
 
 declare global {
   interface Window {
@@ -32,11 +33,23 @@ function loadDocsApi(): Promise<void> {
  */
 export default function OfficeView(props: { path: string }) {
   const [err, setErr] = createSignal("");
+  const [fs, setFs] = createSignal(false);
+  let wrap!: HTMLDivElement;
   let box!: HTMLDivElement;
   let editor: any = null;
   let dead = false;
 
+  const toggleFs = async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await wrap.requestFullscreen();
+    } catch {}
+  };
+
   onMount(async () => {
+    const onFs = () => !dead && setFs(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFs);
+    onCleanup(() => document.removeEventListener("fullscreenchange", onFs));
     try {
       await loadDocsApi();
       if (dead) return;
@@ -68,8 +81,11 @@ export default function OfficeView(props: { path: string }) {
   });
 
   return (
-    <div class="office-wrap">
+    <div class="office-wrap" ref={wrap!}>
       <Show when={err()}><p class="err">{err()}</p></Show>
+      <button class="fs-btn" onClick={toggleFs} title={fs() ? "Thoát toàn màn hình (Esc)" : "Xem toàn màn hình"}>
+        <Icon name="expand" size={17} />
+      </button>
       <div class="office-box" ref={box!} />
     </div>
   );

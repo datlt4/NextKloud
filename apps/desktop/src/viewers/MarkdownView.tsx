@@ -185,6 +185,10 @@ function stripMd(s: string) {
 }
 
 const imgUrlCache = new Map<string, string>();
+/** Lazy-load ảnh md: key đang tải + hàng đợi theo element (sống qua các lượt effect). */
+const imgInflight = new Set<string>();
+const pendingGo = new WeakMap<Element, () => void>();
+let imgObs: IntersectionObserver | null = null;
 /** Mục lục vault dùng lại 2 phút khi chuyển giữa các file cùng vault. */
 let outlineCache: { at: number; v: VaultOutline } | null = null;
 async function vaultOutline(path: string): Promise<VaultOutline | null> {
@@ -440,31 +444,68 @@ export default function MarkdownView(props: {
     // 1) ảnh tương đối / embed -> blob URL có auth.
     // Đợi mục lục vault xong mới tra đường dẫn (khớp chính xác, không dò 404);
     // effect đăng ký outline() qua imgIdx() nên tự chạy lại khi mục lục về.
+    // Lazy-load: chỉ tải ảnh trong/kề khung nhìn, còn lại đợi cuộn tới.
     const idx = imgIdx();
     const ready = !outline.loading;
+    onCleanup(() => { imgObs?.disconnect(); imgObs = null; });
     const imgs = host?.querySelectorAll<HTMLImageElement>("img[data-wsrc]") ?? [];
-    if (ready) imgs.forEach((img) => {
-      const raw = decodeURIComponent(img.getAttribute("data-wsrc") ?? "");
-      const key = `${dirOf(props.path)}${String.fromCharCode(0)}${raw}`;
-      const hit = imgUrlCache.get(key);
-      if (hit) {
-        img.src = hit;
-        img.removeAttribute("data-wsrc");
-        return;
-      }
-      loadImg(props.path, raw, idx)
-      .then((url) => {
-        if (img.isConnected) {
-          imgUrlCache.set(key, url);
-          img.src = url;
+    if (ready) {
+      const root = host?.closest(".viewer") ?? null;
+      const ensureObs = () => {
+        if (!imgObs) {
+          imgObs = new IntersectionObserver((es) => {
+            for (const e of es) {
+              if (!e.isIntersecting) continue;
+              const t = e.target as HTMLImageElement;
+              imgObs?.unobserve(t);
+              pendingGo.get(t)?.();
+            }
+          }, { root, rootMargin: "600px 0px" });
+        }
+        return imgObs;
+      };
+      const rb = root instanceof Element ? root.getBoundingClientRect() : null;
+      imgs.forEach((img) => {
+        const raw = decodeURIComponent(img.getAttribute("data-wsrc") ?? "");
+        const key = `${dirOf(props.path)}${String.fromCharCode(0)}${raw}`;
+        const hit = imgUrlCache.get(key);
+        if (hit) {
+          img.src = hit;
           img.removeAttribute("data-wsrc");
-        } else URL.revokeObjectURL(url);
-      })
-      .catch(() => {
-        img.removeAttribute("data-wsrc");
-        img.alt = raw;
+          return;
+        }
+        if (imgInflight.has(key)) return; // đang tải ở lượt effect trước
+        const go = () => {
+          pendingGo.delete(img);
+          if (!img.isConnected || !img.hasAttribute("data-wsrc")) return;
+          imgInflight.add(key);
+          loadImg(props.path, raw, idx)
+          .then((url) => {
+            imgInflight.delete(key);
+            if (img.isConnected) {
+              imgUrlCache.set(key, url);
+              img.src = url;
+              img.removeAttribute("data-wsrc");
+            } else URL.revokeObjectURL(url);
+          })
+          .catch(() => {
+            imgInflight.delete(key);
+            pendingGo.delete(img);
+            if (img.isConnected) {
+              img.removeAttribute("data-wsrc");
+              img.alt = raw;
+            }
+          });
+        };
+        const r = img.getBoundingClientRect();
+        if (!rb || (r.top < rb.bottom + 800 && r.bottom > rb.top - 800)) {
+          go(); // ảnh đầu trang: tải ngay, ưu tiên xong trước
+          return;
+        }
+        pendingGo.set(img, go);
+        ensureObs().observe(img);
       });
-    });
+    }
     // 2) công thức: chỉ tải KaTeX khi bài có công thức
     const maths = host?.querySelectorAll<HTMLElement>("[data-tex]:not([data-done])") ?? [];
     if (maths.length) {

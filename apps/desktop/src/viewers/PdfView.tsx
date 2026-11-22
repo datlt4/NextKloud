@@ -78,6 +78,7 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
   const [scale, setScale] = createSignal(1.4);
   const [ratio, setRatio] = createSignal(1.294); // tỉ lệ cao/rộng trang đầu, dùng cho khung chờ
   const [w1, setW1] = createSignal(612); // bề rộng trang đầu ở zoom 100%
+  const [fs, setFs] = createSignal(false);
   const [layout, setLayoutSig] = createSignal<Layout>(savedLayout());
   const spread = () => layout() === "spread" || layout() === "spread-scroll";
   const scrolling = () => layout() === "scroll" || layout() === "spread-scroll";
@@ -125,6 +126,7 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
   onMount(async () => {
     scroller = host.closest(".viewer");
     scroller?.addEventListener("scroll", onScroll, { passive: true });
+    document.addEventListener("fullscreenchange", onFs);
     try {
       const buf = await (await api.readBlob(props.path)).arrayBuffer();
       if (cancelled) return;
@@ -145,6 +147,7 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
   onCleanup(() => {
     cancelled = true;
     scroller?.removeEventListener("scroll", onScroll);
+    document.removeEventListener("fullscreenchange", onFs);
     try {
       task?.destroy();
     } catch {}
@@ -157,6 +160,13 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
     if (scrolling()) scrollToPage(n, true);
   };
   const go = (d: number) => jump(`p${Math.min(Math.max(1, (spread() ? shown()[0] : page()) + d * step()), pages() || 1)}`);
+  const toggleFs = async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await host.requestFullscreen();
+    } catch {}
+  };
+  const onFs = () => !cancelled && setFs(!!document.fullscreenElement);
   const zoom = (d: number) => setScale((s) => Math.min(3, Math.max(0.4, +(s + d).toFixed(1))));
   const onErr = (m: string) => !cancelled && setErr(m);
 
@@ -218,6 +228,9 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
           %
         </span>
         <button class="icon-btn" onClick={() => zoom(0.2)} title="Phóng to">+</button>
+        <button class="icon-btn" onClick={toggleFs} title={fs() ? "Thoát toàn màn hình (Esc)" : "Xem toàn màn hình"}>
+          <Icon name="expand" size={17} />
+        </button>
       </div>
       <Show when={err()}><p class="err">{err()}</p></Show>
       <Show when={doc()}>
