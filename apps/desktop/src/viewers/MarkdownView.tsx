@@ -325,8 +325,13 @@ export default function MarkdownView(props: {
   const [builtHash, setBuiltHash] = createSignal<string | null>(null);
   const [playingAll, setPlayingAll] = createSignal(false);
   const [prepping, setPrepping] = createSignal<[number, number] | null>(null);
+  const [prepped, setPrepped] = createSignal(false);
   const curHash = createMemo(() => hashText(props.text));
   const stale = () => builtHash() !== null && builtHash() !== curHash();
+  createEffect(() => {
+    curHash();
+    setPrepped(false);
+  });
   let host: HTMLElement | undefined;
   const dirOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 
@@ -350,15 +355,18 @@ export default function MarkdownView(props: {
     }
   };
 
-  // Tải trước toàn bài vào cache (để offline/nghe mượt), không phát tiếng.
+  // Tải trước toàn bài vào cache RAM (nghe liền mạch, không chờ từng đoạn).
+  // Chưa phải lưu offline lâu dài: tắt/reload trang là mất, phải tải lại.
   const prefetchAll = async () => {
     const items = list().filter((b) => b.kind === "speak" && stripForSpeech(b.text).trim());
     setPrepping([0, items.length]);
+    setPrepped(false);
     try {
       for (let i = 0; i < items.length; i++) {
         await speak(stripForSpeech(items[i].text)).catch(() => {});
         setPrepping([i + 1, items.length]);
       }
+      setPrepped(true);
     } finally {
       setPrepping(null);
     }
@@ -466,12 +474,11 @@ export default function MarkdownView(props: {
       onClick={onArticleClick}
     >
       <div class="md-bar">
-        <b>{props.path}</b>
         <button onClick={readAll} disabled={playingAll()}>
           {playingAll() ? "Đang đọc…" : (<><Icon name="listen" size={15} /> Đọc cả bài</>)}
         </button>
-        <button class="ghost" onClick={prefetchAll} disabled={!!prepping() || playingAll()} title="Tải trước audio toàn bài vào cache (nghe offline/mượt)">
-          {prepping() ? `Chuẩn bị ${prepping()![0]}/${prepping()![1]}…` : "Chuẩn bị offline"}
+        <button class="ghost" onClick={prefetchAll} disabled={!!prepping() || playingAll()} title="Tải trước audio của cả bài vào bộ nhớ đệm để nghe liền mạch, không phải chờ từng đoạn. Tắt/reload trang là mất, phải tải lại — chưa phải lưu offline lâu dài.">
+          {prepping() ? `Đang tải ${prepping()![0]}/${prepping()![1]}…` : prepped() ? "Đã tải xong ✓" : "Tải trước audio"}
         </button>
       </div>
       <Show when={stale()}>

@@ -75,6 +75,7 @@ export default function App() {
   const [menuUpFor, setMenuUpFor] = createSignal<string | null>(null);
   const [userMenu, setUserMenu] = createSignal(false);
   const [userMenuUp, setUserMenuUp] = createSignal(false);
+  const [mSearch, setMSearch] = createSignal(false);
   const [showLook, setShowLook] = createSignal(false);
   const [page, setPage] = createSignal<"files" | "settings" | "trash" | "notes" | "kanban">("files");
   const [boardId, setBoardId] = createSignal<string | null>(null);
@@ -819,7 +820,7 @@ export default function App() {
             <a href="#" class="hdr-brand" onClick={(e) => { e.preventDefault(); load(""); }}>
               <Logo />
             </a>
-            <div class="hdr-search">
+            <div class="hdr-search hdr-search-inline">
               <Icon name="search" />
               <input value={query()} onInput={(e) => { setPage("files"); setQuery(e.currentTarget.value); }} placeholder={byContent() ? "Tìm trong nội dung ghi chú (.md, .txt)" : "Tìm tất cả file"} />
               <button class="search-mode" classList={{ on: byContent() }} onClick={() => setByContent(!byContent())} title="Đổi giữa tìm theo tên và theo nội dung">
@@ -829,6 +830,9 @@ export default function App() {
                 <button class="icon-btn sm" onClick={() => setQuery("")}><Icon name="close" size={14} /></button>
               </Show>
             </div>
+            <button class="icon-btn search-fab" onClick={() => setMSearch(true)} title="Tìm kiếm">
+              <Icon name="search" size={20} />
+            </button>
             <div class="menu-wrap">
               <button class="avatar" onClick={(e) => {
                 if (userMenu()) { setUserMenu(false); return; }
@@ -874,6 +878,23 @@ export default function App() {
               </Show>
             </div>
           </header>
+          <Show when={mSearch()}>
+            <div class="msearch-bg" onClick={() => setMSearch(false)}>
+              <div class="msearch glass" onClick={(e) => e.stopPropagation()}>
+                <div class="hdr-search hdr-search-modal">
+                  <Icon name="search" />
+                  <input autofocus value={query()} onInput={(e) => { setPage("files"); setQuery(e.currentTarget.value); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setMSearch(false); }} placeholder={byContent() ? "Tìm trong nội dung ghi chú (.md, .txt)" : "Tìm tất cả file"} />
+                  <button class="search-mode" classList={{ on: byContent() }} onClick={() => setByContent(!byContent())} title="Đổi giữa tìm theo tên và theo nội dung">
+                    {byContent() ? "Nội dung" : "Tên"}
+                  </button>
+                  <Show when={query()}>
+                    <button class="icon-btn sm" onClick={() => setQuery("")}><Icon name="close" size={14} /></button>
+                  </Show>
+                </div>
+                <button class="btn ghost" onClick={() => setMSearch(false)}>Đóng</button>
+              </div>
+            </div>
+          </Show>
 
           <div class="body">
             <Show when={sideOpen()}>
@@ -886,7 +907,7 @@ export default function App() {
                   <Icon name="home" /> Tất cả file
                 </button>
                 <button class="nav" classList={{ active: page() === "kanban" }} onClick={() => { setPage("kanban"); setSideOpen(false); }}>
-                  <Icon name="kanban" /> Kanban
+                  <Icon name="kanban" /> Deck
                 </button>
                 <button class="nav" classList={{ active: page() === "notes" }} onClick={() => { setPage("notes"); setSideOpen(false); }}>
                   <Icon name="note" /> Ghi chú

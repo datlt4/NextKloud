@@ -45,7 +45,7 @@ export function KanbanPage(props: { boardId: string | null; onBoard: (id: string
   return (
     <div class="kanban">
       <div class="toolbar kb-bar">
-        <h2 class="tb-title"><Icon name="kanban" /> Kanban</h2>
+        <h2 class="tb-title"><Icon name="kanban" /> Deck</h2>
         <div class="kb-boards">
           <For each={active()}>
             {(b) => <button class="chip" classList={{ on: b.id === props.boardId }} onClick={() => props.onBoard(b.id)}>{b.title}</button>}
@@ -58,7 +58,7 @@ export function KanbanPage(props: { boardId: string | null; onBoard: (id: string
           </Show>
           <button class="btn ghost sm" onClick={newBoard}><Icon name="plus" size={15} /> Board</button>
           <Show when={props.isAdmin}>
-            <button class="btn ghost sm" onClick={() => setImporting(true)}>Nhập từ Deck</button>
+            <button class="btn ghost sm" onClick={() => setImporting(true)}>Nhập từ Nextcloud</button>
           </Show>
         </div>
       </div>
