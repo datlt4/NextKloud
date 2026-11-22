@@ -59,6 +59,50 @@ export interface GitRepo {
   created_at: number;
 }
 
+export interface KLabel {
+  title: string;
+  color: string;
+}
+export interface KBoard {
+  id: string;
+  title: string;
+  labels: KLabel[];
+  archived: boolean;
+  position: number;
+  created_at: number;
+}
+export interface KColumn {
+  id: string;
+  title: string;
+  position: number;
+  is_done: boolean;
+  total: number;
+}
+export interface KCard {
+  id: string;
+  column_id: string;
+  parent_id: string | null;
+  title: string;
+  description: string;
+  position: number;
+  labels: string[];
+  color: string | null;
+  due_at: number | null;
+  done_at: number | null;
+  created_at: number;
+  updated_at: number;
+  sub_total: number;
+  sub_done: number;
+}
+export type KCardPatch = Partial<Pick<KCard, "title" | "description" | "column_id" | "position" | "labels" | "color" | "due_at" | "parent_id">> & { archived?: boolean };
+export interface DeckPreview {
+  id: number;
+  title: string;
+  archived: boolean;
+  imported: boolean;
+  stacks: { id: number; title: string; count: number; merge_into: string | null; is_done: boolean }[];
+  cards: { id: number; title: string; stack_id: number; big: boolean; done: boolean; parent: number | null }[];
+}
 export interface VaultOutline {
   root: string;
   files: { path: string; headings: [number, string][] }[];
@@ -102,6 +146,8 @@ const encPath = (p: string) => p.split("/").map(encodeURIComponent).join("/");
 export function token(): string | null {
   return localStorage.getItem("nk-token");
 }
+
+const JSON_H = { "Content-Type": "application/json" };
 
 async function req(path: string, init?: RequestInit) {
   const t = token();
@@ -256,6 +302,52 @@ export const api = {
   // --- bookmark + ghi chú ---
   async annotations(path: string) {
     return (await req(`/api/annotations?path=${encodeURIComponent(path)}`)).json() as Promise<Annotation[]>;
+  },
+  // --- kanban ---
+  async boards() {
+    return (await req("/api/boards")).json() as Promise<KBoard[]>;
+  },
+  async createBoard(title: string) {
+    return (await req("/api/boards", { method: "POST", headers: JSON_H, body: JSON.stringify({ title }) })).json() as Promise<KBoard>;
+  },
+  async updateBoard(id: string, b: { title?: string; archived?: boolean; labels?: KLabel[] }) {
+    await req(`/api/boards/${id}`, { method: "PATCH", headers: JSON_H, body: JSON.stringify(b) });
+  },
+  async deleteBoard(id: string) {
+    await req(`/api/boards/${id}`, { method: "DELETE" });
+  },
+  async board(id: string, doneLimit = 10) {
+    return (await req(`/api/boards/${id}?done_limit=${doneLimit}`)).json() as Promise<{ board: KBoard; columns: KColumn[]; cards: KCard[] }>;
+  },
+  async columnCards(id: string, offset: number, limit = 50) {
+    return (await req(`/api/columns/${id}/cards?offset=${offset}&limit=${limit}`)).json() as Promise<KCard[]>;
+  },
+  async createColumn(board: string, title: string, is_done = false) {
+    return (await req(`/api/boards/${board}/columns`, { method: "POST", headers: JSON_H, body: JSON.stringify({ title, is_done }) })).json() as Promise<KColumn>;
+  },
+  async updateColumn(id: string, b: { title?: string; position?: number; is_done?: boolean }) {
+    await req(`/api/columns/${id}`, { method: "PATCH", headers: JSON_H, body: JSON.stringify(b) });
+  },
+  async deleteColumn(id: string) {
+    await req(`/api/columns/${id}`, { method: "DELETE" });
+  },
+  async createCard(column_id: string, title: string, parent_id?: string | null) {
+    return (await req("/api/cards", { method: "POST", headers: JSON_H, body: JSON.stringify({ column_id, title, parent_id: parent_id ?? null }) })).json() as Promise<KCard>;
+  },
+  async updateCard(id: string, b: KCardPatch) {
+    return (await req(`/api/cards/${id}`, { method: "PATCH", headers: JSON_H, body: JSON.stringify(b) })).json() as Promise<KCard>;
+  },
+  async deleteCard(id: string) {
+    await req(`/api/cards/${id}`, { method: "DELETE" });
+  },
+  async subtasks(id: string) {
+    return (await req(`/api/cards/${id}/subtasks`)).json() as Promise<KCard[]>;
+  },
+  async deckPreview() {
+    return (await req("/api/kanban/import/deck")).json() as Promise<DeckPreview[]>;
+  },
+  async deckApply(board_id: number, parents: Record<number, number | null>, skip_stacks: number[]) {
+    return (await req("/api/kanban/import/deck", { method: "POST", headers: JSON_H, body: JSON.stringify({ board_id, parents, skip_stacks }) })).json() as Promise<{ board: string; cards: number; subtasks: number }>;
   },
   /** Mục lục cả vault Obsidian chứa file (null nếu không thuộc vault nào). */
   async vaultOutline(path: string) {

@@ -30,6 +30,7 @@ function ThumbImg(props: { path: string; name: string }) {
 }
 import { MoveDialog, NameDialog, TrashPage, errText, joinPath } from "./fileops";
 import { NotesPage } from "./annot";
+import { KanbanPage } from "./kanban";
 
 type SortKey = "name" | "size" | "modified";
 
@@ -75,7 +76,8 @@ export default function App() {
   const [userMenu, setUserMenu] = createSignal(false);
   const [userMenuUp, setUserMenuUp] = createSignal(false);
   const [showLook, setShowLook] = createSignal(false);
-  const [page, setPage] = createSignal<"files" | "settings" | "trash" | "notes">("files");
+  const [page, setPage] = createSignal<"files" | "settings" | "trash" | "notes" | "kanban">("files");
+  const [boardId, setBoardId] = createSignal<string | null>(null);
   type Dlg = { kind: "mkdir" } | { kind: "rename"; f: Entry } | { kind: "move"; paths: string[] };
   const [dlg, setDlg] = createSignal<Dlg | null>(null);
   const [sel, setSel] = createSignal<Set<string>>(new Set());
@@ -192,6 +194,7 @@ export default function App() {
   const routeOf = () => {
     const pg = page();
     if (pg === "settings") return `#/settings/${setTab()}`;
+    if (pg === "kanban") return boardId() ? `#/kanban/${boardId()}` : "#/kanban";
     if (pg !== "files") return `#/${pg}`;
     const o = open();
     if (o) return `#/o/${encP(o.path)}`;
@@ -207,12 +210,15 @@ export default function App() {
   const go = async (h: string) => {
     routing = true;
     try {
-      const m = /^#\/(f|o|notes|trash|settings)(?:\/(.*))?$/.exec(h);
+      const m = /^#\/(f|o|notes|trash|settings|kanban)(?:\/(.*))?$/.exec(h);
       const rest = m?.[2] ? decodeURIComponent(m[2]) : "";
       if (m?.[1] === "f") await load(rest);
       else if (m?.[1] === "o" && rest) await openAt(rest, "");
       else if (m?.[1] === "notes" || m?.[1] === "trash") setPage(m[1]);
-      else if (m?.[1] === "settings") openSettings((rest || "profile") as SettingsTab);
+      else if (m?.[1] === "kanban") {
+        setBoardId(rest || null);
+        setPage("kanban");
+      } else if (m?.[1] === "settings") openSettings((rest || "profile") as SettingsTab);
       else await load("");
     } finally {
       routing = false;
@@ -879,6 +885,9 @@ export default function App() {
                 <button class="nav" classList={{ active: page() === "files" && !prefix() && !open() }} onClick={() => load("")}>
                   <Icon name="home" /> Tất cả file
                 </button>
+                <button class="nav" classList={{ active: page() === "kanban" }} onClick={() => { setPage("kanban"); setSideOpen(false); }}>
+                  <Icon name="kanban" /> Kanban
+                </button>
                 <button class="nav" classList={{ active: page() === "notes" }} onClick={() => { setPage("notes"); setSideOpen(false); }}>
                   <Icon name="note" /> Ghi chú
                 </button>
@@ -921,6 +930,15 @@ export default function App() {
                   </div>
                 </Show>
                 <Settings me={me()!} tab={setTab()} onTab={setSetTab} onMe={setMe} onError={setErr} onOpen={(f) => load(f)} />
+              </Show>
+              <Show when={page() === "kanban"}>
+                <Show when={err()}>
+                  <div class="err banner">
+                    <span>{err()}</span>
+                    <button class="icon-btn sm" onClick={() => setErr("")}><Icon name="close" size={14} /></button>
+                  </div>
+                </Show>
+                <KanbanPage boardId={boardId()} onBoard={setBoardId} isAdmin={!!me()?.is_admin} onError={setErr} />
               </Show>
               <Show when={page() === "notes"}>
                 <NotesPage onOpen={openAt} onError={setErr} />

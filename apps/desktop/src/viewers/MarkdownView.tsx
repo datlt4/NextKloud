@@ -93,8 +93,8 @@ export function blocks(md: string): Block[] {
         break;
       case "heading":
       case "paragraph":
-        if (/^\s*\$[^$]+\$\s*$/.test(t.raw)) {
-          // đoạn chỉ có 1 công thức: không có gì để đọc
+        if (/^\s*\$[^$]+\$\s*$/.test(t.raw) || /^\s*(?:(?:!\[\[[^\]]+\]\]|!\[[^\]]*\]\([^)]*\))\s*)+$/.test(t.raw)) {
+          // đoạn chỉ có 1 công thức hoặc chỉ có ảnh: không có gì để đọc
           out.push({ kind: "skip", html: marked.parse(t.raw) as string, text: "" });
         } else {
           const h = t.type === "heading" ? { level: t.depth as number, label: stripMd(t.text ?? "").replace(/[*_`]/g, "") } : {};
@@ -142,14 +142,16 @@ export function linkifyWiki(html: string): string {
         return `<a href="#" class="wiki-link wiki-embed" data-wiki="${enc}"${anc}>${label}</a>`;
       });
       // 3) link [[target]], [[target|alias]], [[target#head]], [[target#head|alias]]
-      p = p.replace(/\[\[([^\]|#]+)(?:#([^\]|]*))?(?:\|([^\]]*))?\]\]/g, (_m, t: string, h?: string, a?: string) => {
+      p = p.replace(/\[\[([^\]|#]*)(?:#([^\]|]*))?(?:\|([^\]]*))?\]\]/g, (_m, t: string, h?: string, a?: string) => {
         const target = t.trim();
         const enc = encodeURIComponent(target);
         const anc = h ? ` data-anchor="${encodeURIComponent(h.trim())}"` : "";
         const label = escapeHtml(a !== undefined && a !== "" ? a : displayOf(target, h));
         return `<a href="#" class="wiki-link" data-wiki="${enc}"${anc}>${label}</a>`;
       });
-      // 4) #tag Obsidian (chỉ trong chữ, không trong thuộc tính HTML)
+      // 4) block id Obsidian "^fig-1" cuối đoạn: ẩn, giữ làm đích cho [[#^fig-1]]
+      p = p.replace(/(\s|^)\^([A-Za-z0-9-]+)\s*(?=<\/(?:p|li|em|strong)>|$)/g, (_m, sp: string, id: string) => `${sp}<span class="block-id" data-block="${escAttr(id)}"></span>`);
+      // 5) #tag Obsidian (chỉ trong chữ, không trong thuộc tính HTML)
       p = p.replace(/(^|>)([^<]*)/g, (_m, gt: string, text: string) =>
         gt + text.replace(/(^|[\s(])#([\p{L}_][\p{L}\p{N}_/-]*)/gu, (_x, pre: string, tag: string) => `${pre}<span class="md-tag">#${tag}</span>`),
       );
@@ -168,7 +170,7 @@ function relImg(tag: string): string {
 function displayOf(target: string, heading?: string): string {
   const base = target.replace(/\.md$/i, "");
   const name = base.split("/").pop() ?? base;
-  return heading ? `${name} › ${heading}` : name;
+  return heading ? (name ? `${name} › ${heading}` : heading.replace(/^\^/, "")) : name;
 }
 
 function stripMd(s: string) {
@@ -358,8 +360,11 @@ export default function MarkdownView(props: {
 
   const onArticleClick = (e: MouseEvent) => {
     const a = (e.target as HTMLElement).closest?.("a.wiki-link") as HTMLElement | null;
-    if (!a || !props.onOpenLink) return;
+    if (!a) return;
     e.preventDefault();
+    // [[#^block]] / [[#Heading]]: nhảy trong chính bài này
+    if (!a.getAttribute("data-wiki") && a.getAttribute("data-anchor")) return jumpTo(decodeURIComponent(a.getAttribute("data-anchor")!));
+    if (!props.onOpenLink) return;
     props.onOpenLink(
       decodeURIComponent(a.getAttribute("data-wiki") ?? ""),
       a.getAttribute("data-anchor") ? decodeURIComponent(a.getAttribute("data-anchor")!) : undefined,
@@ -403,19 +408,27 @@ export default function MarkdownView(props: {
         });
       });
     }
-    // 3) cuộn tới heading nếu mở link có #section
-    if (props.anchor) {
-      const norm = (x: string) => x.toLowerCase().replace(/[-_*`]+/g, " ").replace(/\s+/g, " ").trim();
-      const needle = norm(props.anchor);
-      const hs = host?.querySelectorAll("h1,h2,h3,h4,h5,h6") ?? [];
-      for (const h of Array.from(hs)) {
-        if (norm(h.textContent ?? "").includes(needle)) {
-          (h as HTMLElement).scrollIntoView({ block: "start" });
-          break;
-        }
+    // 3) cuộn tới heading / block (^id) nếu mở link có #section
+    if (props.anchor) jumpTo(props.anchor, false);
+  });
+
+  /** Nhảy tới block "^id" hoặc heading chứa chữ (link Obsidian). */
+  const jumpTo = (anchor: string, smooth = true) => {
+    if (anchor.startsWith("^")) {
+      const b = host?.querySelector(`.block-id[data-block="${CSS.escape(anchor.slice(1))}"]`)?.closest<HTMLElement>(".md-block");
+      if (b?.dataset.anchor) jump(b.dataset.anchor);
+      return;
+    }
+    const norm = (x: string) => x.toLowerCase().replace(/[-_*`]+/g, " ").replace(/\s+/g, " ").trim();
+    const needle = norm(anchor);
+    const hs = host?.querySelectorAll("h1,h2,h3,h4,h5,h6") ?? [];
+    for (const h of Array.from(hs)) {
+      if (norm(h.textContent ?? "").includes(needle)) {
+        (h as HTMLElement).scrollIntoView({ block: "start", behavior: smooth ? "smooth" : "auto" });
+        break;
       }
     }
-  });
+  };
 
   const anchorOf = (n: Node) => {
     const el = (n instanceof Element ? n : n.parentElement)?.closest<HTMLElement>(".md-block");
@@ -501,7 +514,8 @@ function stripForSpeech(t: string): string {
     .replace(/\$\$[\s\S]*?\$\$/g, " ")
     .replace(/\$[^$\n]+\$/g, " ")
     .replace(/!\[\[[^\]]*\]\]/g, " ")
-    .replace(/\[\[([^\]|#\]]+)(?:#[^\]|]*)?(?:\|([^\]]*))?\]\]/g, (_m, tt: string, a: string | undefined) => a ?? tt);
+    .replace(/(^|\s)\^[A-Za-z0-9-]+\s*$/gm, "$1")
+    .replace(/\[\[([^\]|#\]]*)(?:#[^\]|]*)?(?:\|([^\]]*))?\]\]/g, (_m, tt: string, a: string | undefined) => a ?? tt);
 }
 
 function joinRel(dir: string, rel: string): string {
