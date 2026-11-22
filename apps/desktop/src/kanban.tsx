@@ -404,7 +404,7 @@ function CardItem(props: { card: KCard; parent?: KCard; labelColor: (t: string) 
           <For each={k().labels}>{(l) => <span class="kb-label" style={{ background: props.labelColor(l) }} title={l}>{l}</span>}</For>
         </div>
       </Show>
-      <Show when={props.parent}>{(p) => <div class="kb-parent" title="Task cha"><Icon name="sub" size={12} /> {p().title}</div>}</Show>
+      <Show when={props.parent?.title ?? k().parent_title}>{(t) => <div class="kb-parent" title="Task cha"><Icon name="sub" size={12} /> {t()}</div>}</Show>
       <div class="kb-title">{k().title}</div>
       <Show when={k().due_at || k().sub_total || cl()[1] || k().description || k().attachments.length}>
         <div class="kb-meta">

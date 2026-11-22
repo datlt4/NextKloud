@@ -55,12 +55,15 @@ pub struct Card {
     pub created_at: i64,
     pub updated_at: i64,
     pub attachments: Vec<String>,
+    /// Tên task cha (task cha có thể chưa tải, vd nằm sâu trong cột Xong).
+    pub parent_title: Option<String>,
     /// Số subtask / số subtask đã xong.
     pub sub_total: i64,
     pub sub_done: i64,
 }
 
 const CARD_COLS: &str = "c.id, c.column_id, c.parent_id, c.title, c.description, c.position, c.labels, c.color, c.due_at, c.done_at, c.created_at, c.updated_at, c.attachments,
+    (SELECT p.title FROM cards p WHERE p.id = c.parent_id) AS parent_title,
     (SELECT COUNT(*) FROM cards s WHERE s.parent_id = c.id AND NOT s.archived) AS sub_total,
     (SELECT COUNT(*) FROM cards s WHERE s.parent_id = c.id AND NOT s.archived AND s.done_at IS NOT NULL) AS sub_done";
 

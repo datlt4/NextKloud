@@ -92,6 +92,7 @@ export interface KCard {
   created_at: number;
   updated_at: number;
   attachments: string[];
+  parent_title: string | null;
   sub_total: number;
   sub_done: number;
 }
