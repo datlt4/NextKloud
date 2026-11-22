@@ -518,25 +518,51 @@ pub async fn update(
     Json(b): Json<UpdateBody>,
 ) -> Result<Json<Repo>, AppError> {
     let r = get(&s.db, id, user.id).await?;
-    let url = b.url.map(|u| u.trim().to_string()).unwrap_or(r.url);
+    let url = b.url.map(|u| u.trim().to_string()).filter(|u| !u.is_empty()).unwrap_or(r.url);
     let branch = b.branch.map(|u| u.trim().to_string()).unwrap_or(r.branch.clone());
     check_url(&url).map_err(AppError::BadRequest)?;
     check_branch(&branch).map_err(AppError::BadRequest)?;
-    sqlx::query("UPDATE git_repos SET url = $3, branch = $4, interval_h = $5 WHERE id = $1 AND user_id = $2")
+    // URL đã bị che (***) gửi ngược lên sẽ xoá mất token thật.
+    if url.contains("***@") {
+        return Err(AppError::BadRequest("URL còn chứa ***: dán lại URL đầy đủ hoặc để trống để giữ nguyên".into()));
+    }
+    let interval = b.interval_h.unwrap_or(r.interval_h).clamp(1, 24 * 7);
+    if branch == r.branch {
+        // URL mới được `run` set-url mỗi lần sync nên đổi lúc nào cũng được.
+        sqlx::query("UPDATE git_repos SET url = $3, interval_h = $4 WHERE id = $1 AND user_id = $2")
+            .bind(id)
+            .bind(user.id)
+            .bind(&url)
+            .bind(interval)
+            .execute(&s.db)
+            .await?;
+    } else {
+        // Đổi nhánh: giữ khoá sync trong lúc xoá bản clone, rồi để lần sau đồng bộ lại toàn bộ.
+        let prev: Option<(String,)> = sqlx::query_as(
+            "WITH old AS (SELECT state FROM git_repos WHERE id = $1 AND user_id = $2 FOR UPDATE)
+             UPDATE git_repos g SET state = 'syncing' FROM old
+             WHERE g.id = $1 AND old.state <> 'syncing' RETURNING old.state",
+        )
+        .bind(id)
+        .bind(user.id)
+        .fetch_optional(&s.db)
+        .await?;
+        let Some((prev,)) = prev else {
+            return Err(AppError::Conflict("đang đồng bộ, thử lại sau".into()));
+        };
+        let _ = std::fs::remove_dir_all(base_dir(&s.store).join(id.to_string()));
+        sqlx::query(
+            "UPDATE git_repos SET url = $3, branch = $4, interval_h = $5, state = $6, last_commit = NULL
+             WHERE id = $1 AND user_id = $2",
+        )
         .bind(id)
         .bind(user.id)
         .bind(&url)
         .bind(&branch)
-        .bind(b.interval_h.unwrap_or(r.interval_h).clamp(1, 24 * 7))
+        .bind(interval)
+        .bind(&prev)
         .execute(&s.db)
         .await?;
-    // Đổi nhánh: clone lại từ đầu cho sạch.
-    // Chặn khi đang sync: xoá workdir giữa chừng làm lần đồng bộ đó hỏng.
-    if branch != r.branch {
-        if get(&s.db, id, user.id).await?.state == "syncing" {
-            return Err(AppError::Conflict("đang đồng bộ, thử lại sau".into()));
-        }
-        let _ = std::fs::remove_dir_all(base_dir(&s.store).join(id.to_string()));
     }
     Ok(Json(get(&s.db, id, user.id).await?))
 }

@@ -1,7 +1,7 @@
 export type VKind = "image" | "video" | "audio" | "pdf" | "zip" | "epub" | "drawio" | "excalidraw" | "office" | "markdown" | "text" | "other";
 
 const IMAGE = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff"]);
-const VIDEO = new Set(["mp4", "m4v", "mov", "mkv", "webm", "avi", "3gp", "ts", "wmv", "flv", "mpg", "mpeg"]);
+const VIDEO = new Set(["mp4", "m4v", "mov", "mkv", "webm", "avi", "3gp", "wmv", "flv", "mpg", "mpeg"]);
 const AUDIO = new Set(["mp3", "m4a", "ogg", "oga", "opus", "wav", "flac"]);
 const OFFICE = new Set(["doc", "docx", "odt", "rtf", "xls", "xlsx", "ods", "csv", "ppt", "pptx", "odp"]);
 const TEXT = new Set(["txt", "log", "json", "yaml", "yml", "csv", "xml", "html", "htm", "sh", "py", "js", "ts", "tsx", "rs", "go", "java", "c", "h", "cpp", "ini", "toml", "conf", "sql", "css", "vue"]);

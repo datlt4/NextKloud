@@ -18,7 +18,7 @@ use crate::{
 };
 
 const IMG_EXT: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff"];
-const VID_EXT: &[&str] = &["mp4", "m4v", "mov", "mkv", "webm", "avi", "3gp", "ts", "wmv", "flv", "mpg", "mpeg"];
+const VID_EXT: &[&str] = &["mp4", "m4v", "mov", "mkv", "webm", "avi", "3gp", "wmv", "flv", "mpg", "mpeg"];
 
 /// true = ảnh, false = video. None = không hỗ trợ thumbnail.
 pub fn thumb_kind(path: &str) -> Option<bool> {
@@ -85,6 +85,7 @@ pub async fn video_frame_png(user: uuid::Uuid, path: &str, store: &crate::files:
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
+        .kill_on_drop(true) // quá hạn -> child bị drop -> ffmpeg bị kill, không đọc S3 tiếp
         .spawn()
         .map_err(|e| format!("không chạy được ffmpeg: {e}"))?;
     let mut stdin = child.stdin.take().ok_or("không mở được stdin ffmpeg")?;
@@ -106,10 +107,13 @@ pub async fn video_frame_png(user: uuid::Uuid, path: &str, store: &crate::files:
             }
         }
     });
-    let out = tokio::time::timeout(std::time::Duration::from_secs(60), child.wait_with_output())
-        .await
-        .map_err(|_| "ffmpeg quá 60 giây".to_string())?
-        .map_err(|e| format!("ffmpeg lỗi: {e}"))?;
+    let out = match tokio::time::timeout(std::time::Duration::from_secs(60), child.wait_with_output()).await {
+        Ok(r) => r.map_err(|e| format!("ffmpeg lỗi: {e}"))?,
+        Err(_) => {
+            pump.abort();
+            return Err("ffmpeg quá 60 giây".into());
+        }
+    };
     let _ = pump.await;
     if !out.status.success() || out.stdout.is_empty() {
         return Err("ffmpeg không cắt được frame (cần image có ffmpeg)".into());
@@ -151,17 +155,20 @@ pub async fn thumb(
             .body(Body::from(cached.to_vec()))
             .unwrap());
     }
-    // Render mới (không quá 100MB để khỏi nổ RAM).
-    if size > 100 * 1024 * 1024 {
-        return Err(AppError::BadRequest("file quá lớn để tạo thumbnail".into()));
-    }
-    let webp = if is_img {
-        let data = s.store.op.read(&s.store.key(user.id, &path)?).await.map_err(StoreError::from)?.to_vec();
-        render_image(&data, size_px).map_err(AppError::Internal)?
+    let src = if is_img {
+        // Ảnh phải nạp cả vào RAM để decode: chặn > 100MB. Video thì stream vào ffmpeg, không giới hạn.
+        if size > 100 * 1024 * 1024 {
+            return Err(AppError::BadRequest("ảnh quá lớn để tạo thumbnail".into()));
+        }
+        s.store.op.read(&s.store.key(user.id, &path)?).await.map_err(StoreError::from)?.to_vec()
     } else {
-        let png = video_frame_png(user.id, &path, &s.store).await.map_err(AppError::Internal)?;
-        render_image(&png, size_px).map_err(AppError::Internal)?
+        video_frame_png(user.id, &path, &s.store).await.map_err(AppError::Internal)?
     };
+    // Decode/resize tốn CPU: chạy ngoài worker async.
+    let webp = tokio::task::spawn_blocking(move || render_image(&src, size_px))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+        .map_err(AppError::Internal)?;
     // Lưu cache, best-effort (lỗi thì vẫn trả ảnh vừa render).
     let _ = s.store.op.write(&tkey, webp.clone()).await;
     Ok(Response::builder()
@@ -203,6 +210,7 @@ mod tests {
         assert_eq!(thumb_kind("a.JPG"), Some(true));
         assert_eq!(thumb_kind("v/clip.MP4"), Some(false));
         assert_eq!(thumb_kind("doc.pdf"), None);
+        assert_eq!(thumb_kind("src/main.ts"), None); // TypeScript, không phải MPEG-TS
         assert_eq!(thumb_kind("noext"), None);
     }
 

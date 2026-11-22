@@ -414,6 +414,7 @@ export default function App() {
           const text = await api.readText(c);
           setOpen({ path: c, name, kind, text, anchor: anchor ?? null });
         } else if (kind !== "other") {
+          await api.exists(c); // không có -> ném lỗi, thử ứng viên kế
           setOpen({ path: c, name, kind });
         } else continue;
         return;
@@ -430,7 +431,9 @@ export default function App() {
       hits.sort((a, b) => a.path.length - b.path.length);
       if (hits.length) {
         const h = hits[0];
-        setOpen({ path: h.path, name: h.name, kind: "markdown", text: await api.readText(h.path), anchor: anchor ?? null });
+        const kind = viewerKind(h.name);
+        if (kind === "markdown") setOpen({ path: h.path, name: h.name, kind, text: await api.readText(h.path), anchor: anchor ?? null });
+        else setOpen({ path: h.path, name: h.name, kind });
         return;
       }
     } catch {

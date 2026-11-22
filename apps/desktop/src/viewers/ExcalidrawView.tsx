@@ -1,27 +1,47 @@
 import { Show, createSignal, onCleanup } from "solid-js";
-import { Excalidraw } from "@excalidraw/excalidraw";
+import { createElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { Excalidraw, getSceneVersion, serializeAsJSON } from "@excalidraw/excalidraw";
 import { api } from "../api";
 
 /**
- * Sửa .excalidraw bằng editor chính chủ (lazy chunk, chỉ tải khi mở file).
- * Tự lưu ngược lại file sau mỗi lần sửa (debounce 2s).
+ * Sửa .excalidraw bằng editor chính chủ (component React, mount vào 1 root React riêng
+ * vì app là Solid). Chỉ tự lưu khi nét vẽ đổi (không lưu lúc mới mở / chỉ đổi zoom), debounce 2s.
  */
 export default function ExcalidrawView(props: { path: string }) {
   const [err, setErr] = createSignal("");
-  const [data, setData] = createSignal<any>(null);
   const [ready, setReady] = createSignal(false);
-  let timer: any = null;
+  let host!: HTMLDivElement;
+  let root: Root | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   let dead = false;
+  let lastVer = -1;
+
+  const onChange = (elements: any, appState: any, files: any) => {
+    const v = getSceneVersion(elements);
+    if (v === lastVer) return;
+    lastVer = v;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      api.saveText(props.path, serializeAsJSON(elements, appState, files, "local")).catch((e: any) => {
+        if (!dead) setErr(String(e?.message ?? e));
+      });
+    }, 2000);
+  };
 
   api.readText(props.path).then(
     (t) => {
       if (dead) return;
+      let data: any;
       try {
         const j = t.trim() ? JSON.parse(t) : {};
-        setData({ elements: j.elements ?? [], appState: { ...(j.appState ?? {}), currentItemFontFamily: 1 }, files: j.files ?? {} });
+        data = { elements: j.elements ?? [], appState: { ...(j.appState ?? {}), collaborators: new Map() }, files: j.files ?? {} };
       } catch {
-        setData({ elements: [], appState: {}, files: {} });
+        data = { elements: [], appState: {}, files: {} };
       }
+      lastVer = getSceneVersion(data.elements);
+      root = createRoot(host);
+      root.render(createElement(Excalidraw as any, { initialData: data, onChange }));
       setReady(true);
     },
     (e: any) => !dead && setErr(String(e?.message ?? e)),
@@ -29,23 +49,14 @@ export default function ExcalidrawView(props: { path: string }) {
   onCleanup(() => {
     dead = true;
     clearTimeout(timer);
+    root?.unmount();
   });
-
-  const onChange = (elements: any, appState: any, files: any) => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      api.saveText(props.path, JSON.stringify({ type: "excalidraw", version: 2, source: "nextkloud", elements, appState, files })).catch((e: any) => {
-        if (!dead) setErr(String(e?.message ?? e));
-      });
-    }, 2000);
-  };
 
   return (
     <div class="excali-wrap">
       <Show when={err()}><p class="err">{err()}</p></Show>
-      <Show when={ready() && data()} fallback={<p class="muted">Đang mở Excalidraw…</p>}>
-        <Excalidraw initialData={data()} onChange={onChange} />
-      </Show>
+      <Show when={!ready() && !err()}><p class="muted">Đang mở Excalidraw…</p></Show>
+      <div ref={host} class="excali-host" />
     </div>
   );
 }

@@ -261,6 +261,10 @@ export const api = {
   async emptyTrash() {
     await req("/api/trash", { method: "DELETE" });
   },
+  /** Ném lỗi nếu file không tồn tại (HEAD, không tải nội dung). */
+  async exists(path: string) {
+    await req(`/api/files/${encPath(path)}`, { method: "HEAD" });
+  },
   async readBlob(path: string) {
     return (await req(`/api/files/${encPath(path)}`)).blob();
   },

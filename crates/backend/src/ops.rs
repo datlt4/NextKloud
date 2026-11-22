@@ -139,44 +139,48 @@ pub async fn move_path(db: &PgPool, store: &Store, user: Uuid, from: &str, to: &
         .collect()
         .await;
     let ok: Vec<String> = results.iter().filter_map(|r| r.as_ref().ok().cloned()).collect();
-    let mut tx = db.begin().await?;
-    if ok.len() == files.len() {
-        let (tp, tn) = split(to);
-        sqlx::query(
-            "UPDATE files SET
-               path = $3 || substr(path, length($2) + 1),
-               parent = CASE WHEN path = $2 THEN $4 ELSE $3 || substr(parent, length($2) + 1) END,
-               name = CASE WHEN path = $2 THEN $5 ELSE name END
-             WHERE user_id = $1 AND (path = $2 OR path LIKE $6)",
-        )
-        .bind(user)
-        .bind(from)
-        .bind(to)
-        .bind(tp)
-        .bind(tn)
-        .bind(&sub)
-        .execute(&mut *tx)
-        .await?;
-        ensure_dirs(&mut tx, user, &ancestors(to), modified).await?;
-    } else {
-        // Hỏng giữa chừng: chỉ dời những file đã chuyển xong, phần còn lại giữ chỗ cũ.
-        for p in &ok {
-            let np = dest(p);
-            let (pa, n) = split(&np);
-            sqlx::query("UPDATE files SET path = $3, parent = $4, name = $5 WHERE user_id = $1 AND path = $2")
-                .bind(user)
-                .bind(p)
-                .bind(&np)
-                .bind(pa)
-                .bind(n)
-                .execute(&mut *tx)
-                .await?;
-            ensure_dirs(&mut tx, user, &ancestors(&np), modified).await?;
+    let all_ok = ok.len() == files.len();
+    // Mọi lỗi ghi chỉ mục (UPDATE, ensure_dirs, commit) đều dời S3 về chỗ cũ: chỉ mục chưa đổi nên khỏi mồ côi.
+    let indexed: Result<(), sqlx::Error> = async {
+        let mut tx = db.begin().await?;
+        if all_ok {
+            let (tp, tn) = split(to);
+            sqlx::query(
+                "UPDATE files SET
+                   path = $3 || substr(path, length($2) + 1),
+                   parent = CASE WHEN path = $2 THEN $4 ELSE $3 || substr(parent, length($2) + 1) END,
+                   name = CASE WHEN path = $2 THEN $5 ELSE name END
+                 WHERE user_id = $1 AND (path = $2 OR path LIKE $6)",
+            )
+            .bind(user)
+            .bind(from)
+            .bind(to)
+            .bind(tp)
+            .bind(tn)
+            .bind(&sub)
+            .execute(&mut *tx)
+            .await?;
+            ensure_dirs(&mut tx, user, &ancestors(to), modified).await?;
+        } else {
+            // Hỏng giữa chừng: chỉ dời những file đã chuyển xong, phần còn lại giữ chỗ cũ.
+            for p in &ok {
+                let np = dest(p);
+                let (pa, n) = split(&np);
+                sqlx::query("UPDATE files SET path = $3, parent = $4, name = $5 WHERE user_id = $1 AND path = $2")
+                    .bind(user)
+                    .bind(p)
+                    .bind(&np)
+                    .bind(pa)
+                    .bind(n)
+                    .execute(&mut *tx)
+                    .await?;
+                ensure_dirs(&mut tx, user, &ancestors(&np), modified).await?;
+            }
         }
+        tx.commit().await
     }
-    if let Err(e) = tx.commit().await {
-        // Ghi chỉ mục lỗi nhưng file đã chuyển xong trên S3: dời S3 về chỗ cũ
-        // để khỏi mồ côi (chỉ mục chưa đổi nên không cần đụng database).
+    .await;
+    if let Err(e) = indexed {
         for p in &ok {
             let (a, b) = (format!("{user}/{}", dest(p)), format!("{user}/{p}"));
             let r = if rename {
@@ -187,8 +191,8 @@ pub async fn move_path(db: &PgPool, store: &Store, user: Uuid, from: &str, to: &
                     Err(e) => Err(e),
                 }
             };
-            if let Err(e) = r.map_err(crate::files::StoreError::from) {
-                if !matches!(e, crate::files::StoreError::NotFound) {
+            if let Err(e) = r.map_err(StoreError::from) {
+                if !matches!(e, StoreError::NotFound) {
                     tracing::warn!("hoàn tác move thất bại {a} -> {b}: {e}");
                 }
             }
@@ -232,9 +236,14 @@ pub async fn trash(db: &PgPool, store: &Store, user: Uuid, path: &str) -> Result
     .fetch_one(db)
     .await?;
     let t = TrashItem { id: Uuid::new_v4(), orig_path: path.into(), is_dir, size, files, deleted_at: now() };
-    // Ghi mục TRƯỚC khi chuyển file: nếu ghi lỗi thì chưa đụng gì tới dữ liệu.
-    // move_path đã tự hoàn tác phần S3 dở dang khi ghi chỉ mục lỗi, nên sau đó gỡ mục là sạch.
-    sqlx::query("INSERT INTO trash (id, user_id, orig_path, is_dir, size, files, deleted_at) VALUES ($1,$2,$3,$4,$5,$6,$7)")
+    // Chuyển xong mới ghi mục: "Dọn sạch" không thể chạy đè lúc đang copy.
+    // Lỗi chỉ mục -> move_path đã dời S3 về, không có gì để ghi. Chuyển được một phần (Internal)
+    // -> phần đã chuyển nằm trong thùng rác, vẫn phải ghi mục để khôi phục/dọn được.
+    let moved = move_path(db, store, user, path, &trash_path(&t)).await;
+    if !matches!(moved, Ok(_) | Err(AppError::Internal(_))) {
+        return moved.map(|_| t);
+    }
+    let ins = sqlx::query("INSERT INTO trash (id, user_id, orig_path, is_dir, size, files, deleted_at) VALUES ($1,$2,$3,$4,$5,$6,$7)")
         .bind(t.id)
         .bind(user)
         .bind(&t.orig_path)
@@ -243,12 +252,15 @@ pub async fn trash(db: &PgPool, store: &Store, user: Uuid, path: &str) -> Result
         .bind(t.files)
         .bind(t.deleted_at)
         .execute(db)
-        .await?;
-    if let Err(e) = move_path(db, store, user, path, &trash_path(&t)).await {
-        let _ = sqlx::query("DELETE FROM trash WHERE id = $1").bind(t.id).execute(db).await;
-        return Err(e);
+        .await;
+    if let Err(e) = ins {
+        // Không ghi được mục: trả file về chỗ cũ để khỏi mồ côi.
+        if let Err(back) = move_path(db, store, user, &trash_path(&t), path).await {
+            tracing::error!("trash {}: không ghi được mục và không trả lại được: {back:?}", t.id);
+        }
+        return Err(e.into());
     }
-    Ok(t)
+    moved.map(|_| t)
 }
 
 pub async fn list_trash(db: &PgPool, user: Uuid) -> Result<Vec<TrashItem>, sqlx::Error> {

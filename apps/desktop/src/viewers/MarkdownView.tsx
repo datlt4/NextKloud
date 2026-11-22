@@ -55,20 +55,18 @@ export function linkifyWiki(html: string): string {
   const parts = html.split(/(<pre[\s>][\s\S]*?<\/pre>|<code[\s>][\s\S]*?<\/code>|<a[\s>][\s\S]*?<\/a>|<img[^>]*>|<!--[\s\S]*?-->)/g);
   return parts
     .map((p, i) => {
-      if (i % 2 === 1) return p; // vùng được bảo vệ
-      // 1) img có sẵn với src tương đối -> đánh dấu để nạp blob sau
-      p = p.replace(/<img([^>]*?)\ssrc="([^"]+)"([^>]*)>/g, (_m, a, src, b) => {
-        if (/^(https?:|blob:|data:)/.test(src) || src.startsWith("#")) return _m;
-        return `<img${a} data-wsrc="${encodeURIComponent(src)}" src="data:,"${b}>`;
-      });
+      // 1) <img> nằm trong nhóm được bảo vệ: src tương đối -> đánh dấu để nạp blob sau
+      if (i % 2 === 1) return p.startsWith("<img") ? relImg(p) : p;
       // 2) embed ![[...]]
       p = p.replace(/!\[\[([^\]]+)\]\]/g, (_m, inside: string) => {
         const target = inside.trim();
-        const isImg = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i.test(target.split("#")[0].split("|")[0]);
-        const enc = encodeURIComponent(target);
-        if (isImg) return `<img data-wsrc="${enc}" alt="${escapeHtml(target)}">`;
-        const label = escapeHtml(displayOf(target));
-        return `<a href="#" class="wiki-link wiki-embed" data-wiki="${enc}">${label}</a>`;
+        // ![[a.png|300]] / ![[note#head]]: bỏ hậu tố kích thước/anchor khỏi đường dẫn
+        const [file, head] = target.split("|")[0].split("#");
+        const enc = encodeURIComponent(file.trim());
+        if (/\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i.test(file.trim())) return `<img data-wsrc="${enc}" alt="${escapeHtml(file.trim())}">`;
+        const anc = head ? ` data-anchor="${encodeURIComponent(head.trim())}"` : "";
+        const label = escapeHtml(displayOf(file.trim(), head?.trim()));
+        return `<a href="#" class="wiki-link wiki-embed" data-wiki="${enc}"${anc}>${label}</a>`;
       });
       // 3) link [[target]], [[target|alias]], [[target#head]], [[target#head|alias]]
       p = p.replace(/\[\[([^\]|#]+)(?:#([^\]|]*))?(?:\|([^\]]*))?\]\]/g, (_m, t: string, h?: string, a?: string) => {
@@ -83,6 +81,13 @@ export function linkifyWiki(html: string): string {
     .join("");
 }
 
+function relImg(tag: string): string {
+  return tag.replace(/<img([^>]*?)\ssrc="([^"]+)"([^>]*)>/, (m, a, src, b) => {
+    if (/^(https?:|blob:|data:)/.test(src) || src.startsWith("#")) return m;
+    return `<img${a} data-wsrc="${encodeURIComponent(src)}" src="data:,"${b}>`;
+  });
+}
+
 function displayOf(target: string, heading?: string): string {
   const base = target.replace(/\.md$/i, "");
   const name = base.split("/").pop() ?? base;
@@ -91,7 +96,7 @@ function displayOf(target: string, heading?: string): string {
 
 function stripMd(s: string) {
   s = s.replace(/!\[\[[^\]]*\]\]/g, " ");
-  s = s.replace(/\[\[([^\]|#\]]+)(?:#[^\]|]*)?(?:\|([^\]]*))?\]\]/g, (_m, t: string, _h: string | undefined, a: string | undefined) => a ?? t);
+  s = s.replace(/\[\[([^\]|#\]]+)(?:#[^\]|]*)?(?:\|([^\]]*))?\]\]/g, (_m, t: string, a: string | undefined) => a ?? t);
   return s.replace(/^[>\s#]*/, "").trim();
 }
 

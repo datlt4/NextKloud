@@ -12,7 +12,6 @@ use axum::{
     response::Response,
 };
 use crc32fast::Hasher;
-use flate2::{Decompress, FlushDecompress};
 use serde::Serialize;
 
 use crate::{
@@ -276,11 +275,7 @@ pub async fn extract(
     let raw: Vec<u8> = if e.method == 0 {
         comp
     } else {
-        let mut dz = Decompress::new(true);
-        let mut out = Vec::new();
-        dz.decompress_vec(&comp, &mut out, FlushDecompress::Finish)
-            .map_err(|er| AppError::BadRequest(format!("giải nén lỗi: {er}")))?;
-        out
+        inflate(&comp, e.uncomp_size).map_err(|er| AppError::BadRequest(format!("giải nén lỗi: {er}")))?
     };
     if raw.len() as u64 != e.uncomp_size {
         return Err(AppError::BadRequest("độ dài sau giải nén không khớp".into()));
@@ -298,6 +293,14 @@ pub async fn extract(
         .unwrap())
 }
 
+/// Entry zip là raw deflate (không header zlib). Đọc tối đa `want`+1 byte để phát hiện sai độ dài, chặn zip bomb.
+fn inflate(comp: &[u8], want: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut out = Vec::with_capacity(want as usize);
+    flate2::read::DeflateDecoder::new(comp).take(want + 1).read_to_end(&mut out)?;
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,10 +313,10 @@ mod tests {
         for (name, data, method) in entries {
             let local_off = out.len() as u32;
             let comp: Vec<u8> = if *method == 8 {
-                let mut c = Compress::new(Compression::default(), true);
+                let mut c = Compress::new(Compression::default(), false); // zip = raw deflate
                 let mut o = vec![0u8; data.len() + 64];
-                let total = c.compress_vec(data, &mut o, FlushCompress::Finish).unwrap();
-                o.truncate(total as usize);
+                o.clear();
+                c.compress_vec(data, &mut o, FlushCompress::Finish).unwrap();
                 o
             } else {
                 data.to_vec()
@@ -425,6 +428,20 @@ mod tests {
         let mut h = Hasher::new();
         h.update(b"hello zip");
         assert_eq!(entries[0].crc, h.finalize());
+    }
+
+    #[test]
+    fn inflate_real_zip_entry() {
+        // Entry deflate (method 8) như zip của công cụ thường.
+        let src = "hello hello hello\n".repeat(20);
+        let data = make_zip(&[("a.txt", src.as_bytes(), 8)]);
+        let e = &cd_of(&data)[0];
+        let start = 30 + e.name.len();
+        let comp = &data[start..start + e.comp_size as usize];
+        assert_eq!(inflate(comp, e.uncomp_size).unwrap(), src.as_bytes());
+        // dữ liệu bung ra dài hơn khai báo -> đọc thừa 1 byte, phía gọi sẽ báo lệch
+        assert_eq!(inflate(comp, 5).unwrap().len(), 6);
+        assert!(inflate(b"\xff\xff\xff", 10).is_err());
     }
 
     #[test]

@@ -254,8 +254,9 @@ pub async fn callback(
     let mtime = s.store.put_local(user_id, &path, &tmp, Some(chrono::Utc::now().timestamp()), &mut quota).await;
     let _ = tokio::fs::remove_file(&tmp).await;
     let mtime = mtime?;
-    sqlx::query("UPDATE users SET quota_used = $1 WHERE id = $2")
-        .bind(quota.used_bytes as i64)
+    // Cộng phần chênh, không ghi đè: upload/dọn rác chạy song song không bị mất.
+    sqlx::query("UPDATE users SET quota_used = GREATEST(0, quota_used + $1) WHERE id = $2")
+        .bind(quota.used_bytes as i64 - urow.quota_used.max(0))
         .bind(user_id)
         .execute(&s.db)
         .await?;
