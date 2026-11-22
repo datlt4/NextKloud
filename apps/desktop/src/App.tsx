@@ -189,6 +189,8 @@ export default function App() {
   };
 
   const refreshMe = () => api.me().then(setMe).catch(() => {});
+  const [srvVer, setSrvVer] = createSignal("");
+  const refreshVer = () => api.config().then((c) => setSrvVer(c.version ?? "")).catch(() => {});
 
   // URL giữ vị trí (thư mục / file đang mở / trang): F5 hay gửi link vẫn về đúng chỗ, nút Back của trình duyệt dùng được.
   const encP = (p: string) => p.split("/").map(encodeURIComponent).join("/");
@@ -236,6 +238,7 @@ export default function App() {
     setAuthed(true);
     go(location.hash);
     refreshMe();
+    refreshVer();
     syncFromServer();
   };
 
@@ -938,6 +941,9 @@ export default function App() {
                       <div class="bar"><i style={{ width: `${quotaPct()}%` }} classList={{ hot: quotaPct() > 90 }} /></div>
                     </Show>
                   </div>
+                </Show>
+                <Show when={srvVer()}>
+                  <div class="muted xs srv-ver">Server v{srvVer()}</div>
                 </Show>
               </div>
             </aside>

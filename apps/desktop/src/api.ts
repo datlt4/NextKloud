@@ -389,7 +389,7 @@ export const api = {
     return (await req("/api/trash")).json() as Promise<TrashItem[]>;
   },
   async config() {
-    return (await req("/api/config")).json() as Promise<{ trash_days: number }>;
+    return (await req("/api/config")).json() as Promise<{ trash_days: number; version: string }>;
   },
   async restore(id: string) {
     await req(`/api/trash/${id}/restore`, { method: "POST" });

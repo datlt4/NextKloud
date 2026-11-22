@@ -175,6 +175,7 @@ input { font: inherit; color: var(--text); }
 .nav:hover { background: var(--hover); }
 .nav.active { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
 .side-foot { margin-top: auto; padding: 10px 6px 4px; }
+.srv-ver { margin-top: 8px; text-align: center; }
 .quota-txt { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
 .bar { height: 5px; border-radius: 3px; background: var(--hover); overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .2s; }
