@@ -144,6 +144,22 @@ export interface Me {
 
 const encPath = (p: string) => p.split("/").map(encodeURIComponent).join("/");
 
+/** Gốc Secret Vault trong app: "\u0000s/<path>" (NUL không có trong tên file thật) -> gọi /api/secret/*. */
+export const SECRET_ROOT = "\u0000s";
+export const isSecret = (p: string) => p === SECRET_ROOT || p.startsWith(SECRET_ROOT + "/");
+const sRel = (p: string) => (p === SECRET_ROOT ? "" : p.slice(SECRET_ROOT.length + 1));
+const sAbs = (p: string) => (p ? `${SECRET_ROOT}/${p}` : SECRET_ROOT);
+/** Token mở khoá vault: sessionStorage -> đóng tab là khoá. */
+export const vaultToken = () => sessionStorage.getItem("nk-vault");
+export const setVaultToken = (t: string | null) => (t ? sessionStorage.setItem("nk-vault", t) : sessionStorage.removeItem("nk-vault"));
+/** Lần cuối gọi API vault (để đếm ngược tự khoá). */
+export let vaultSeen = 0;
+const fileUrl = (path: string) => (isSecret(path) ? `/api/secret/files/${encPath(sRel(path))}` : `/api/files/${encPath(path)}`);
+const vtQ = (path: string) => (isSecret(path) ? `&vt=${encodeURIComponent(vaultToken() ?? "")}` : "");
+const noSecret = (path: string, what: string) => {
+  if (isSecret(path)) throw new Error(`${what} không dùng được với file Bí mật`);
+};
+
 export function token(): string | null {
   return localStorage.getItem("nk-token");
 }
@@ -152,13 +168,23 @@ const JSON_H = { "Content-Type": "application/json" };
 
 async function req(path: string, init?: RequestInit) {
   const t = token();
+  const sec = path.startsWith("/api/secret");
+  const vt = sec ? vaultToken() : null;
   const r = await fetch(serverOrigin() + path, {
     ...init,
-    headers: { ...(init?.headers || {}), ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+    headers: { ...(init?.headers || {}), ...(t ? { Authorization: `Bearer ${t}` } : {}), ...(vt ? { "X-Vault-Token": vt } : {}) },
   });
   if (r.status === 401) {
     localStorage.removeItem("nk-token");
     throw new Error("unauthorized");
+  }
+  if (sec) {
+    if (r.status === 403 && (await r.clone().text()).includes("vault locked")) {
+      setVaultToken(null);
+      window.dispatchEvent(new Event("nk-vault-locked"));
+      throw new Error("Khu Bí mật đã khoá");
+    }
+    if (vt) vaultSeen = Date.now();
   }
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return r;
@@ -187,9 +213,11 @@ export const api = {
   },
   /** 1 trang của thư mục (server phân trang, thư mục luôn trước). */
   async files(prefix: string, o: ListOpts) {
-    const q = new URLSearchParams({ prefix, sort: o.sort, desc: String(o.desc), offset: String(o.offset), limit: String(o.limit) });
-    const r = await req(`/api/files?${q}`);
-    return r.json() as Promise<Page>;
+    const sec = isSecret(prefix);
+    const q = new URLSearchParams({ prefix: sec ? sRel(prefix) : prefix, sort: o.sort, desc: String(o.desc), offset: String(o.offset), limit: String(o.limit) });
+    const r = (await (await req(`${sec ? "/api/secret/list" : "/api/files"}?${q}`)).json()) as Page;
+    if (sec) r.entries.forEach((e) => (e.path = sAbs(e.path)));
+    return r;
   },
   /** Tìm theo nội dung file .md/.txt. */
   async searchContent(q: string): Promise<Entry[]> {
@@ -265,10 +293,12 @@ export const api = {
   },
   /** Xoá = chuyển vào thùng rác. */
   async remove(path: string) {
-    return (await req(`/api/files/${encPath(path)}`, { method: "DELETE" })).json() as Promise<TrashItem>;
+    const t = (await req(fileUrl(path), { method: "DELETE" })).json() as Promise<TrashItem>;
+    return isSecret(path) ? t.then((x) => ({ ...x, orig_path: sAbs(x.orig_path) })) : t;
   },
   async mkdir(path: string) {
-    await req("/api/mkdir", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
+    const sec = isSecret(path);
+    await req(sec ? "/api/secret/mkdir" : "/api/mkdir", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: sec ? sRel(path) : path }) });
   },
   /** Ghi đè / tạo file text (dùng khi editor drawio/excalidraw lưu). */
   async saveText(path: string, text: string) {
@@ -277,17 +307,20 @@ export const api = {
   /** URL stream trực tiếp (kèm ?t= cho <video>/<audio>/<img> không gửi được Bearer). */
   streamUrl(path: string) {
     const t = token();
-    return `${serverOrigin()}/api/files/${encPath(path)}?t=${encodeURIComponent(t ?? "")}`;
+    return `${serverOrigin()}${fileUrl(path)}?t=${encodeURIComponent(t ?? "")}${vtQ(path)}`;
   },
   thumbUrl(path: string, s = 256) {
     const t = token();
-    return `${serverOrigin()}/api/thumb/${encPath(path)}?s=${s}&t=${encodeURIComponent(t ?? "")}`;
+    const base = isSecret(path) ? `/api/secret/thumb/${encPath(sRel(path))}` : `/api/thumb/${encPath(path)}`;
+    return `${serverOrigin()}${base}?s=${s}&t=${encodeURIComponent(t ?? "")}${vtQ(path)}`;
   },
   async officeConfig(path: string) {
-    const r = await req("/api/office/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
+    const sec = isSecret(path); // file bí mật: chỉ xem
+    const r = await req(sec ? "/api/secret/office/config" : "/api/office/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: sec ? sRel(path) : path }) });
     return r.json() as Promise<{ config: any; token: string }>;
   },
   async zipList(path: string, limit = 20000) {
+    noSecret(path, "Xem file zip");
     const r = await req(`/api/zip/list?path=${encodeURIComponent(path)}&limit=${limit}`);
     return r.json() as Promise<{ entries: { name: string; size: number; is_dir: boolean }[]; total: number; truncated: boolean }>;
   },
@@ -297,11 +330,15 @@ export const api = {
   },
   /** Đổi tên hoặc di chuyển (file/thư mục). */
   async move(from: string, to: string) {
-    const r = await req("/api/move", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ from, to }) });
+    const sec = isSecret(from);
+    if (sec !== isSecret(to)) throw new Error("Không chuyển được giữa Bí mật và file thường (hãy tải xuống rồi tải lên lại)");
+    const b = sec ? { from: sRel(from), to: sRel(to) } : { from, to };
+    const r = await req(sec ? "/api/secret/move" : "/api/move", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) });
     return r.json() as Promise<{ files: number }>;
   },
   // --- bookmark + ghi chú ---
   async annotations(path: string) {
+    if (isSecret(path)) return [] as Annotation[]; // không lưu trích dẫn của file bí mật vào DB thường
     return (await req(`/api/annotations?path=${encodeURIComponent(path)}`)).json() as Promise<Annotation[]>;
   },
   // --- kanban ---
@@ -350,14 +387,43 @@ export const api = {
   async deckApply(board_id: number, parents: Record<number, number | null>, skip_stacks: number[]) {
     return (await req("/api/kanban/import/deck", { method: "POST", headers: JSON_H, body: JSON.stringify({ board_id, parents, skip_stacks }) })).json() as Promise<{ board: string; cards: number; subtasks: number }>;
   },
+  // --- Secret Vault ---
+  async secretStatus() {
+    return (await req("/api/secret")).json() as Promise<{ exists: boolean; unlocked: boolean; wait: number; idle: number; left: number }>;
+  },
+  async secretSetup(pin: string) {
+    const r = (await (await req("/api/secret/setup", { method: "POST", headers: JSON_H, body: JSON.stringify({ pin }) })).json()) as { token: string; recovery: string };
+    setVaultToken(r.token);
+    return r.recovery;
+  },
+  async secretUnlock(b: { pin: string } | { recovery: string }) {
+    const r = (await (await req("/api/secret/unlock", { method: "POST", headers: JSON_H, body: JSON.stringify(b) })).json()) as { token: string };
+    setVaultToken(r.token);
+  },
+  async secretLock() {
+    if (vaultToken()) await req("/api/secret/lock", { method: "POST" }).catch(() => {});
+    setVaultToken(null);
+  },
+  async secretChangePin(old: string | null, next: string) {
+    await req("/api/secret/pin", { method: "POST", headers: JSON_H, body: JSON.stringify({ old, new: next }) });
+  },
+  async secretNewRecovery(pin: string) {
+    return ((await (await req("/api/secret/recovery", { method: "POST", headers: JSON_H, body: JSON.stringify({ pin }) })).json()) as { recovery: string }).recovery;
+  },
+  async secretDestroy(pin: string) {
+    await req("/api/secret", { method: "DELETE", headers: JSON_H, body: JSON.stringify({ pin }) });
+    setVaultToken(null);
+  },
   /** Mục lục cả vault Obsidian chứa file (null nếu không thuộc vault nào). */
   async vaultOutline(path: string) {
+    if (isSecret(path)) return null;
     return (await req(`/api/vault/outline?path=${encodeURIComponent(path)}`)).json() as Promise<VaultOutline | null>;
   },
   async allNotes(state?: NoteState) {
     return (await req(`/api/annotations${state ? `?state=${state}` : ""}`)).json() as Promise<Annotation[]>;
   },
   async addAnnotation(b: { path: string; kind: "bookmark" | "note"; anchor: string; quote: string; body?: string }) {
+    noSecret(b.path, "Bookmark/ghi chú");
     const r = await req("/api/annotations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) });
     return r.json() as Promise<Annotation>;
   },
@@ -386,36 +452,39 @@ export const api = {
   async gitRemove(id: string, files: boolean) {
     await req(`/api/git/${id}?files=${files}`, { method: "DELETE" });
   },
-  async trash() {
-    return (await req("/api/trash")).json() as Promise<TrashItem[]>;
+  async trash(secret = false) {
+    const r = (await (await req(secret ? "/api/secret/trash" : "/api/trash")).json()) as TrashItem[];
+    if (secret) r.forEach((t) => (t.orig_path = sAbs(t.orig_path)));
+    return r;
   },
   async config() {
     return (await req("/api/config")).json() as Promise<{ trash_days: number; version: string }>;
   },
-  async restore(id: string) {
-    await req(`/api/trash/${id}/restore`, { method: "POST" });
+  async restore(id: string, secret = false) {
+    await req(`${secret ? "/api/secret" : "/api"}/trash/${id}/restore`, { method: "POST" });
   },
-  async purge(id: string) {
-    await req(`/api/trash/${id}`, { method: "DELETE" });
+  async purge(id: string, secret = false) {
+    await req(`${secret ? "/api/secret" : "/api"}/trash/${id}`, { method: "DELETE" });
   },
-  async emptyTrash() {
-    await req("/api/trash", { method: "DELETE" });
+  async emptyTrash(secret = false) {
+    await req(secret ? "/api/secret/trash" : "/api/trash", { method: "DELETE" });
   },
   /** Ném lỗi nếu file không tồn tại (HEAD, không tải nội dung). */
   async exists(path: string) {
-    await req(`/api/files/${encPath(path)}`, { method: "HEAD" });
+    await req(fileUrl(path), { method: "HEAD" });
   },
   async readBlob(path: string) {
-    return (await req(`/api/files/${encPath(path)}`)).blob();
+    return (await req(fileUrl(path))).blob();
   },
   /** Chunked upload 8MB tuần tự — không giữ cả file trong RAM. */
   async upload(path: string, data: Blob, onProgress?: (done: number) => void) {
     const json = { "Content-Type": "application/json" };
-    const init = await req("/api/files/uploads", {
+    const up = isSecret(path) ? "/api/secret/uploads" : "/api/files/uploads";
+    const init = await req(up, {
       method: "POST",
       headers: json,
       body: JSON.stringify({
-        path,
+        path: isSecret(path) ? sRel(path) : path,
         size: data.size,
         mtime: data instanceof File ? Math.floor(data.lastModified / 1000) : undefined,
       }),
@@ -423,23 +492,24 @@ export const api = {
     const { id } = (await init.json()) as { id: string };
     const CHUNK = 8 * 1024 * 1024;
     for (let off = 0; off < data.size; off += CHUNK) {
-      await req(`/api/files/uploads/${id}?offset=${off}`, { method: "PUT", body: data.slice(off, off + CHUNK) });
+      await req(`${up}/${id}?offset=${off}`, { method: "PUT", body: data.slice(off, off + CHUNK) });
       onProgress?.(Math.min(off + CHUNK, data.size));
     }
-    await req(`/api/files/uploads/${id}/complete`, { method: "POST" });
+    await req(`${up}/${id}/complete`, { method: "POST" });
   },
   async readText(path: string) {
-    const r = await req(`/api/files/${encPath(path)}`);
+    const r = await req(fileUrl(path));
     return r.text();
   },
   /** Link tải trực tiếp (token 10 phút, chỉ cho file này): trình duyệt stream xuống đĩa, không qua RAM. */
   async directDownloadUrl(path: string): Promise<string> {
+    if (isSecret(path)) return `${this.streamUrl(path)}&download=1`;
     const r = await req("/api/dl", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
     const { token: t } = (await r.json()) as { token: string };
     return `${serverOrigin()}/api/files/${encPath(path)}?dl=${encodeURIComponent(t)}`;
   },
   async downloadUrl(path: string): Promise<string> {
-    const r = await req(`/api/files/${encPath(path)}`);
+    const r = await req(fileUrl(path));
     const b = await r.blob();
     return URL.createObjectURL(b);
   },

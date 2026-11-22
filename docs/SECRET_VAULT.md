@@ -1,4 +1,4 @@
-# Secret Vault: thiết kế (chờ review, chưa code)
+# Secret Vault: thiết kế (đã làm, v0.1.13)
 
 Mục tiêu: một khu "Bí mật" riêng cho mỗi user. Khu này mở bằng mã PIN, không hiện ở đâu khác trong app, không chia sẻ được, và được mã hoá trên đĩa. Mã hoá nhẹ để mở file nhanh.
 
@@ -29,8 +29,8 @@ VK (Vault Key, 256 bit ngẫu nhiên, tạo 1 lần) <──────┘   l�
 - **Vì sao có pepper:** PIN 6 số chỉ có 1 triệu khả năng. Nếu chỉ có DB/bản sao lưu, kẻ tấn công có thể thử hết trong vài phút. Pepper nằm ở `.env` của server, **không có trong DB lẫn bản sao lưu**, nên lấy được ổ đĩa/bản sao lưu vẫn không thử PIN offline được.
 - **Thử PIN online** qua web: sai 5 lần khoá 15 phút, sai tiếp thì thời gian khoá tăng gấp đôi.
 - **Đổi PIN:** chỉ bọc lại VK (vài mili giây), không phải mã hoá lại file nào.
-- **Mã khôi phục:** lúc tạo vault, server hiện 1 lần một chuỗi 24 ký tự. Chuỗi này là cách thứ hai để mở VK, dùng khi quên PIN. Quên cả PIN lẫn mã khôi phục thì **dữ liệu mất vĩnh viễn**, admin cũng không cứu được (đây là chủ đích).
-- **Phải tự sao lưu `SECRET_PEPPER`** (password manager / giấy). Mất pepper thì bản sao lưu cũng không mở được.
+- **Mã khôi phục:** lúc tạo vault, server hiện 1 lần một chuỗi 24 ký tự. Chuỗi này là cách thứ hai để mở VK, dùng khi quên PIN. Mã đủ mạnh (~120 bit) nên **không trộn pepper**: mất `.env` thì vẫn mở được bằng mã khôi phục rồi đặt PIN mới. Quên cả PIN lẫn mã khôi phục thì **dữ liệu mất vĩnh viễn**, admin cũng không cứu được (đây là chủ đích).
+- **Nên sao lưu `SECRET_PEPPER`** (password manager / giấy). Mất pepper thì PIN không dùng được nữa, phải mở bằng mã khôi phục.
 
 ## 3. Mã hoá file (nhanh, mở được giữa file)
 
@@ -44,7 +44,8 @@ VK (Vault Key, 256 bit ngẫu nhiên, tạo 1 lần) <──────┘   l�
 - **Upload:** server nhận từng chunk 8MB, mã hoá **ngay khi nhận** rồi mới ghi ra đĩa staging. Nhờ vậy bản rõ không bao giờ nằm trên đĩa, kể cả file tạm. 8MB là bội số của 64KB nên các khối khớp nhau.
 - **Download / xem** (ảnh, PDF, video, markdown + TTS): server đọc các khối cần, giải mã rồi stream ra. Trình duyệt không cần làm gì thêm, nên A8 Star cũng mượt.
 - **Thumbnail:** tạo lúc xem, không lưu cache (cache sẽ là bản rõ). Có thể thêm cache mã hoá sau nếu cần.
-- **Tắt cho file bí mật:** chia sẻ, mirror git, sửa bằng OnlyOffice (vì DocumentServer cần bản rõ), tìm kiếm toàn app.
+- **Office:** chỉ xem. DocumentServer tải bản rõ qua vé 10 phút (không phải token mở khoá); bản xem có thể nằm trong cache của DocumentServer.
+- **Tắt cho file bí mật:** chia sẻ, mirror git, sửa bằng OnlyOffice, bookmark/ghi chú, tìm kiếm toàn app.
 
 ## 5. Mở khoá và tự khoá
 

@@ -363,6 +363,7 @@ mod tests {
             uploads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             http: reqwest::Client::new(),
             tts_url: String::new(),
+            vaults: Default::default(),
         };
         let tok = create_jwt(admin, true, &state.enc).unwrap();
         Some((crate::routes::api_router(state.clone()), state, tok, admin))

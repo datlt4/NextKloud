@@ -87,10 +87,21 @@ pub fn render_image(data: &[u8], s: u32) -> Result<Vec<u8>, String> {
 
 /// Cắt 1 frame video (giây thứ 1) bằng ffmpeg, trả về PNG bytes.
 pub async fn video_frame_png(user: uuid::Uuid, path: &str, store: &crate::files::Store) -> Result<Vec<u8>, String> {
-    use tokio::io::AsyncWriteExt;
     let key = store.key(user, path).map_err(|e| e.to_string())?;
     let meta = store.op.stat(&key).await.map_err(|e| e.to_string())?;
     let size = meta.content_length();
+    let s = store.op.reader_with(&key).chunk(4 * 1024 * 1024).await.map_err(|e| e.to_string())?;
+    let s = s.into_bytes_stream(0..size).await.map_err(|e| e.to_string())?;
+    ffmpeg_frame(s).await
+}
+
+/// Bơm stream video vào ffmpeg (không nạp cả file vào RAM), lấy 1 frame PNG.
+pub async fn ffmpeg_frame<S, E>(mut s: S) -> Result<Vec<u8>, String>
+where
+    S: futures::Stream<Item = Result<axum::body::Bytes, E>> + Send + Unpin + 'static,
+    E: Send + 'static,
+{
+    use tokio::io::AsyncWriteExt;
     let mut child = tokio::process::Command::new("ffmpeg")
         .args(["-v", "error", "-ss", "1", "-i", "pipe:0", "-frames:v", "1", "-vf", "scale=512:-1", "-f", "image2pipe", "-vcodec", "png", "pipe:1"])
         .stdin(std::process::Stdio::piped())
@@ -100,19 +111,9 @@ pub async fn video_frame_png(user: uuid::Uuid, path: &str, store: &crate::files:
         .spawn()
         .map_err(|e| format!("không chạy được ffmpeg: {e}"))?;
     let mut stdin = child.stdin.take().ok_or("không mở được stdin ffmpeg")?;
-    let op = store.op.clone();
-    let key2 = key.clone();
-    // Bơm stream từng chunk từ S3 vào ffmpeg (không nạp cả file video vào RAM).
     let pump = tokio::spawn(async move {
-        let mut s = match op.reader_with(&key2).chunk(4 * 1024 * 1024).await {
-            Ok(r) => match r.into_bytes_stream(0..size).await {
-                Ok(s) => s,
-                Err(_) => return,
-            },
-            Err(_) => return,
-        };
-        use futures::TryStreamExt as _;
-        while let Ok(Some(b)) = s.try_next().await {
+        use futures::StreamExt as _;
+        while let Some(Ok(b)) = s.next().await {
             if stdin.write_all(&b).await.is_err() {
                 break; // ffmpeg thoát sớm sau khi đủ frame -> broken pipe, bình thường
             }
@@ -129,7 +130,6 @@ pub async fn video_frame_png(user: uuid::Uuid, path: &str, store: &crate::files:
     if !out.status.success() || out.stdout.is_empty() {
         return Err("ffmpeg không cắt được frame (cần image có ffmpeg)".into());
     }
-    let _ = size;
     Ok(out.stdout)
 }
 

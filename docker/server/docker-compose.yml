@@ -33,6 +33,8 @@ services:
       - ONLYOFFICE_BACKEND_URL=${ONLYOFFICE_BACKEND_URL:-}
       # Header thêm khi gọi DocumentServer, vd "P-Access-Token-Id: x; P-Access-Token: y".
       - ONLYOFFICE_HEADERS=${ONLYOFFICE_HEADERS:-}
+      # Secret Vault: trộn vào PIN, không nằm trong DB/bản sao lưu. Tự sao lưu riêng giá trị này.
+      - SECRET_PEPPER=${SECRET_PEPPER:-}
       - ALLOWED_ORIGINS=*
       # Không có TRUSTED_DOMAINS — cố tình bỏ giống yêu cầu (khác Nextcloud).
     extra_hosts:

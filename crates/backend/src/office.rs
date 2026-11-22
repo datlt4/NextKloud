@@ -24,7 +24,7 @@ use crate::{
     state::{AppError, AppState, AuthUser, load_user},
 };
 
-fn oo_secret() -> Result<String, AppError> {
+pub(crate) fn oo_secret() -> Result<String, AppError> {
     std::env::var("ONLYOFFICE_JWT_SECRET")
         .map_err(|_| AppError::Internal("thiếu ONLYOFFICE_JWT_SECRET trên server".into()))
 }
@@ -76,7 +76,7 @@ fn hex_of(bytes: &[u8]) -> String {
     s
 }
 
-fn public_base(headers: &HeaderMap) -> String {
+pub(crate) fn public_base(headers: &HeaderMap) -> String {
     if let Ok(v) = std::env::var("PUBLIC_URL") {
         if !v.trim().is_empty() {
             return v.trim_end_matches('/').to_string();

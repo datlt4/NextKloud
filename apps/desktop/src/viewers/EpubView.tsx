@@ -1,5 +1,5 @@
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
-import { api } from "../api";
+import { api, isSecret } from "../api";
 import { Icon } from "../icons";
 
 // epubjs không có type đầy đủ cho cách dùng này.
@@ -20,13 +20,14 @@ export default function EpubView(props: { path: string }) {
       if (dead) return;
       book = ePub(buf);
       rendition = book.renderTo(host, { width: "100%", height: "100%" });
-      const key = `nk-epub-loc:${props.path}`;
-      const saved = localStorage.getItem(key);
+      // file bí mật: không ghi tên vào localStorage
+      const key = isSecret(props.path) ? "" : `nk-epub-loc:${props.path}`;
+      const saved = key ? localStorage.getItem(key) : null;
       await rendition.display(saved || undefined);
       rendition.on("relocated", (l: any) => {
         setLoc(`${l.start.cfi}`);
         try {
-          localStorage.setItem(key, l.start.cfi);
+          if (key) localStorage.setItem(key, l.start.cfi);
         } catch {}
       });
     } catch (e: any) {

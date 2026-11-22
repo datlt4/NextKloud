@@ -33,6 +33,7 @@ pub struct AppState {
     pub uploads: Arc<Mutex<HashMap<String, PendingUpload>>>,
     pub http: reqwest::Client,
     pub tts_url: String,
+    pub vaults: Arc<crate::secret::Vaults>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]

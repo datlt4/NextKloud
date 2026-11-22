@@ -149,6 +149,28 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/cards/:id", axum::routing::patch(crate::kanban::update_card).delete(crate::kanban::delete_card))
         .route("/api/kanban/import/deck", get(crate::deck::preview).post(crate::deck::apply))
         .route("/api/cards/:id/subtasks", get(crate::kanban::subtasks))
+        .route("/api/secret", get(crate::secret::status).delete(crate::secret::destroy))
+        .route("/api/secret/setup", post(crate::secret::setup))
+        .route("/api/secret/unlock", post(crate::secret::unlock))
+        .route("/api/secret/lock", post(crate::secret::lock))
+        .route("/api/secret/pin", post(crate::secret::change_pin))
+        .route("/api/secret/recovery", post(crate::secret::new_recovery))
+        .route("/api/secret/list", get(crate::secret::list))
+        .route("/api/secret/mkdir", post(crate::secret::mkdir))
+        .route("/api/secret/move", post(crate::secret::move_entry))
+        .route("/api/secret/files/*path", get(crate::secret::download).delete(crate::secret::delete))
+        .route("/api/secret/thumb/*path", get(crate::secret::thumb))
+        .route("/api/secret/uploads", post(crate::secret::init_upload))
+        .route(
+            "/api/secret/uploads/:id",
+            put(crate::secret::put_chunk).layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024 + 1024)),
+        )
+        .route("/api/secret/uploads/:id/complete", post(crate::secret::complete_upload))
+        .route("/api/secret/trash", get(crate::secret::list_trash).delete(crate::secret::empty_trash))
+        .route("/api/secret/trash/:id", axum::routing::delete(crate::secret::purge))
+        .route("/api/secret/trash/:id/restore", post(crate::secret::restore))
+        .route("/api/secret/office/config", post(crate::secret::office_config))
+        .route("/api/secret/office/file", get(crate::secret::office_file))
         .route("/oo/*rest", axum::routing::any(crate::ooproxy::proxy))
         .with_state(state)
 }

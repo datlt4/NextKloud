@@ -22,5 +22,8 @@ opendal = { version = "0.59", default-features = false, features = ["services-s3
 futures = "0.3"
 image = "0.25"
 sha2 = "0.10"
+aes-gcm = "0.10"
+hkdf = "0.12"
+hmac = "0.12"
 flate2 = "1"
 crc32fast = "1"

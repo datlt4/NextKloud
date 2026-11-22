@@ -1,5 +1,5 @@
 import { For, Index, Match, Show, Switch, batch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, Suspense } from "solid-js";
-import { api, isSelfHostedWeb, serverOrigin, type Entry, type Me } from "./api";
+import { SECRET_ROOT, api, isSecret, isSelfHostedWeb, serverOrigin, vaultSeen, type Entry, type Me } from "./api";
 import { syncFromServer, ui, wallCss } from "./background";
 import { ResetForm } from "./forms";
 import { LookDialog } from "./look";
@@ -31,11 +31,14 @@ function ThumbImg(props: { path: string; name: string }) {
 import { MoveDialog, NameDialog, TrashPage, errText, joinPath } from "./fileops";
 import { NotesPage } from "./annot";
 import { KanbanPage } from "./kanban";
+import { SecretGate, SecretSettings } from "./secret";
 
 type SortKey = "name" | "size" | "modified";
 
 const fmtDate = (s: number) => (s ? new Date(s * 1000).toLocaleDateString("vi-VN") : "");
 const parentOf = (p: string) => p.split("/").slice(0, -1).join("/");
+/** Tên thư mục để hiện (gốc khu Bí mật hiện là "Bí mật"). */
+const pretty = (p: string) => (isSecret(p) ? ["Bí mật", ...p.split("/").slice(1)].join("/") : p || "Tất cả file");
 const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 /** Đoạn trích kết quả tìm nội dung: tô đậm chỗ khớp (không phân biệt hoa thường). */
 const highlight = (snip: string, q: string) => {
@@ -77,7 +80,10 @@ export default function App() {
   const [userMenuUp, setUserMenuUp] = createSignal(false);
   const [mSearch, setMSearch] = createSignal(false);
   const [showLook, setShowLook] = createSignal(false);
-  const [page, setPage] = createSignal<"files" | "settings" | "trash" | "notes" | "kanban">("files");
+  const [page, setPage] = createSignal<"files" | "settings" | "trash" | "notes" | "kanban" | "secret" | "secret-trash">("files");
+  const [secretSet, setSecretSet] = createSignal(false);
+  const [vaultLeft, setVaultLeft] = createSignal(0);
+  const inSecret = () => isSecret(prefix()) || page() === "secret-trash";
   const [boardId, setBoardId] = createSignal<string | null>(null);
   type Dlg = { kind: "mkdir" } | { kind: "rename"; f: Entry } | { kind: "move"; paths: string[] };
   const [dlg, setDlg] = createSignal<Dlg | null>(null);
@@ -110,6 +116,7 @@ export default function App() {
   const join = (name: string) => (prefix() ? `${prefix()}/${name}` : name);
 
   const logout = () => {
+    api.secretLock();
     localStorage.removeItem("nk-token");
     setAuthed(false);
     setOpen(null);
@@ -192,12 +199,63 @@ export default function App() {
   const [srvVer, setSrvVer] = createSignal("");
   const refreshVer = () => api.config().then((c) => setSrvVer(c.version ?? "")).catch(() => {});
 
+  // --- khu Bí mật ---
+  const openSecret = async () => {
+    setSideOpen(false);
+    try {
+      const st = await api.secretStatus();
+      if (st.unlocked) return load(SECRET_ROOT);
+    } catch (e) {
+      return fail(e, "Không mở được khu Bí mật");
+    }
+    setOpen(null);
+    setPage("secret");
+  };
+  /** Khoá: bỏ danh sách đang hiện (có tên file bí mật) rồi về cổng nhập PIN. */
+  const lockUi = async () => {
+    setOpen(null);
+    setSecretSet(false);
+    await load("");
+    setPage("secret");
+  };
+  const lockSecret = async () => {
+    await api.secretLock();
+    await lockUi();
+  };
+  onMount(() => {
+    const onLocked = () => {
+      if (inSecret() || isSecret(open()?.path ?? "")) lockUi();
+    };
+    window.addEventListener("nk-vault-locked", onLocked);
+    // đếm ngược tự khoá: mỗi lần gọi API vault thì đặt lại; 15s hỏi server 1 lần cho khớp
+    let seen = 0;
+    let n = 0;
+    const tick = window.setInterval(async () => {
+      if (!inSecret()) return;
+      if (vaultSeen !== seen) {
+        seen = vaultSeen;
+        setVaultLeft(600);
+      } else setVaultLeft((l) => Math.max(0, l - 1));
+      if (++n % 15 === 0 || vaultLeft() === 0) {
+        const st = await api.secretStatus().catch(() => null);
+        if (st && !st.unlocked) onLocked();
+        else if (st) setVaultLeft(st.left);
+      }
+    }, 1000);
+    onCleanup(() => {
+      window.removeEventListener("nk-vault-locked", onLocked);
+      clearInterval(tick);
+    });
+  });
+
   // URL giữ vị trí (thư mục / file đang mở / trang): F5 hay gửi link vẫn về đúng chỗ, nút Back của trình duyệt dùng được.
   const encP = (p: string) => p.split("/").map(encodeURIComponent).join("/");
   const routeOf = () => {
     const pg = page();
     if (pg === "settings") return `#/settings/${setTab()}`;
     if (pg === "kanban") return boardId() ? `#/kanban/${boardId()}` : "#/kanban";
+    // khu Bí mật: không đưa tên file/thư mục vào URL + lịch sử trình duyệt
+    if (pg === "secret" || pg === "secret-trash" || isSecret(prefix()) || isSecret(open()?.path ?? "")) return "#/secret";
     if (pg !== "files") return `#/${pg}`;
     const o = open();
     if (o) return `#/o/${encP(o.path)}`;
@@ -213,9 +271,10 @@ export default function App() {
   const go = async (h: string) => {
     routing = true;
     try {
-      const m = /^#\/(f|o|notes|trash|settings|kanban)(?:\/(.*))?$/.exec(h);
+      const m = /^#\/(f|o|notes|trash|settings|kanban|secret)(?:\/(.*))?$/.exec(h);
       const rest = m?.[2] ? decodeURIComponent(m[2]) : "";
-      if (m?.[1] === "f") await load(rest);
+      if (m?.[1] === "secret") await openSecret();
+      else if (m?.[1] === "f") await load(rest);
       else if (m?.[1] === "o" && rest) await openAt(rest, "");
       else if (m?.[1] === "notes" || m?.[1] === "trash") setPage(m[1]);
       else if (m?.[1] === "kanban") {
@@ -578,7 +637,7 @@ export default function App() {
     try {
       const items = await each("Đang xoá", paths, (p) => api.remove(p));
       flash(items.length === 1 ? `Đã chuyển "${items[0].orig_path.split("/").pop()}" vào thùng rác` : `Đã chuyển ${items.length} mục vào thùng rác`, async () => {
-        await each("Đang khôi phục", items.map((t) => t.id), (id) => api.restore(id));
+        await each("Đang khôi phục", items.map((t) => t.id), (id) => api.restore(id, isSecret(paths[0])));
         flash("Đã khôi phục");
       });
     } catch (e) {
@@ -591,7 +650,7 @@ export default function App() {
     const todo = paths.filter((p) => parentOf(p) !== dest && dest !== p && !dest.startsWith(p + "/"));
     if (!todo.length) return;
     await each("Đang di chuyển", todo, (p) => api.move(p, joinPath(dest, p.split("/").pop()!)));
-    flash(`Đã chuyển ${todo.length} mục tới ${dest || "Tất cả file"}`);
+    flash(`Đã chuyển ${todo.length} mục tới ${pretty(dest)}`);
   };
 
   // --- chọn nhiều ---
@@ -918,6 +977,9 @@ export default function App() {
                 <button class="nav" classList={{ active: page() === "trash" }} onClick={() => { setPage("trash"); setSideOpen(false); }}>
                   <Icon name="trash" /> Thùng rác
                 </button>
+                <button class="nav" classList={{ active: page() === "secret" || inSecret() }} onClick={openSecret}>
+                  <Icon name="lock" /> Bí mật
+                </button>
                 <Show when={me()?.is_admin}>
                   <button class="nav" classList={{ active: page() === "settings" && (setTab() === "users" || setTab() === "system") }} onClick={() => openSettings("users")}>
                     <Icon name="users" /> Quản trị
@@ -979,6 +1041,19 @@ export default function App() {
                 </Show>
                 <TrashPage onError={setErr} onChanged={refreshMe} />
               </Show>
+              <Show when={page() === "secret"}>
+                <SecretGate onUnlocked={() => load(SECRET_ROOT)} />
+              </Show>
+              <Show when={page() === "secret-trash"}>
+                <Show when={err()}>
+                  <div class="err banner">
+                    <span>{err()}</span>
+                    <button class="icon-btn sm" onClick={() => setErr("")}><Icon name="close" size={14} /></button>
+                  </div>
+                </Show>
+                <div class="toolbar"><button class="btn ghost sm" onClick={() => load(SECRET_ROOT)}><Icon name="back" /> Về Bí mật</button></div>
+                <TrashPage secret onError={setErr} onChanged={refreshMe} />
+              </Show>
               <Show when={page() === "files"}>
               <Show when={sel().size}>
                 <div class="toolbar selbar">
@@ -1018,7 +1093,7 @@ export default function App() {
                           onClick={() => load(crumbs().slice(0, i() + 1).join("/"))}
                           {...dropProps(() => crumbs().slice(0, i() + 1).join("/"))}
                         >
-                          {c}
+                          {c === SECRET_ROOT ? (<><Icon name="lock" size={14} /> Bí mật</>) : c}
                         </button>
                       </>
                     )}
@@ -1028,6 +1103,14 @@ export default function App() {
                     <span class="crumb cur">{open()!.path.split("/").pop()}</span>
                   </Show>
                 </nav>
+                <Show when={inSecret()}>
+                  <div class="sec-tools">
+                    <span class="sec-left" title="Tự khoá khi không dùng">{Math.floor(vaultLeft() / 60)}:{String(vaultLeft() % 60).padStart(2, "0")}</span>
+                    <button class="icon-btn" title="Thùng rác Bí mật" onClick={() => { setOpen(null); setPage("secret-trash"); }}><Icon name="trash" /></button>
+                    <button class="icon-btn" title="Cài đặt Bí mật" onClick={() => setSecretSet(true)}><Icon name="settings" /></button>
+                    <button class="btn ghost sm" title="Khoá ngay" onClick={lockSecret}><Icon name="lock" /> <span class="hide-xs">Khoá</span></button>
+                  </div>
+                </Show>
                 <Show when={!open()}>
                   <div class="seg">
                     <button classList={{ on: view() === "list" }} title="Danh sách" onClick={() => { setView("list"); localStorage.setItem("nk-view", "list"); }}>
@@ -1283,7 +1366,7 @@ export default function App() {
             {(d) => (
               <Switch>
                 <Match when={d().kind === "mkdir"}>
-                  <NameDialog title="Thư mục mới" label={`Tạo trong ${prefix() || "Tất cả file"}`} ok="Tạo" onClose={() => setDlg(null)} onSubmit={async (n) => {
+                  <NameDialog title="Thư mục mới" label={`Tạo trong ${pretty(prefix())}`} ok="Tạo" onClose={() => setDlg(null)} onSubmit={async (n) => {
                     await api.mkdir(join(n));
                     setDlg(null);
                     await reload();
@@ -1308,6 +1391,10 @@ export default function App() {
                 </Match>
               </Switch>
             )}
+          </Show>
+
+          <Show when={secretSet()}>
+            <SecretSettings onClose={() => setSecretSet(false)} onDestroyed={() => lockUi()} />
           </Show>
 
           <Show when={showLook()}>

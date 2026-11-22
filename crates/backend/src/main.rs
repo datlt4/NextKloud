@@ -124,6 +124,9 @@ async fn main() {
                     Ok(_) => {}
                     Err(e) => tracing::error!("trash purge: {e:?}"),
                 }
+                if let Err(e) = nextkloud_backend::secret::purge_expired(&db, &store, days).await {
+                    tracing::error!("secret trash purge: {e:?}");
+                }
                 tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
             }
         });
@@ -161,6 +164,7 @@ async fn main() {
         uploads: Arc::new(Mutex::new(HashMap::new())),
         http: reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build().expect("http client"),
         tts_url: std::env::var("TTS_URL").unwrap_or_else(|_| "http://localhost:8016".into()),
+        vaults: Default::default(),
     };
 
     let web_dir = std::env::var("NEXTKLOUD_WEB").ok().filter(|d| !d.is_empty()).map(PathBuf::from);

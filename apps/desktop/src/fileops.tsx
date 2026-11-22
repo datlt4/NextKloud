@@ -1,5 +1,5 @@
 import { For, Show, createResource, createSignal, onMount } from "solid-js";
-import { api, type TrashItem } from "./api";
+import { SECRET_ROOT, api, isSecret, type TrashItem } from "./api";
 import { fmtSize } from "./format";
 import { Icon } from "./icons";
 
@@ -16,6 +16,8 @@ export function errText(e: unknown): string {
 
 export const joinPath = (dir: string, name: string) => (dir ? `${dir}/${name}` : name);
 const baseName = (p: string) => p.split("/").pop() ?? p;
+/** Đường dẫn để hiện (bỏ tiền tố nội bộ của khu Bí mật). */
+const shown = (p: string) => (isSecret(p) ? p.slice(SECRET_ROOT.length + 1) : p);
 
 function badName(n: string): string {
   if (!n) return "Tên không được để trống";
@@ -101,19 +103,20 @@ export function MoveDialog(props: {
   });
   const blocked = (p: string) => props.paths.some((m) => p === m || p.startsWith(m + "/"));
   const sameDir = () => props.paths.every((m) => m.split("/").slice(0, -1).join("/") === cur());
-  const crumbs = () => cur().split("/").filter(Boolean);
+  const root = isSecret(props.start) ? SECRET_ROOT : "";
+  const crumbs = () => cur().split("/").filter(Boolean).filter((c) => c !== SECRET_ROOT);
   const title = () => (props.paths.length === 1 ? `Di chuyển "${baseName(props.paths[0])}"` : `Di chuyển ${props.paths.length} mục`);
   return (
     <div class="modal-bg" onClick={() => !busy() && props.onClose()}>
       <div class="modal glass form" onClick={(e) => e.stopPropagation()}>
         <Head title={title()} onClose={props.onClose} />
         <nav class="crumbs pick-crumbs">
-          <button class="crumb" onClick={() => setCur("")}><Icon name="home" size={16} /></button>
+          <button class="crumb" onClick={() => setCur(root)}><Icon name={root ? "lock" : "home"} size={16} /></button>
           <For each={crumbs()}>
             {(c, i) => (
               <>
                 <Icon name="chevron" size={14} class="ic dim" />
-                <button class="crumb" classList={{ cur: i() === crumbs().length - 1 }} onClick={() => setCur(crumbs().slice(0, i() + 1).join("/"))}>
+                <button class="crumb" classList={{ cur: i() === crumbs().length - 1 }} onClick={() => setCur(joinPath(root, crumbs().slice(0, i() + 1).join("/")))}>
                   {c}
                 </button>
               </>
@@ -168,8 +171,8 @@ export function MoveDialog(props: {
 
 const fmtWhen = (s: number) => new Date(s * 1000).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" });
 
-export function TrashPage(props: { onError: (m: string) => void; onChanged: () => void }) {
-  const [items, { refetch }] = createResource(() => api.trash());
+export function TrashPage(props: { onError: (m: string) => void; onChanged: () => void; secret?: boolean }) {
+  const [items, { refetch }] = createResource(() => api.trash(props.secret));
   const [cfg] = createResource(() => api.config().catch(() => ({ trash_days: 30 })));
   const [busy, setBusy] = createSignal<string | null>(null);
   const total = () => (items() ?? []).reduce((a, t) => a + t.size, 0);
@@ -186,15 +189,15 @@ export function TrashPage(props: { onError: (m: string) => void; onChanged: () =
     }
   };
   const purge = (t: TrashItem) => {
-    if (confirm(`Xoá vĩnh viễn "${baseName(t.orig_path)}"? Không thể hoàn tác.`)) run(t.id, () => api.purge(t.id));
+    if (confirm(`Xoá vĩnh viễn "${baseName(t.orig_path)}"? Không thể hoàn tác.`)) run(t.id, () => api.purge(t.id, props.secret));
   };
   return (
     <div class="trash">
       <div class="toolbar">
-        <h2 class="tb-title"><Icon name="trash" /> Thùng rác</h2>
+        <h2 class="tb-title"><Icon name={props.secret ? "lock" : "trash"} /> {props.secret ? "Thùng rác Bí mật" : "Thùng rác"}</h2>
         <span class="muted sm hide-xs">Tự xoá sau {cfg()?.trash_days ?? 30} ngày · vẫn tính vào dung lượng</span>
         <button class="btn danger sm" style={{ "margin-left": "auto" }} disabled={!items()?.length || !!busy()} onClick={() => {
-          if (confirm(`Xoá vĩnh viễn ${items()!.length} mục (${fmtSize(total())})? Không thể hoàn tác.`)) run("all", () => api.emptyTrash());
+          if (confirm(`Xoá vĩnh viễn ${items()!.length} mục (${fmtSize(total())})? Không thể hoàn tác.`)) run("all", () => api.emptyTrash(props.secret));
         }}>
           {busy() === "all" ? "Đang dọn…" : "Dọn sạch"}
         </button>
@@ -210,15 +213,15 @@ export function TrashPage(props: { onError: (m: string) => void; onChanged: () =
               <span class="c-name">
                 <span class="fi"><Icon name={t.is_dir ? "folder" : "file"} size={20} /></span>
                 <span class="fcol">
-                  <span class="fname" title={t.orig_path}>{baseName(t.orig_path)}</span>
+                  <span class="fname" title={shown(t.orig_path)}>{baseName(t.orig_path)}</span>
                   <span class="fpath">
-                    {t.orig_path.includes("/") ? t.orig_path.split("/").slice(0, -1).join("/") + " · " : ""}
+                    {shown(t.orig_path).includes("/") ? shown(t.orig_path).split("/").slice(0, -1).join("/") + " · " : ""}
                     {t.is_dir ? `${t.files.toLocaleString("vi-VN")} file · ` : ""}{fmtSize(t.size)} · xoá {fmtWhen(t.deleted_at)}
                   </span>
                 </span>
               </span>
               <span class="tact">
-                <button class="btn sm ghost" disabled={!!busy()} onClick={() => run(t.id, () => api.restore(t.id))}>
+                <button class="btn sm ghost" disabled={!!busy()} onClick={() => run(t.id, () => api.restore(t.id, props.secret))}>
                   <Icon name="back" /> <span class="hide-xs">Khôi phục</span>
                 </button>
                 <button class="btn sm danger" disabled={!!busy()} title="Xoá vĩnh viễn" onClick={() => purge(t)}>
