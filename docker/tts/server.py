@@ -20,6 +20,30 @@ from pydantic import BaseModel
 LIBRE = os.environ.get("LIBRETRANSLATE_URL", "http://host.docker.internal:8015")
 DATA = os.environ.get("TTS_DATA", "/data")
 DEFAULT_RATE = os.environ.get("TTS_RATE", "+0%")
+# Cache mp3 giới hạn dung lượng: quá thì xoá file lâu không nghe nhất (LRU theo mtime).
+CACHE_MAX = int(os.environ.get("TTS_CACHE_MAX_MB", "5120")) * 1024 * 1024
+_new_since_prune = 0
+
+
+def prune_cache() -> None:
+    files = []
+    total = 0
+    with os.scandir(DATA) as it:
+        for e in it:
+            if e.name.endswith(".mp3") and e.is_file():
+                st = e.stat()
+                files.append((st.st_mtime, st.st_size, e.path))
+                total += st.st_size
+    if total <= CACHE_MAX:
+        return
+    for _, size, path in sorted(files):  # cũ nhất trước
+        try:
+            os.remove(path)
+        except OSError:
+            continue
+        total -= size
+        if total <= CACHE_MAX * 0.9:
+            break
 
 # Giọng Neural mặc định cho 3 ngôn ngữ yêu cầu + giọng dự phòng (Microsoft
 # thỉnh thoảng không trả audio với vài cụm từ — thử giọng khác thường qua được).
@@ -222,4 +246,11 @@ async def synthesize(b: SynthBody):
                 os.remove(tmp)
             raise HTTPException(502, f"tts failed (edge+google): {err}")
         os.replace(tmp, out)  # atomic, tránh file nửa vời
+        global _new_since_prune
+        _new_since_prune += 1
+        if _new_since_prune >= 50:  # quét thư mục mỗi 50 file mới, không phải mỗi lần
+            _new_since_prune = 0
+            await asyncio.to_thread(prune_cache)
+    else:
+        os.utime(out)  # vừa được nghe lại -> "mới dùng" cho LRU
     return FileResponse(out, media_type="audio/mpeg", filename=f"{key}.mp3")
