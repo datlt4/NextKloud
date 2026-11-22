@@ -106,6 +106,10 @@ export default function App() {
   };
   const shownName = () => me()?.display_name || me()?.username || "";
   const [upload, setUpload] = createSignal<{ name: string; pct: number; left: number } | null>(null);
+  type UpJob = { file: File; rel: string; base: string };
+  const [upStat, setUpStat] = createSignal<{ total: number; done: number; ok: number; fails: (UpJob & { err: string })[]; running: boolean } | null>(null);
+  let upCancel = false;
+  let upCloseTimer: number | undefined;
   let fileInput!: HTMLInputElement;
   let dirInput!: HTMLInputElement;
   const [dropping, setDropping] = createSignal(false);
@@ -759,26 +763,41 @@ export default function App() {
   /** Upload giữ cấu trúc thư mục: `rel` là đường dẫn tương đối ("A/b/c.txt"), `dirs` là thư mục rỗng cần tạo. */
   const doUpload = async (list: FileList | { file: File; rel: string }[] | null, dirs: string[] = []) => {
     const items = Array.isArray(list) ? list : Array.from(list ?? []).map((f) => ({ file: f, rel: f.webkitRelativePath || f.name }));
+    fileInput.value = "";
+    dirInput.value = "";
     if (!items.length && !dirs.length) return;
     const base = prefix();
-    try {
-      for (const d of dirs) await api.mkdir(joinPath(base, d)).catch(() => {}); // đã có thì thôi
-      for (let i = 0; i < items.length; i++) {
-        const { file: f, rel } = items[i];
-        setUpload({ name: rel, pct: 0, left: items.length - i });
-        await api.upload(joinPath(base, rel), f, (done) =>
-          setUpload({ name: rel, pct: Math.round((done / Math.max(f.size, 1)) * 100), left: items.length - i }),
-        );
+    for (const d of dirs) await api.mkdir(joinPath(base, d)).catch(() => {}); // đã có thì thôi
+    await runUploads(items.map((x) => ({ ...x, base })));
+  };
+
+  /** Chạy hàng đợi upload: lỗi 1 file không dừng cả lô, cuối cùng chỉ liệt kê file lỗi để thử lại. */
+  const runUploads = async (jobs: UpJob[]) => {
+    if (!jobs.length) return refresh();
+    upCancel = false;
+    setUpStat({ total: jobs.length, done: 0, ok: 0, fails: [], running: true });
+    clearTimeout(upCloseTimer);
+    for (const j of jobs) {
+      if (upCancel) break;
+      setUpload({ name: j.rel, pct: 0, left: 0 });
+      try {
+        await api.upload(joinPath(j.base, j.rel), j.file, (done) => setUpload({ name: j.rel, pct: Math.round((done / Math.max(j.file.size, 1)) * 100), left: 0 }));
+        setUpStat((s) => s && { ...s, ok: s.ok + 1 });
+      } catch (e) {
+        if (String((e as Error)?.message).includes("unauthorized")) {
+          fail(e, "Upload lỗi");
+          break;
+        }
+        setUpStat((s) => s && { ...s, fails: [...s.fails, { ...j, err: errText(e) }] });
       }
-    } catch (e) {
-      fail(e, "Upload lỗi");
-    } finally {
-      setUpload(null);
-      fileInput.value = "";
-      dirInput.value = "";
-      refresh();
-      refreshMe();
+      setUpStat((s) => s && { ...s, done: s.done + 1 });
     }
+    setUpload(null);
+    setUpStat((s) => s && { ...s, running: false });
+    // xong hết, không lỗi: tự đóng sau vài giây
+    if (!upStat()?.fails.length && !upCancel) upCloseTimer = window.setTimeout(() => setUpStat(null), 4000);
+    refresh();
+    refreshMe();
   };
 
   /** Kéo file/thư mục từ máy vào: duyệt cây thư mục (webkitGetAsEntry), giữ đường dẫn con. */
@@ -1400,22 +1419,52 @@ export default function App() {
             </main>
           </div>
 
-          <Show when={upload()}>
-            <div class="toast glass">
-              <div class="toast-row">
-                <Icon name="upload" />
-                <span class="fname">{upload()!.name}</span>
-                <span class="muted">{upload()!.pct}%</span>
+          <Show when={upStat()}>
+            {(u) => (
+              <div class="toast glass up-panel">
+                <div class="up-head">
+                  <div>
+                    <b>{u().running ? `Còn lại ${u().total - u().done}` : upCancel ? "Đã dừng" : "Xong"} · Đã xử lý {u().done}/{u().total}</b>
+                    <div class="sm">
+                      <span class="up-ok">Đã tải lên {u().ok}</span> · <span classList={{ "up-bad": u().fails.length > 0 }}>Lỗi {u().fails.length}</span>
+                    </div>
+                  </div>
+                  <Show when={u().running} fallback={
+                    <button class="icon-btn sm" title="Đóng" onClick={() => setUpStat(null)}><Icon name="close" size={15} /></button>
+                  }>
+                    <button class="btn ghost sm" title="Dừng sau file đang tải" onClick={() => (upCancel = true)}>Dừng</button>
+                  </Show>
+                </div>
+                <Show when={upload()}>
+                  <div class="toast-row up-cur">
+                    <Icon name="upload" size={15} />
+                    <span class="fname">{upload()!.name}</span>
+                    <span class="muted">{upload()!.pct}%</span>
+                  </div>
+                  <div class="bar"><i style={{ width: `${upload()!.pct}%` }} /></div>
+                </Show>
+                <Show when={u().fails.length}>
+                  <div class="up-fails">
+                    <For each={u().fails}>
+                      {(f) => (
+                        <div class="up-fail" title={f.err}>
+                          <span class="fname">{f.rel}</span>
+                          <span class="muted xs">{f.err}</span>
+                          <button class="icon-btn sm" title="Bỏ qua" onClick={() => setUpStat((s) => s && { ...s, fails: s.fails.filter((x) => x !== f) })}><Icon name="close" size={13} /></button>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                  <Show when={!u().running}>
+                    <button class="btn primary sm block" onClick={() => runUploads(u().fails.map(({ err: _e, ...j }) => j))}>Thử lại {u().fails.length} file lỗi</button>
+                  </Show>
+                </Show>
               </div>
-              <div class="bar"><i style={{ width: `${upload()!.pct}%` }} /></div>
-              <Show when={upload()!.left > 1}>
-                <span class="muted sm">còn {upload()!.left - 1} file</span>
-              </Show>
-            </div>
+            )}
           </Show>
 
           <Show when={working() || notice()}>
-            <div class="toast glass note" classList={{ lift: !!upload() }}>
+            <div class="toast glass note" classList={{ lift: !!upStat() }}>
               <Show when={working()} fallback={
                 <div class="toast-row">
                   <Icon name="check" />

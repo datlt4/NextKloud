@@ -892,3 +892,15 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 .kb-att-open img, .kb-att-ic { width: 36px; height: 36px; border-radius: 6px; object-fit: cover; flex-shrink: 0; display: grid; place-items: center; background: var(--hover); }
 .kb-att-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .kb-att-open:hover .kb-att-name { text-decoration: underline; }
+/* bảng tiến độ upload: thống kê + chỉ liệt kê file lỗi */
+.up-panel { display: grid; gap: 8px; }
+.up-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.up-head .sm { font-size: 12px; margin-top: 2px; color: var(--muted); }
+.up-ok { color: #2e9d57; }
+.up-bad { color: #d9534f; font-weight: 600; }
+.up-cur { margin: 0; font-size: 13px; }
+.up-fails { max-height: 220px; overflow: auto; display: grid; gap: 4px; }
+.up-fail { display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 6px; padding: 4px 6px; border-radius: 8px; background: var(--hover); }
+.up-fail .fname { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.up-fail .muted { grid-column: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.up-fail button { grid-row: 1 / span 2; grid-column: 2; }
