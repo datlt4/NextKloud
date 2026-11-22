@@ -1,5 +1,5 @@
 import { For, Show, createSignal } from "solid-js";
-import { PRESETS, previewDim, setDim, setImage, setPreset, setTheme, ui } from "./background";
+import { FONTS, PRESETS, previewDim, previewReadSize, setDim, setFonts, setImage, setPreset, setTheme, ui } from "./background";
 import { Icon } from "./icons";
 
 export function LookPanel(props: { onError: (m: string) => void }) {
@@ -28,6 +28,35 @@ export function LookPanel(props: { onError: (m: string) => void }) {
           )}
         </For>
       </div>
+      <div class="field-label">Phông chữ</div>
+      <div class="font-grid">
+        <label>
+          <span class="muted sm">Giao diện</span>
+          <select value={ui().font} disabled={busy()} onChange={(e) => run(() => setFonts({ font: e.currentTarget.value }))}>
+            <For each={FONTS}>{(f) => <option value={f.id}>{f.name}</option>}</For>
+          </select>
+        </label>
+        <label>
+          <span class="muted sm">Khi đọc tài liệu (.md)</span>
+          <select value={ui().readFont} disabled={busy()} onChange={(e) => run(() => setFonts({ readFont: e.currentTarget.value }))}>
+            <option value="">Giống giao diện</option>
+            <For each={FONTS}>{(f) => <option value={f.id}>{f.name}</option>}</For>
+          </select>
+        </label>
+      </div>
+      <label class="slider">
+        <span>Cỡ chữ khi đọc: {ui().readSize}px</span>
+        <input
+          type="range"
+          min="12"
+          max="24"
+          step="1"
+          value={ui().readSize}
+          onInput={(e) => previewReadSize(+e.currentTarget.value)}
+          onChange={(e) => run(() => setFonts({ readSize: +e.currentTarget.value }))}
+        />
+      </label>
+      <p class="font-sample">Tiếng Việt có dấu: Hệ thống 1 tư duy nhanh, trực giác — ABC xyz 0123.</p>
       <div class="field-label">Hình nền</div>
       <div class="swatches">
         <button

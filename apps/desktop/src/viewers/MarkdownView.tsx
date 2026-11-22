@@ -1,6 +1,6 @@
 import { marked } from "marked";
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { api, hashText, speak } from "../api";
+import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
+import { api, hashText, speak, type VaultOutline } from "../api";
 import { Icon } from "../icons";
 import { ReaderLayout, STATE_UI, type TocItem, createReader, topState } from "../annot";
 
@@ -178,6 +178,47 @@ function stripMd(s: string) {
 }
 
 const imgUrlCache = new Map<string, string>();
+/** Mục lục vault dùng lại 2 phút khi chuyển giữa các file cùng vault. */
+let outlineCache: { at: number; v: VaultOutline } | null = null;
+async function vaultOutline(path: string): Promise<VaultOutline | null> {
+  const c = outlineCache;
+  if (c && Date.now() - c.at < 120_000 && c.v.files.some((f) => f.path === path)) return c.v;
+  const v = await api.vaultOutline(path).catch(() => null);
+  if (v) outlineCache = { at: Date.now(), v };
+  return v;
+}
+/** Thư mục gốc đã tìm thấy ảnh lần trước (thường là gốc vault) -> thử trước, đỡ dò lại. */
+const imgBases: string[] = [];
+
+/** Ảnh Obsidian có thể ghi tương đối với file, với gốc vault, hoặc chỉ tên file: thử lần lượt như Obsidian. */
+async function loadImg(mdPath: string, raw: string): Promise<string> {
+  const dir = mdPath.includes("/") ? mdPath.slice(0, mdPath.lastIndexOf("/")) : "";
+  const ups: string[] = [];
+  for (let d = dir; ; d = d.includes("/") ? d.slice(0, d.lastIndexOf("/")) : "") {
+    ups.push(d);
+    if (!d) break;
+  }
+  const bases = [dir, ...imgBases.filter((b) => ups.includes(b)), ...ups];
+  const tried = new Set<string>();
+  for (const b of bases) {
+    const p = joinRel(b, raw);
+    if (tried.has(p)) continue;
+    tried.add(p);
+    try {
+      const url = await api.downloadUrl(p);
+      if (b !== dir && !imgBases.includes(b)) imgBases.unshift(b);
+      return url;
+    } catch {
+      /* thử chỗ khác */
+    }
+  }
+  // chỉ có tên file: tìm theo tên trong cây thư mục gần nhất
+  const name = raw.split("/").pop()!;
+  const hit = (await api.search(name)).filter((e) => !e.is_dir && e.name === name && ups.some((u) => !u || e.path.startsWith(u + "/")));
+  hit.sort((a, b) => a.path.length - b.path.length);
+  if (!hit.length) throw new Error("404");
+  return api.downloadUrl(hit[0].path);
+}
 
 function VoiceButton(props: { text: string; onPlay: () => void }) {
   const [st, setSt] = createSignal<"idle" | "busy" | "play">("idle");
@@ -222,6 +263,7 @@ export default function MarkdownView(props: {
   mark?: string;
 }) {
   const list = createMemo(() => blocks(props.text));
+  const [outline] = createResource(() => props.path, vaultOutline);
   const reader = createReader(() => props.path, (m) => (props.onError ?? console.error)(m));
   const plain = createMemo(() => list().map((b) => b.html.replace(/<[^>]+>/g, "").replace(/\s+/g, " ")));
   // Annotation -> block: ưu tiên đoạn chứa đúng câu đã trích (bài có thể đã sửa), không thì theo số thứ tự.
@@ -336,7 +378,7 @@ export default function MarkdownView(props: {
         img.removeAttribute("data-wsrc");
         return;
       }
-      api.downloadUrl(joinRel(dirOf(props.path), raw))
+      loadImg(props.path, raw)
       .then((url) => {
         if (img.isConnected) {
           imgUrlCache.set(key, url);
@@ -361,10 +403,11 @@ export default function MarkdownView(props: {
     }
     // 3) cuộn tới heading nếu mở link có #section
     if (props.anchor) {
-      const needle = props.anchor.toLowerCase().replace(/[-_]+/g, " ");
+      const norm = (x: string) => x.toLowerCase().replace(/[-_*`]+/g, " ").replace(/\s+/g, " ").trim();
+      const needle = norm(props.anchor);
       const hs = host?.querySelectorAll("h1,h2,h3,h4,h5,h6") ?? [];
       for (const h of Array.from(hs)) {
-        if ((h.textContent ?? "").toLowerCase().includes(needle)) {
+        if (norm(h.textContent ?? "").includes(needle)) {
           (h as HTMLElement).scrollIntoView({ block: "start" });
           break;
         }
@@ -377,7 +420,14 @@ export default function MarkdownView(props: {
     return el?.dataset.anchor ?? null;
   };
   return (
-    <ReaderLayout r={reader} toc={toc()} current={current()} onJump={jump} anchorOf={anchorOf}>
+    <ReaderLayout
+      r={reader}
+      toc={toc()}
+      current={current()}
+      onJump={jump}
+      anchorOf={anchorOf}
+      vault={outline() ? { outline: outline()!, path: props.path, onOpen: (p, h) => props.onOpenLink?.("/" + p, h) } : null}
+    >
     <article
       class="md-body"
       ref={(el) => {

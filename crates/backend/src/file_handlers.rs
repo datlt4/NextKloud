@@ -62,6 +62,19 @@ pub async fn search_content(
     Ok(Json(crate::fulltext::search(&s.db, user.id, term, q.limit.unwrap_or(100).clamp(1, 500)).await?))
 }
 
+#[derive(Deserialize)]
+pub struct PathQuery {
+    pub path: String,
+}
+
+pub async fn vault_outline(
+    State(s): State<AppState>,
+    user: AuthUser,
+    Query(q): Query<PathQuery>,
+) -> Result<Json<Option<crate::fulltext::Outline>>, AppError> {
+    Ok(Json(crate::fulltext::outline(&s.db, user.id, &clean_path(&q.path)?).await?))
+}
+
 pub async fn search_files(
     State(s): State<AppState>,
     user: AuthUser,

@@ -416,6 +416,11 @@ export default function App() {
       return;
     }
     setErr("");
+    // breadcrumb theo thư mục của file vừa mở
+    const show = async (o: NonNullable<ReturnType<typeof open>>) => {
+      if (parentOf(o.path) !== prefix()) await load(parentOf(o.path));
+      setOpen(o);
+    };
     const cur = open()?.path ?? "";
     const dir = cur.includes("/") ? cur.slice(0, cur.lastIndexOf("/")) : "";
     const cands: string[] = [];
@@ -438,10 +443,10 @@ export default function App() {
         const kind = viewerKind(name);
         if (kind === "markdown") {
           const text = await api.readText(c);
-          setOpen({ path: c, name, kind, text, anchor: anchor ?? null });
+          await show({ path: c, name, kind, text, anchor: anchor ?? null });
         } else if (kind !== "other") {
           await api.exists(c); // không có -> ném lỗi, thử ứng viên kế
-          setOpen({ path: c, name, kind });
+          await show({ path: c, name, kind });
         } else continue;
         return;
       } catch {
@@ -458,8 +463,8 @@ export default function App() {
       if (hits.length) {
         const h = hits[0];
         const kind = viewerKind(h.name);
-        if (kind === "markdown") setOpen({ path: h.path, name: h.name, kind, text: await api.readText(h.path), anchor: anchor ?? null });
-        else setOpen({ path: h.path, name: h.name, kind });
+        if (kind === "markdown") await show({ path: h.path, name: h.name, kind, text: await api.readText(h.path), anchor: anchor ?? null });
+        else await show({ path: h.path, name: h.name, kind });
         return;
       }
     } catch {
@@ -712,7 +717,7 @@ export default function App() {
 
   return (
     <div class="app">
-      <div class="wall" style={{ background: wallCss() }} />
+      <div class="wall" classList={{ "wall-light": ui().bg !== "image" && ui().bg !== "night" }} style={{ background: wallCss() }} />
       <div class="wall-dim" style={{ opacity: ui().bg === "image" ? ui().dim : 0 }} />
 
       <Switch>

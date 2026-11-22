@@ -59,6 +59,10 @@ export interface GitRepo {
   created_at: number;
 }
 
+export interface VaultOutline {
+  root: string;
+  files: { path: string; headings: [number, string][] }[];
+}
 export type NoteState = "todo" | "doing" | "done";
 export interface Annotation {
   id: string;
@@ -252,6 +256,10 @@ export const api = {
   // --- bookmark + ghi chú ---
   async annotations(path: string) {
     return (await req(`/api/annotations?path=${encodeURIComponent(path)}`)).json() as Promise<Annotation[]>;
+  },
+  /** Mục lục cả vault Obsidian chứa file (null nếu không thuộc vault nào). */
+  async vaultOutline(path: string) {
+    return (await req(`/api/vault/outline?path=${encodeURIComponent(path)}`)).json() as Promise<VaultOutline | null>;
   },
   async allNotes(state?: NoteState) {
     return (await req(`/api/annotations${state ? `?state=${state}` : ""}`)).json() as Promise<Annotation[]>;

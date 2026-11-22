@@ -4,13 +4,13 @@
   --bg: #f5f0e8;
   --surface: #fffdf9;
   --glass: rgba(255, 253, 249, 0.94);
-  --glass-blur: rgba(255, 253, 249, 0.8);
+  --glass-blur: rgba(255, 253, 249, 0.9);
   --elev: #ffffff;
   --input: #ffffff;
   --hover: rgba(120, 72, 36, 0.06);
-  --line: #ebe2d6;
-  --text: #29241f;
-  --muted: #857a6e;
+  --line: #e3d7c8;
+  --text: #241f1a;
+  --muted: #6b6055;
   --accent: #d9653b;
   --accent-h: #c4552d;
   --accent-fg: #fff;
@@ -32,13 +32,13 @@
   --bg: #1f1e1c;
   --surface: #262624;
   --glass: rgba(38, 37, 35, 0.94);
-  --glass-blur: rgba(38, 37, 35, 0.78);
+  --glass-blur: rgba(34, 33, 31, 0.92);
   --elev: #2f2e2b;
   --input: #1c1b19;
   --hover: rgba(255, 236, 214, 0.06);
-  --line: rgba(255, 236, 214, 0.1);
+  --line: rgba(255, 236, 214, 0.14);
   --text: #f3ede4;
-  --muted: #a69d92;
+  --muted: #c2b8ac;
   --accent: #e07a50;
   --accent-h: #ea8b62;
   --accent-fg: #1f1e1c;
@@ -58,13 +58,13 @@
     --bg: #1f1e1c;
     --surface: #262624;
     --glass: rgba(38, 37, 35, 0.94);
-    --glass-blur: rgba(38, 37, 35, 0.78);
+    --glass-blur: rgba(34, 33, 31, 0.92);
     --elev: #2f2e2b;
     --input: #1c1b19;
     --hover: rgba(255, 236, 214, 0.06);
-    --line: rgba(255, 236, 214, 0.1);
+    --line: rgba(255, 236, 214, 0.14);
     --text: #f3ede4;
-    --muted: #a69d92;
+    --muted: #c2b8ac;
     --accent: #e07a50;
     --accent-h: #ea8b62;
     --accent-fg: #1f1e1c;
@@ -83,7 +83,7 @@
 html, body { height: 100%; margin: 0; }
 body {
   background: var(--bg); color: var(--text); overflow: hidden;
-  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: 14px/1.45 var(--font-ui, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif);
   -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent;
 }
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
@@ -97,6 +97,9 @@ input { font: inherit; color: var(--text); }
 /* nền: layer cố định, không re-paint khi scroll */
 .wall, .wall-dim { position: fixed; inset: 0; z-index: -2; }
 .wall-dim { background: #000; z-index: -1; transition: opacity .2s; }
+/* Nền preset sáng ở chế độ tối: tối đi để chữ kem còn đọc được */
+:root[data-theme="dark"] .wall-light { filter: brightness(.32) saturate(.85); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme]) .wall-light { filter: brightness(.32) saturate(.85); } }
 .app { height: 100dvh; display: flex; flex-direction: column; }
 
 /* Glass: nền đục; blur chỉ bật trên desktop (GPU yếu như A8 Star tốn khung hình) */
@@ -358,7 +361,7 @@ input { font: inherit; color: var(--text); }
 .viewer > .btn { margin-bottom: 12px; }
 
 /* markdown */
-.md-body { line-height: 1.75; max-width: 860px; margin: 0 auto; font-size: 15px; }
+.md-body { line-height: 1.75; max-width: 860px; margin: 0 auto; font-size: var(--read-size, 15px); font-family: var(--font-read, inherit); }
 .md-body img { display: block; margin: 14px auto; max-width: 100%; border-radius: 8px; }
 .md-body pre { background: var(--code-bg); border: 1px solid var(--line); padding: 12px; overflow-x: auto; border-radius: 10px; }
 .md-body code { background: var(--accent-soft); color: var(--accent-text); padding: 1px 5px; border-radius: 5px; font-size: .92em; }
@@ -422,7 +425,8 @@ input { font: inherit; color: var(--text); }
 .note-card { margin: 0 2px 8px; padding: 10px; border-radius: 12px; border: 1px solid var(--line); border-left-width: 3px; background: var(--bg); }
 .note-card.st-todo { border-left-color: #8b8f98; }
 .note-card.st-doing { border-left-color: #eab308; }
-.note-card.st-done { border-left-color: #16a34a; opacity: .78; }
+.note-card.st-done { border-left-color: #16a34a; opacity: .88; }
+.note-card { transition: box-shadow .5s; }
 .note-card.focus { box-shadow: 0 0 0 2px var(--accent); }
 .nc-head { display: flex; align-items: center; gap: 6px; }
 .nc-where { flex: 1; min-width: 0; text-align: left; font-size: 12px; font-weight: 600; color: var(--accent-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -681,3 +685,26 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 .excali-host { flex: 1; min-height: 0; }
 .office-wrap { display: flex; flex-direction: column; gap: 8px; }
 .office-box { height: 76dvh; min-height: 480px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+
+/* Mục lục dạng cây: đường kẻ cha-con, thu gọn/mở rộng */
+.tt-bar { display: flex; gap: 4px; padding: 2px 4px 6px; }
+.tt-bar button { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 8px; border-radius: 7px; font-size: 12px; color: var(--muted); }
+.tt-bar button:hover { background: var(--hover); color: var(--text); }
+.rot90 { transform: rotate(90deg); }
+.tt-row { display: flex; align-items: flex-start; border-radius: 7px; }
+.tt-row:hover { background: var(--hover); }
+.tt-row.cur { background: var(--accent-soft); }
+.tt-row.cur > .tt-label { color: var(--accent-text); font-weight: 600; }
+.tt-chev { flex: none; display: grid; place-items: center; width: 20px; height: 26px; color: var(--muted); }
+.tt-chev svg { transition: transform .15s; }
+.tt-chev.open svg { transform: rotate(90deg); }
+.tt-ic { margin: 6px 5px 0 0; color: var(--muted); }
+.tt-dir > .tt-ic { color: #8b5cf6; }
+.tt-label { flex: 1; min-width: 0; text-align: left; padding: 4px 6px 4px 0; font-size: 13px; line-height: 1.4; color: var(--text); overflow-wrap: anywhere; }
+.tt-dir > .tt-label { font-weight: 600; }
+.tt-kids { margin-left: 9px; padding-left: 4px; border-left: 1px solid color-mix(in srgb, var(--muted) 40%, transparent); }
+.tt-kids > .tt-node > .tt-row.cur { box-shadow: inset 2px 0 0 var(--accent); }
+.font-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+.font-grid label { display: grid; gap: 4px; }
+.font-grid select { width: 100%; height: 38px; padding: 0 10px; background: var(--input); color: var(--text); border: 1px solid var(--line); border-radius: 10px; font: inherit; }
+.font-sample { margin: 10px 0 0; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px; font-family: var(--font-read, inherit); font-size: var(--read-size, 15px); line-height: 1.6; }

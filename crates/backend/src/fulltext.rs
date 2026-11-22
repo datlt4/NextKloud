@@ -107,6 +107,76 @@ pub async fn backfill(db: &PgPool, store: &Store, user: Uuid) -> Result<usize, s
     Ok(n)
 }
 
+/// Heading markdown (cấp, chữ), bỏ qua code fence và frontmatter.
+pub fn headings(body: &str) -> Vec<(u8, String)> {
+    let mut out = vec![];
+    let mut fence = false;
+    let mut lines = body.lines().peekable();
+    if lines.peek().map(|l| l.trim_end() == "---").unwrap_or(false) {
+        lines.next();
+        for l in lines.by_ref() {
+            if l.trim_end() == "---" {
+                break;
+            }
+        }
+    }
+    for l in lines {
+        let t = l.trim_start();
+        if t.starts_with("```") || t.starts_with("~~~") {
+            fence = !fence;
+            continue;
+        }
+        if fence || l.starts_with("    ") || l.starts_with('\t') {
+            continue;
+        }
+        let n = t.bytes().take_while(|&b| b == b'#').count();
+        if (1..=6).contains(&n) && t[n..].starts_with([' ', '\t']) {
+            let text = t[n..].trim().trim_end_matches('#').trim();
+            if !text.is_empty() {
+                out.push((n as u8, text.replace(['*', '_', '`'], "")));
+            }
+        }
+    }
+    out
+}
+
+#[derive(Debug, Serialize)]
+pub struct OutlineFile {
+    pub path: String,
+    pub headings: Vec<(u8, String)>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Outline {
+    pub root: String,
+    pub files: Vec<OutlineFile>,
+}
+
+/// Mục lục cả vault chứa `path`: vault = thư mục cha gần nhất có `.obsidian`. None nếu không thuộc vault.
+pub async fn outline(db: &PgPool, user: Uuid, path: &str) -> Result<Option<Outline>, sqlx::Error> {
+    let parts: Vec<&str> = path.split('/').collect();
+    let cands: Vec<String> = (1..parts.len()).map(|i| format!("{}/.obsidian", parts[..i].join("/"))).chain([".obsidian".into()]).collect();
+    let hit: Option<(String,)> = sqlx::query_as("SELECT path FROM files WHERE user_id = $1 AND is_dir AND path = ANY($2) ORDER BY length(path) DESC LIMIT 1")
+        .bind(user)
+        .bind(&cands)
+        .fetch_optional(db)
+        .await?;
+    let Some((obs,)) = hit else { return Ok(None) };
+    let root = obs.strip_suffix(".obsidian").unwrap_or("").trim_end_matches('/').to_string();
+    let like = if root.is_empty() { "%".into() } else { format!("{}/%", like_escape(&root)) };
+    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT f.path, t.body FROM files f LEFT JOIN file_text t ON t.user_id = f.user_id AND t.path = f.path
+         WHERE f.user_id = $1 AND NOT f.is_dir AND f.path LIKE $2 AND f.path NOT LIKE '.%' AND f.path NOT LIKE '%/.%'
+           AND (lower(f.name) LIKE '%.md' OR lower(f.name) LIKE '%.markdown')",
+    )
+    .bind(user)
+    .bind(like)
+    .fetch_all(db)
+    .await?;
+    let files = rows.into_iter().map(|(path, body)| OutlineFile { headings: body.as_deref().map(headings).unwrap_or_default(), path }).collect();
+    Ok(Some(Outline { root, files }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,6 +185,12 @@ mod tests {
     fn which_files() {
         assert!(indexable("a/b.MD", 10) && indexable("x.txt", 10));
         assert!(!indexable("a.pdf", 10) && !indexable("big.md", MAX_BYTES + 1));
+    }
+
+    #[test]
+    fn md_headings() {
+        let h = headings("---\ntitle: x\n# no\n---\n# A *b*\ntext\n```\n# not\n```\n## C ##\n#tag\n");
+        assert_eq!(h, vec![(1, "A b".into()), (2, "C".into())]);
     }
 
     #[tokio::test]
@@ -135,6 +211,11 @@ mod tests {
         let hits = search(&db, u, "ĐẠO HÀM", 10).await.unwrap();
         assert_eq!(hits.len(), 1);
         assert!(hits[0].snippet.contains("đạo hàm"));
+        assert!(outline(&db, u, "v/a.md").await.unwrap().is_none());
+        crate::index::ensure_dirs(&mut *db.acquire().await.unwrap(), u, &["v/.obsidian"], 0).await.unwrap();
+        let o = outline(&db, u, "v/a.md").await.unwrap().unwrap();
+        assert_eq!((o.root.as_str(), o.files.len()), ("v", 1));
+        assert_eq!(o.files[0].headings, vec![(1, "Động học".into())]);
         crate::ops::move_path(&db, &s, u, "v", "w").await.unwrap();
         assert_eq!(search(&db, u, "vận tốc", 10).await.unwrap()[0].path, "w/a.md");
         let t = crate::ops::trash(&db, &s, u, "w").await.unwrap();
