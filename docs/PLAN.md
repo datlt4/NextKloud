@@ -87,6 +87,8 @@ Tách toàn bộ chuỗi tiếng Việt ra file dịch (vi, en, ja, zh), lưu l�
 - Sao lưu: ra **HDD 1TB trên mini PC** (`/mnt/hdd_1tb/backup/nextkloud`), mỗi đêm 3:00, **giữ 2 bản gần nhất** (bản mới lỗi thì còn bản cũ). ✅ đã làm (`docker/server/backup.sh`, service `backup`).
 - **Không** chuyển thùng rác và lịch sử phiên bản từ Nextcloud. Thùng rác NextKloud tự dọn mục quá `TRASH_DAYS` (mặc định 30), kiểm tra mỗi giờ.
 - **Secret vault** (PIN, ẩn, mã hoá trên đĩa, không chia sẻ): thiết kế ở `SECRET_VAULT.md`, **chờ review**.
+- App mobile: Android (APK) và iPhone (IPA ký bằng Apple ID miễn phí) cài qua IPA Resign Dashboard trên `mabu-wg`; Kellyfin iOS đã tắt để nhường slot. ✅
+- Obsidian (mục 3) ✅: trang **Ghi chú** tổng hợp (mọi ghi chú, gom theo file, lọc trạng thái, mở tới đúng chỗ); KaTeX, callout (cả loại thu gọn), frontmatter, #tag; **tìm theo nội dung** `.md/.txt` (nút "Tên/Nội dung" ở ô tìm kiếm, mở tới đoạn khớp); cache TTS giới hạn 5GB (LRU).
 
 ## Câu hỏi cần người dùng trả lời
 
