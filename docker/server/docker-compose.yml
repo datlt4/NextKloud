@@ -97,6 +97,30 @@ services:
       - /mnt/das_8tb/nextkloud_volume/rustfs:/data
 
   # One-shot: tạo bucket nếu chưa có (OpenDAL không tạo bucket).
+  # Sao lưu hằng đêm ra ổ HDD khác (giữ 2 bản gần nhất). Chạy tay: docker compose run --rm backup now
+  backup:
+    image: rclone/rclone:1.75.2
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/backup.sh"]
+    environment:
+      - TZ=Asia/Ho_Chi_Minh
+      - BACKUP_KEEP=2
+      - BACKUP_AT=03:00
+      - PGUSER=nextkloud
+      - PGPASSWORD=nextkloud
+      - PGDATABASE=nextkloud
+      - RCLONE_CONFIG_NK_TYPE=s3
+      - RCLONE_CONFIG_NK_PROVIDER=Other
+      - RCLONE_CONFIG_NK_ENDPOINT=http://rustfs:9000
+      - RCLONE_CONFIG_NK_ACCESS_KEY_ID=${S3_ACCESS_KEY:?set S3_ACCESS_KEY in .env}
+      - RCLONE_CONFIG_NK_SECRET_ACCESS_KEY=${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}
+    volumes:
+      - ./backup.sh:/backup.sh:ro
+      - /mnt/hdd_1tb/backup/nextkloud:/backup
+    depends_on:
+      - db
+      - rustfs
+
   bucket-init:
     image: rclone/rclone:1.75.2
     restart: "no"
