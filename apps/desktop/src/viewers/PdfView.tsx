@@ -165,7 +165,23 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
     <div class="pdf-wrap" ref={host}>
       <div class="pdf-bar">
         <button class="icon-btn" onClick={() => go(-1)} disabled={page() <= 1} title="Trang trước"><Icon name="back" /></button>
-        <span class="muted sm">{spread() && !scrolling() ? shown().join("–") : page()}/{pages() || "…"}</span>
+        <span class="pdf-num muted sm">
+          <input
+            type="number"
+            min="1"
+            max={pages() || 1}
+            value={page()}
+            title="Nhập số trang rồi Enter"
+            onFocus={(e) => e.currentTarget.select()}
+            onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+            onChange={(e) => {
+              const n = Math.round(+e.currentTarget.value);
+              if (n >= 1) jump(`p${n}`);
+              e.currentTarget.value = String(page());
+            }}
+          />
+          /{pages() || "…"}
+        </span>
         <button class="icon-btn" onClick={() => go(1)} disabled={(spread() && !scrolling() ? shown()[shown().length - 1] : page()) >= pages()} title="Trang tiếp"><Icon name="next" /></button>
         <button class="icon-btn" classList={{ "bm-on": !!bm() }} onClick={() => reader.toggleBookmark(here(), `Trang ${page()}`)} title={bm() ? "Bỏ bookmark trang này" : "Bookmark trang này"}>
           <Icon name="bookmark" />
@@ -183,7 +199,24 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
           <For each={LAYOUTS}>{(l) => <option value={l.id} title={l.title}>{l.label}</option>}</For>
         </select>
         <button class="icon-btn" onClick={() => zoom(-0.2)} title="Thu nhỏ">−</button>
-        <span class="muted sm">{Math.round(scale() * 100)}%</span>
+        <span class="pdf-num muted sm">
+          <input
+            type="number"
+            min="40"
+            max="300"
+            step="10"
+            value={Math.round(scale() * 100)}
+            title="Nhập % zoom rồi Enter"
+            onFocus={(e) => e.currentTarget.select()}
+            onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+            onChange={(e) => {
+              const v = +e.currentTarget.value;
+              if (v > 0) setScale(Math.min(3, Math.max(0.4, v / 100)));
+              e.currentTarget.value = String(Math.round(scale() * 100));
+            }}
+          />
+          %
+        </span>
         <button class="icon-btn" onClick={() => zoom(0.2)} title="Phóng to">+</button>
       </div>
       <Show when={err()}><p class="err">{err()}</p></Show>

@@ -713,3 +713,6 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 .font-grid label { display: grid; gap: 4px; }
 .font-grid select { width: 100%; height: 38px; padding: 0 10px; background: var(--input); color: var(--text); border: 1px solid var(--line); border-radius: 10px; font: inherit; }
 .font-sample { margin: 10px 0 0; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px; font-family: var(--font-read, inherit); font-size: var(--read-size, 15px); line-height: 1.6; }
+.pdf-num { display: inline-flex; align-items: center; gap: 2px; }
+.pdf-num input { width: 52px; height: 28px; padding: 0 4px; text-align: center; background: var(--input); color: var(--text); border: 1px solid var(--line); border-radius: 7px; font: inherit; -moz-appearance: textfield; }
+.pdf-num input::-webkit-inner-spin-button, .pdf-num input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
