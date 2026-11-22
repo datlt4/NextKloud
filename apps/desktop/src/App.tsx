@@ -1156,17 +1156,24 @@ export default function App() {
                 </div>
               </Show>
               <div class="toolbar" classList={{ hidden: sel().size > 0 }}>
-                <button class="btn primary" onClick={() => fileInput.click()} disabled={!!upload()}>
-                  <Icon name="upload" /> <span class="hide-xs">Tải lên</span>
-                </button>
-                <Show when={!results()}>
-                  <button class="btn ghost" title="Thư mục mới" onClick={() => setDlg({ kind: "mkdir" })}>
-                    <Icon name="folderPlus" /> <span class="hide-xs">Thư mục mới</span>
+                {/* đang mở file: thanh trên chỉ còn nút Quay lại (luôn thấy, không bị cuộn mất) */}
+                <Show when={!open()} fallback={
+                  <button class="btn ghost" onClick={() => setOpen(null)}>
+                    <Icon name="back" /> Quay lại
+                  </button>
+                }>
+                  <button class="btn primary" onClick={() => fileInput.click()} disabled={!!upload()}>
+                    <Icon name="upload" /> <span class="hide-xs">Tải lên</span>
+                  </button>
+                  <Show when={!results()}>
+                    <button class="btn ghost" title="Thư mục mới" onClick={() => setDlg({ kind: "mkdir" })}>
+                      <Icon name="folderPlus" /> <span class="hide-xs">Thư mục mới</span>
+                    </button>
+                  </Show>
+                  <button class="btn ghost" title="Tải lên cả thư mục (giữ thư mục con)" onClick={() => dirInput.click()} disabled={!!upload()}>
+                    <Icon name="folder" /> <span class="hide-xs">Tải thư mục</span>
                   </button>
                 </Show>
-                <button class="btn ghost" title="Tải lên cả thư mục (giữ thư mục con)" onClick={() => dirInput.click()} disabled={!!upload()}>
-                  <Icon name="folder" /> <span class="hide-xs">Tải thư mục</span>
-                </button>
                 <input ref={fileInput} type="file" multiple hidden onChange={(e) => doUpload(e.currentTarget.files)} />
                 <input ref={dirInput} type="file" multiple hidden {...{ webkitdirectory: true }} onChange={(e) => doUpload(e.currentTarget.files)} />
                 <nav class="crumbs">
@@ -1224,9 +1231,6 @@ export default function App() {
                 when={!open()}
                 fallback={
                   <div class="viewer">
-                    <button class="btn ghost" onClick={() => setOpen(null)}>
-                      <Icon name="back" /> Quay lại
-                    </button>
                     <Suspense fallback={<p class="muted">Đang mở…</p>}>
                       <Switch>
                         <Match when={open()!.kind === "markdown"}>
