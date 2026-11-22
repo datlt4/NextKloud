@@ -11,6 +11,9 @@ use crate::state::{AppError, AppState, AuthUser};
 
 #[derive(Debug, Deserialize)]
 pub struct Export {
+    /// Chủ dữ liệu Deck (username Nextcloud = username NextKloud) được tự nhập; admin nhập được mọi file.
+    #[serde(default)]
+    pub owner: Option<String>,
     pub boards: Vec<DBoard>,
 }
 
@@ -54,6 +57,18 @@ fn path() -> String {
 fn load() -> Result<Export, AppError> {
     let raw = std::fs::read(path()).map_err(|_| AppError::NotFound("chưa có file xuất Deck trên server (scripts/deck_export.py)".into()))?;
     serde_json::from_slice(&raw).map_err(|e| AppError::BadRequest(format!("file Deck hỏng: {e}")))
+}
+
+/// File xuất Deck, nếu user được nhập: admin, hoặc đúng chủ dữ liệu.
+async fn load_for(s: &AppState, user: &AuthUser) -> Result<Export, AppError> {
+    let ex = load()?;
+    if !user.admin {
+        let me = crate::state::load_user(&s.db, user.id).await?;
+        if ex.owner.as_deref() != Some(me.username.as_str()) {
+            return Err(AppError::Forbidden("dữ liệu Deck này không phải của bạn".into()));
+        }
+    }
+    Ok(ex)
 }
 
 fn norm(s: &str) -> String {
@@ -122,10 +137,7 @@ async fn imported(db: &PgPool, user: Uuid) -> Result<HashSet<String>, AppError> 
 }
 
 pub async fn preview(State(s): State<AppState>, user: AuthUser) -> Result<Json<Vec<PBoard>>, AppError> {
-    if !user.admin {
-        return Err(AppError::Forbidden("chỉ admin".into()));
-    }
-    let ex = load()?;
+    let ex = load_for(&s, &user).await?;
     let done_ids = imported(&s.db, user.id).await?;
     Ok(Json(
         ex.boards
@@ -179,10 +191,7 @@ pub struct Applied {
 }
 
 pub async fn apply(State(s): State<AppState>, user: AuthUser, Json(a): Json<Apply>) -> Result<Json<Applied>, AppError> {
-    if !user.admin {
-        return Err(AppError::Forbidden("chỉ admin".into()));
-    }
-    let ex = load()?;
+    let ex = load_for(&s, &user).await?;
     let b = ex.boards.iter().find(|b| b.id == a.board_id).ok_or_else(|| AppError::NotFound("board Deck không có".into()))?;
     Ok(Json(import(&s.db, user.id, b, &a).await?))
 }

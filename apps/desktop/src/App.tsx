@@ -1110,7 +1110,7 @@ export default function App() {
                     <button class="icon-btn sm" onClick={() => setErr("")}><Icon name="close" size={14} /></button>
                   </div>
                 </Show>
-                <KanbanPage boardId={boardId()} onBoard={setBoardId} isAdmin={!!me()?.is_admin} onError={setErr} onOpenFile={(p) => openAt(p, "")} />
+                <KanbanPage boardId={boardId()} onBoard={setBoardId} onError={setErr} onOpenFile={(p) => openAt(p, "")} />
               </Show>
               <Show when={page() === "notes"}>
                 <NotesPage onOpen={openAt} onError={setErr} />

@@ -47,7 +47,7 @@ def main(db, owner, out):
         boards.append(dict(id=b["id"], title=b["title"], archived=bool(b["archived"]),
                            labels=[dict(title=t, color=col) for t, col in labels.values()], stacks=stacks, cards=cards))
     with open(out, "w") as f:
-        json.dump(dict(source="nextcloud-deck", boards=boards), f, ensure_ascii=False)
+        json.dump(dict(source="nextcloud-deck", owner=owner, boards=boards), f, ensure_ascii=False)
     n_att = sum(len(k["attachments"]) for b in boards for k in b["cards"])
     print(f"{len(boards)} board, {sum(len(b['cards']) for b in boards)} card, {n_att} đính kèm -> {out}")
 

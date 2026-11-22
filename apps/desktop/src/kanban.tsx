@@ -17,9 +17,11 @@ const checklist = (md: string): [number, number] => {
   return [all.filter((l) => /\[[xX]\]/.test(l)).length, all.length];
 };
 
-export function KanbanPage(props: { boardId: string | null; onBoard: (id: string | null) => void; isAdmin: boolean; onError: (m: string) => void; onOpenFile: (path: string) => void }) {
+export function KanbanPage(props: { boardId: string | null; onBoard: (id: string | null) => void; onError: (m: string) => void; onOpenFile: (path: string) => void }) {
   const [boards, { refetch }] = createResource(() => api.boards(), { initialValue: [] });
   const [importing, setImporting] = createSignal(false);
+  // có file xuất Deck mà user được nhập (admin hoặc chủ dữ liệu) thì mới hiện nút
+  const [canImport] = createResource(() => api.deckPreview().then((l) => l.length > 0, () => false));
   const active = () => boards().filter((b) => !b.archived);
   const archived = () => boards().filter((b) => b.archived);
   // Chưa chọn board: mở board đầu tiên.
@@ -57,7 +59,7 @@ export function KanbanPage(props: { boardId: string | null; onBoard: (id: string
             </select>
           </Show>
           <button class="btn ghost sm" onClick={newBoard}><Icon name="plus" size={15} /> Board</button>
-          <Show when={props.isAdmin}>
+          <Show when={canImport()}>
             <button class="btn ghost sm" onClick={() => setImporting(true)}>Nhập từ Nextcloud</button>
           </Show>
         </div>
