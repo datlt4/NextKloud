@@ -17,6 +17,8 @@ export interface Entry {
   is_dir: boolean;
   size: number;
   modified: number;
+  /** Tìm theo nội dung: đoạn chữ quanh chỗ khớp. */
+  snippet?: string;
 }
 
 export interface Page {
@@ -137,6 +139,12 @@ export const api = {
     const q = new URLSearchParams({ prefix, sort: o.sort, desc: String(o.desc), offset: String(o.offset), limit: String(o.limit) });
     const r = await req(`/api/files?${q}`);
     return r.json() as Promise<Page>;
+  },
+  /** Tìm theo nội dung file .md/.txt. */
+  async searchContent(q: string): Promise<Entry[]> {
+    const r = await req(`/api/search/content?q=${encodeURIComponent(q)}&limit=200`);
+    const hits = (await r.json()) as { path: string; name: string; size: number; modified: number; snippet: string }[];
+    return hits.map((h) => ({ ...h, is_dir: false }));
   },
   /** Tìm theo tên trên toàn bộ file. */
   async search(q: string) {

@@ -49,6 +49,19 @@ pub struct SearchQuery {
     pub limit: Option<i64>,
 }
 
+/// Tìm theo nội dung file .md/.txt, kèm đoạn trích quanh chỗ khớp.
+pub async fn search_content(
+    State(s): State<AppState>,
+    user: AuthUser,
+    Query(q): Query<SearchQuery>,
+) -> Result<Json<Vec<crate::fulltext::Hit>>, AppError> {
+    let term = q.q.trim();
+    if term.chars().count() < 2 {
+        return Ok(Json(vec![]));
+    }
+    Ok(Json(crate::fulltext::search(&s.db, user.id, term, q.limit.unwrap_or(100).clamp(1, 500)).await?))
+}
+
 pub async fn search_files(
     State(s): State<AppState>,
     user: AuthUser,
@@ -315,7 +328,9 @@ pub async fn complete_upload(
         .bind(user.id)
         .execute(&s.db)
         .await?;
-    index::add_file(&s.db, user.id, &clean_path(&pend.path)?, pend.size, mtime).await?;
+    let p = clean_path(&pend.path)?;
+    index::add_file(&s.db, user.id, &p, pend.size, mtime).await?;
+    crate::fulltext::put_from_store(&s.db, &s.store, user.id, &p, pend.size).await;
     Ok(StatusCode::CREATED)
 }
 

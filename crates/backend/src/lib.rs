@@ -2,6 +2,7 @@ pub mod auth;
 pub mod config;
 pub mod file_handlers;
 pub mod files;
+pub mod fulltext;
 pub mod git;
 pub mod index;
 pub mod notes;

@@ -507,6 +507,11 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 .math-inline { white-space: nowrap; }
 .math-block:not([data-done]), .math-inline:not([data-done]) { font-family: ui-monospace, monospace; font-size: .9em; color: var(--muted); }
 
+/* tìm theo nội dung */
+.search-mode { flex-shrink: 0; height: 26px; padding: 0 10px; border-radius: 13px; border: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--muted); }
+.search-mode.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
+.fsnip { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fsnip mark { background: rgba(234, 179, 8, .35); color: inherit; border-radius: 3px; padding: 0 1px; }
 .stale { background: var(--warn-bg); border: 1px solid var(--warn-line); padding: 10px 12px; border-radius: 10px; }
 
 /* admin: người dùng */

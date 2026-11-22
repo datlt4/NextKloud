@@ -35,6 +35,14 @@ type SortKey = "name" | "size" | "modified";
 
 const fmtDate = (s: number) => (s ? new Date(s * 1000).toLocaleDateString("vi-VN") : "");
 const parentOf = (p: string) => p.split("/").slice(0, -1).join("/");
+const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+/** Đoạn trích kết quả tìm nội dung: tô đậm chỗ khớp (không phân biệt hoa thường). */
+const highlight = (snip: string, q: string) => {
+  const t = q.trim();
+  const flat = snip.replace(/\s+/g, " ");
+  const i = t ? flat.toLowerCase().indexOf(t.toLowerCase()) : -1;
+  return i < 0 ? escHtml(flat) : `${escHtml(flat.slice(0, i))}<mark>${escHtml(flat.slice(i, i + t.length))}</mark>${escHtml(flat.slice(i + t.length))}`;
+};
 
 // Danh sách ảo: chỉ render dòng đang thấy, tải từng trang PAGE dòng từ server.
 const PAGE = 200;
@@ -312,8 +320,10 @@ export default function App() {
 
   // Tìm trên toàn bộ file (server), gõ xong 250ms mới gửi.
   let searchTimer: number | undefined;
+  const [byContent, setByContent] = createSignal(false);
   createEffect(() => {
     const q = query().trim();
+    byContent();
     clearTimeout(searchTimer);
     if (q.length < 2) {
       setResults(null);
@@ -321,7 +331,7 @@ export default function App() {
     }
     searchTimer = window.setTimeout(async () => {
       try {
-        const r = await api.search(q);
+        const r = await (byContent() ? api.searchContent(q) : api.search(q));
         if (query().trim() !== q) return;
         setResults(r);
         if (scrollEl) scrollEl.scrollTop = 0;
@@ -358,6 +368,8 @@ export default function App() {
 
   const openEntry = async (f: Entry) => {
     if (f.is_dir) return load(f.path);
+    // kết quả tìm theo nội dung: mở tới đoạn khớp
+    if (f.snippet !== undefined) return openAt(f.path, `q:${query().trim()}`);
     const path = f.path;
     const name = f.name;
     setErr("");
@@ -488,7 +500,7 @@ export default function App() {
   /** Tải lại sau thao tác: trang đang xem hoặc kết quả tìm kiếm. */
   const reload = async () => {
     const q = query().trim();
-    if (results() && q.length >= 2) setResults(await api.search(q).catch(() => results()));
+    if (results() && q.length >= 2) setResults(await (byContent() ? api.searchContent(q) : api.search(q)).catch(() => results()));
     else await refresh();
     refreshMe();
   };
@@ -760,7 +772,10 @@ export default function App() {
             </a>
             <div class="hdr-search">
               <Icon name="search" />
-              <input value={query()} onInput={(e) => { setPage("files"); setQuery(e.currentTarget.value); }} placeholder="Tìm tất cả file" />
+              <input value={query()} onInput={(e) => { setPage("files"); setQuery(e.currentTarget.value); }} placeholder={byContent() ? "Tìm trong nội dung ghi chú (.md, .txt)" : "Tìm tất cả file"} />
+              <button class="search-mode" classList={{ on: byContent() }} onClick={() => setByContent(!byContent())} title="Đổi giữa tìm theo tên và theo nội dung">
+                {byContent() ? "Nội dung" : "Tên"}
+              </button>
               <Show when={query()}>
                 <button class="icon-btn sm" onClick={() => setQuery("")}><Icon name="close" size={14} /></button>
               </Show>
@@ -1042,8 +1057,11 @@ export default function App() {
                                       </span>
                                       <span class="fcol">
                                         <span class="fname" title={f().path}>{f().name}</span>
-                                        <Show when={results() && parentOf(f().path)}>
+                                        <Show when={results() && parentOf(f().path) && f().snippet === undefined}>
                                           <span class="fpath">{parentOf(f().path)}</span>
+                                        </Show>
+                                        <Show when={f().snippet}>
+                                          <span class="fsnip" innerHTML={highlight(f().snippet!, query())} />
                                         </Show>
                                       </span>
                                     </span>

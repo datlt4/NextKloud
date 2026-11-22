@@ -362,6 +362,11 @@ async fn apply(
         let dest = format!("{prefix}{p}");
         store.put_local(user, &dest, &src, Some(mtime), q).await.map_err(|e| format!("{dest}: {e}"))?;
         index::add_file(db, user, &dest, m.len(), mtime).await.map_err(|e| e.to_string())?;
+        if crate::fulltext::indexable(&dest, m.len()) {
+            if let Ok(b) = std::fs::read(&src) {
+                crate::fulltext::put(db, user, &dest, &b).await.map_err(|e| e.to_string())?;
+            }
+        }
     }
     for p in delete {
         let dest = format!("{prefix}{p}");

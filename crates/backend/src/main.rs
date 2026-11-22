@@ -102,6 +102,15 @@ async fn main() {
                     Err(e) => tracing::error!("index user {id}: {e}"),
                 }
             }
+            // Bù chỉ mục nội dung (.md/.txt) còn thiếu cho mọi user.
+            let all: Vec<(Uuid,)> = sqlx::query_as("SELECT id FROM users").fetch_all(&db).await.unwrap_or_default();
+            for (id,) in all {
+                match nextkloud_backend::fulltext::backfill(&db, &store, id).await {
+                    Ok(n) if n > 0 => tracing::info!("fulltext user {id}: {n} files"),
+                    Ok(_) => {}
+                    Err(e) => tracing::error!("fulltext user {id}: {e}"),
+                }
+            }
         });
     }
     // Dọn thùng rác quá TRASH_DAYS ngày (mặc định 30), mỗi giờ 1 lần.

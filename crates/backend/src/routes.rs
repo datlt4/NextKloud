@@ -109,6 +109,7 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/files", get(f::list_files))
         // Không đặt dưới /api/files/ để khỏi đụng file tên "search".
         .route("/api/search", get(f::search_files))
+        .route("/api/search/content", get(f::search_content))
         .route("/api/mkdir", post(f::mkdir))
         .route("/api/dl", post(f::dl_token))
         .route("/api/annotations", get(crate::notes::list).post(crate::notes::create))

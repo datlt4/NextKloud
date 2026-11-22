@@ -245,6 +245,12 @@ export default function MarkdownView(props: {
   );
   const [current, setCurrent] = createSignal("");
   const jump = (anchor: string) => {
+    if (anchor.startsWith("q:")) {
+      const q = anchor.slice(2).toLowerCase();
+      const i = plain().findIndex((t) => t.toLowerCase().includes(q));
+      if (i < 0) return;
+      anchor = `b${i}`;
+    }
     const el = host?.querySelector<HTMLElement>(`[data-anchor="${anchor}"]`);
     if (!el) return;
     el.scrollIntoView({ block: "start", behavior: "smooth" });
