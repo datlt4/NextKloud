@@ -236,6 +236,9 @@ Mọi API (trừ login và health) cần header `Authorization: Bearer <jwt>`. L
 | GET | `/api/search` | `q, limit≤1000` | entries[] | toàn bộ cây; bỏ qua đường dẫn có `/.` |
 | GET | `/api/files/*path` | header Range | stream | 206/416; không nạp cả file vào RAM |
 | DELETE | `/api/files/*path` | — | TrashItem | file hoặc thư mục → thùng rác (`.nextkloud/trash/<id>/<name>`); quota giữ nguyên |
+| POST | `/api/dl` | `{path}` | `{token}` | token tải 1 file, 10 phút; client mở `/api/files/<path>?dl=<token>` (stream thẳng xuống đĩa, `Content-Disposition: attachment`). Token này không dùng làm token đăng nhập được |
+| GET / POST | `/api/annotations` | GET `?path=` (1 file) hoặc `?state=` (mọi ghi chú); POST `{path, kind: bookmark\|note, anchor, quote, body}` | Annotation[] / 201 | anchor: `b<block>` (md), `p<trang>` (pdf); đi theo file khi move/trash, xoá khi purge |
+| PATCH / DELETE | `/api/annotations/:id` | `{body?, state?: todo\|doing\|done}` | Annotation / 204 | |
 | POST | `/api/mkdir` | `{path}` | 201 | chỉ ghi chỉ mục; đã có → 409; cha là file → 409 |
 | POST | `/api/move` | `{from,to}` | `{files}` | đổi tên + di chuyển file/thư mục; đích có rồi → 409; vào chính nó → 400; đồng bộ, copy+delete song song 64 |
 | GET / POST | `/api/git` | POST `{url, branch?, folder?, key: generate\|paste\|none, private_key?, interval_h?}` | Repo[] / 201 Repo | mirror git 1 chiều; URL chỉ https/http/ssh/scp (chặn `ext::`, `file://`, `-` đầu); `key=generate` → state `pending` tới khi bấm sync; không bao giờ trả `ssh_key`, URL bị che token |
@@ -306,6 +309,8 @@ git_repos(id, user_id → users CASCADE, url, branch, folder, ssh_key, ssh_pub, 
 - **9.1 Thao tác file** (`ops.rs`, `fileops.tsx`): thư mục mới, đổi tên, di chuyển (dialog duyệt cây), xoá thư mục, thùng rác (khôi phục, xoá hẳn, dọn sạch, tự dọn 30 ngày), toast "Hoàn tác"; chọn nhiều (checkbox, Ctrl-click, Shift-click dải, Ctrl+A ≤ 5.000 mục, Esc, phím Delete, nhấn giữ trên mobile); kéo thả vào thư mục/breadcrumb (chỉ chuột). Đo local (RustFS, bản debug): đổi tên thư mục 300 file mất 1,5 giây. **Chưa làm:** job nền có tiến độ cho thư mục rất lớn (request đang chạy đồng bộ, ước 10.000 file khoảng 50 giây), merge khi đích trùng tên.
 - **Mirror git cho vault Obsidian** (tab Cài đặt → Đồng bộ Git, `gitsync.tsx`): thêm repo (tạo khoá ed25519 / dán private key / không khoá), hiện public key để thêm vào Deploy keys, đồng bộ ngay, chu kỳ 1–24 giờ (mặc định 8), gỡ repo (tuỳ chọn chuyển thư mục vào thùng rác). Đo local: clone + đẩy `octocat/Hello-World` mất 1,9 giây.
 - **Sửa lỗi** (`869fdfb`): 9.1 chặn ghi vào `.nextkloud` làm hỏng lưu giao diện/ảnh nền; giờ cho phép riêng `settings.json` và `background.webp` (`ops::upload_path`).
+- **Trình đọc (22/11):** sidebar mục lục + bookmark + ghi chú 3 trạng thái cho Markdown và PDF (`annot.tsx`, `notes.rs`, migration 0007); tải file trực tiếp bằng token ngắn hạn; quota upload cộng phần chênh; `.whiteboard` mở bằng Excalidraw; thư mục `Obsidian Vaults` (đã chuyển 14.261 mục của datlt4 từ `Vaults`, mất 7 phút); nút loa ngang dòng đầu.
+- **Sao lưu** (`docker/server/backup.sh`, service `backup`): 3:00 mỗi đêm, `pg_dump -Fc` + `rclone sync` toàn bộ bucket ra `/mnt/hdd_1tb/backup/nextkloud/<ngày_giờ>/` (file thường, đọc được không cần RustFS), hardlink với bản trước nên chỉ tốn phần thay đổi, giữ 2 bản. Khôi phục: `pg_restore -d nextkloud db.dump` + `rclone copy files/ nk:nextkloud`. Bản sao lưu **chưa mã hoá** và có chứa SSH key của repo git (trong DB).
 - **Hồ sơ & Cài đặt:** `Settings.tsx` có các tab Hồ sơ (ảnh đại diện, tên hiển thị, dung lượng), Mật khẩu, Giao diện, và cho admin: Người dùng, Hệ thống (thống kê + nút dựng lại chỉ mục). Menu user mới; header và danh sách user hiện ảnh đại diện.
 
 ## 9. Backlog chi tiết
