@@ -904,3 +904,13 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 .up-fail .fname { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .up-fail .muted { grid-column: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .up-fail button { grid-row: 1 / span 2; grid-column: 2; }
+/* PDF: lớp chữ trong suốt để chọn/copy (theo pdf_viewer.css của pdf.js) */
+.pdf-pg { position: relative; --scale-round-x: 1px; --scale-round-y: 1px; }
+.pdf-pg .textLayer { position: absolute; inset: 0; overflow: clip; line-height: 1; text-align: initial; letter-spacing: normal; word-spacing: normal; text-size-adjust: none; forced-color-adjust: none; transform-origin: 0 0; z-index: 0; --min-font-size: 1; --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv: calc(1 / var(--min-font-size)); }
+.pdf-pg .textLayer :is(span, br) { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0% 0%; user-select: text; }
+.pdf-pg .textLayer > :not(.markedContent), .pdf-pg .textLayer .markedContent span:not(.markedContent) { z-index: 1; --font-height: 0; font-size: calc(var(--text-scale-factor) * var(--font-height)); --scale-x: 1; --rotate: 0deg; transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }
+.pdf-pg .textLayer .markedContent { display: contents; }
+.pdf-pg .textLayer ::selection { background: rgba(0, 110, 255, .3); color: transparent; }
+.pdf-pg .textLayer br::selection { background: transparent; }
+.pdf-pg .textLayer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: 0; cursor: default; user-select: none; }
+.pdf-pg .textLayer.selecting .endOfContent { top: 0; }

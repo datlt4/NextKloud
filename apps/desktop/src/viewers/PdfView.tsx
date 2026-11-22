@@ -23,10 +23,66 @@ const savedLayout = (): Layout => {
   }
 };
 
-/** 1 trang PDF: chỉ render khi cuộn tới gần (lazy), nét theo devicePixelRatio, render lại khi đổi zoom. */
-function PdfPage(props: { doc: pdfjs.PDFDocumentProxy; n: number; scale: number; ratio: number; w: number; onErr: (m: string) => void }) {
+/** Màu đọc đỡ mỏi mắt: đổi nền + chữ theo độ sáng, giữ nguyên vùng ảnh. */
+type Tone = "normal" | "sepia" | "dark";
+const TONES: { id: Tone; label: string; bg?: [number, number, number]; fg?: [number, number, number] }[] = [
+  { id: "normal", label: "Màu gốc" },
+  { id: "sepia", label: "Vàng cam", bg: [245, 225, 186], fg: [52, 36, 20] },
+  { id: "dark", label: "Nền đen", bg: [20, 17, 15], fg: [236, 176, 108] },
+];
+const savedTone = (): Tone => {
+  try {
+    const v = localStorage.getItem("nk-pdf-tone") as Tone | null;
+    return v && TONES.some((t) => t.id === v) ? v : "normal";
+  } catch {
+    return "normal";
+  }
+};
+
+const toneBg = (tone: Tone) => {
+  const bg = TONES.find((t) => t.id === tone)?.bg;
+  return bg ? `rgb(${bg.join(",")})` : undefined;
+};
+
+/** Đổi màu canvas: sáng -> bg, tối -> fg (nội suy theo độ sáng); bỏ qua vùng ảnh (toạ độ chuẩn hoá từ pdf.js). */
+function recolor(canvas: HTMLCanvasElement, tone: Tone, imgs: ArrayLike<number> | null) {
+  const t = TONES.find((x) => x.id === tone);
+  if (!t?.bg || !t.fg) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const W = canvas.width;
+  const H = canvas.height;
+  const mask = new Uint8Array(W * H);
+  for (let i = 0; imgs && i + 5 < imgs.length; i += 6) {
+    const xs = [imgs[i], imgs[i + 2], imgs[i + 4], imgs[i + 2] + imgs[i + 4] - imgs[i]];
+    const ys = [imgs[i + 1], imgs[i + 3], imgs[i + 5], imgs[i + 3] + imgs[i + 5] - imgs[i + 1]];
+    const x0 = Math.max(0, Math.floor(Math.min(...xs) * W));
+    const x1 = Math.min(W, Math.ceil(Math.max(...xs) * W));
+    const y0 = Math.max(0, Math.floor(Math.min(...ys) * H));
+    const y1 = Math.min(H, Math.ceil(Math.max(...ys) * H));
+    for (let y = y0; y < y1; y++) mask.fill(1, y * W + x0, y * W + x1);
+  }
+  const lut = new Uint8Array(256 * 3);
+  for (let l = 0; l < 256; l++) for (let c = 0; c < 3; c++) lut[l * 3 + c] = Math.round(t.fg[c] + ((t.bg[c] - t.fg[c]) * l) / 255);
+  const img = ctx.getImageData(0, 0, W, H);
+  const d = img.data;
+  for (let p = 0, k = 0; p < mask.length; p++, k += 4) {
+    if (mask[p]) continue;
+    const l = (d[k] * 77 + d[k + 1] * 150 + d[k + 2] * 29) >> 8;
+    d[k] = lut[l * 3];
+    d[k + 1] = lut[l * 3 + 1];
+    d[k + 2] = lut[l * 3 + 2];
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+/** 1 trang PDF: chỉ render khi cuộn tới gần (lazy), nét theo devicePixelRatio, render lại khi đổi zoom.
+ *  Có lớp chữ trong suốt phía trên để chọn / copy chữ. */
+function PdfPage(props: { doc: pdfjs.PDFDocumentProxy; n: number; scale: number; ratio: number; w: number; tone: Tone; onErr: (m: string) => void }) {
   let box!: HTMLDivElement;
   let canvas!: HTMLCanvasElement;
+  let textBox!: HTMLDivElement;
+  let text: pdfjs.TextLayer | null = null;
   const [seen, setSeen] = createSignal(false);
   const [ratio, setRatio] = createSignal(props.ratio);
   const [wid, setWid] = createSignal<number | null>(null); // bề rộng thật sau khi đọc trang
@@ -38,27 +94,39 @@ function PdfPage(props: { doc: pdfjs.PDFDocumentProxy; n: number; scale: number;
   });
   createEffect(async () => {
     const sc = props.scale;
+    const tone = props.tone;
     if (!seen()) return;
     try {
       const p = await props.doc.getPage(props.n);
       const vp = p.getViewport({ scale: sc });
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       job?.cancel();
+      text?.cancel();
       setRatio(vp.height / vp.width);
       setWid(vp.width);
       canvas.width = Math.floor(vp.width * dpr);
       canvas.height = Math.floor(vp.height * dpr);
-      const t = p.render({ canvas, viewport: vp, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined });
+      const t = p.render({ canvas, viewport: vp, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined, recordImages: tone !== "normal" } as any);
       job = t;
       await t.promise;
+      if (tone !== "normal") recolor(canvas, tone, (t as any).imageCoordinates ?? (p as any).imageCoordinates ?? null);
+      // lớp chữ (chọn / copy)
+      textBox.replaceChildren();
+      box.style.setProperty("--total-scale-factor", String(sc));
+      text = new pdfjs.TextLayer({ textContentSource: p.streamTextContent(), container: textBox, viewport: vp });
+      await text.render();
     } catch (e: any) {
-      if (e?.name !== "RenderingCancelledException") props.onErr(String(e?.message ?? e));
+      if (e?.name !== "RenderingCancelledException" && e?.name !== "AbortException") props.onErr(String(e?.message ?? e));
     }
   });
-  onCleanup(() => job?.cancel());
+  onCleanup(() => {
+    job?.cancel();
+    text?.cancel();
+  });
   return (
-    <div class="pdf-pg" ref={box} data-page={props.n} style={{ width: `${wid() ?? props.w * props.scale}px`, "aspect-ratio": `1 / ${ratio()}` }}>
+    <div class="pdf-pg" ref={box} data-page={props.n} style={{ width: `${wid() ?? props.w * props.scale}px`, "aspect-ratio": `1 / ${ratio()}`, background: toneBg(props.tone) }}>
       <canvas ref={canvas} />
+      <div class="textLayer" ref={textBox} />
     </div>
   );
 }
@@ -80,6 +148,13 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
   const [w1, setW1] = createSignal(612); // bề rộng trang đầu ở zoom 100%
   const [fs, setFs] = createSignal(false);
   const [layout, setLayoutSig] = createSignal<Layout>(savedLayout());
+  const [tone, setToneSig] = createSignal<Tone>(savedTone());
+  const setTone = (t: Tone) => {
+    setToneSig(t);
+    try {
+      localStorage.setItem("nk-pdf-tone", t);
+    } catch {}
+  };
   const spread = () => layout() === "spread" || layout() === "spread-scroll";
   const scrolling = () => layout() === "scroll" || layout() === "spread-scroll";
   const step = () => (spread() ? 2 : 1);
@@ -101,8 +176,16 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
     return out;
   };
 
-  const scrollToPage = (n: number, smooth = false) =>
-    queueMicrotask(() => host?.querySelector<HTMLElement>(`[data-page="${n}"]`)?.scrollIntoView({ block: "start", behavior: smooth ? "smooth" : "auto" }));
+  /** Nhảy tới trang n. Trang phía trên chưa render có chiều cao ước lượng -> giữ trang n ở đầu khung
+   *  thêm ~1.5s trong lúc chúng đổi kích thước (thôi giữ khi người dùng tự cuộn). */
+  let pin: { n: number; until: number } | null = null;
+  const toPage = (n: number) => host?.querySelector<HTMLElement>(`[data-page="${n}"]`)?.scrollIntoView({ block: "start", behavior: "auto" });
+  const scrollToPage = (n: number) =>
+    queueMicrotask(() => {
+      toPage(n);
+      pin = { n, until: Date.now() + 1500 };
+    });
+  const unpin = () => (pin = null);
   const setLayout = (l: Layout) => {
     setLayoutSig(l);
     try {
@@ -128,6 +211,16 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
     scroller = host.closest(".viewer");
     scroller?.addEventListener("scroll", onScroll, { passive: true });
     host.addEventListener("scroll", onScroll, { passive: true });
+    for (const t of [scroller, host]) {
+      t?.addEventListener("wheel", unpin, { passive: true });
+      t?.addEventListener("touchstart", unpin, { passive: true });
+    }
+    const ro = new ResizeObserver(() => {
+      if (pin && Date.now() < pin.until) toPage(pin.n);
+      else pin = null;
+    });
+    ro.observe(host);
+    onCleanup(() => ro.disconnect());
     document.addEventListener("fullscreenchange", onFs);
     try {
       const buf = await (await api.readBlob(props.path)).arrayBuffer();
@@ -159,7 +252,7 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
   const jump = (anchor: string) => {
     const n = Math.min(+anchor.slice(1) || 1, pages() || 1);
     setPage(n);
-    if (scrolling()) scrollToPage(n, true);
+    if (scrolling()) scrollToPage(n);
   };
   const go = (d: number) => jump(`p${Math.min(Math.max(1, (spread() ? shown()[0] : page()) + d * step()), pages() || 1)}`);
   const toggleFs = async () => {
@@ -207,6 +300,9 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
           )}
         </Show>
         <span class="grow" />
+        <select class="pdf-layout" value={tone()} onChange={(e) => setTone(e.currentTarget.value as Tone)} title="Màu đọc (đổi nền + chữ, giữ màu ảnh)">
+          <For each={TONES}>{(t) => <option value={t.id}>{t.label}</option>}</For>
+        </select>
         <select class="pdf-layout" value={layout()} onChange={(e) => setLayout(e.currentTarget.value as Layout)} title="Chế độ xem">
           <For each={LAYOUTS}>{(l) => <option value={l.id} title={l.title}>{l.label}</option>}</For>
         </select>
@@ -241,7 +337,7 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
             when={scrolling()}
             fallback={
               <div class="pdf-row" classList={{ two: spread() }}>
-                <For each={shown()}>{(n) => <PdfPage doc={d()} n={n} scale={scale()} ratio={ratio()} w={w1()} onErr={onErr} />}</For>
+                <For each={shown()}>{(n) => <PdfPage doc={d()} n={n} scale={scale()} ratio={ratio()} w={w1()} tone={tone()} onErr={onErr} />}</For>
               </div>
             }
           >
@@ -249,7 +345,7 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
               <For each={spread() ? rows() : all().map((n) => [n])}>
                 {(r) => (
                   <div class="pdf-row" classList={{ two: spread() }}>
-                    <For each={r}>{(n) => <PdfPage doc={d()} n={n} scale={scale()} ratio={ratio()} w={w1()} onErr={onErr} />}</For>
+                    <For each={r}>{(n) => <PdfPage doc={d()} n={n} scale={scale()} ratio={ratio()} w={w1()} tone={tone()} onErr={onErr} />}</For>
                   </div>
                 )}
               </For>
