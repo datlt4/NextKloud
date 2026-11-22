@@ -42,6 +42,9 @@ pub struct DCard {
     pub done_at: Option<i64>,
     pub labels: Vec<String>,
     pub color: Option<String>,
+    /// File đính kèm (đường dẫn trong file của user, vd "Deck/a.pdf").
+    #[serde(default)]
+    pub attachments: Vec<String>,
 }
 
 fn path() -> String {
@@ -251,8 +254,8 @@ pub async fn import(db: &PgPool, user: Uuid, b: &DBoard, a: &Apply) -> Result<Ap
         subtasks += parent.is_some() as usize;
         let done_at = done.then(|| c.done_at.unwrap_or(c.last_modified));
         sqlx::query(
-            "INSERT INTO cards (id, board_id, column_id, parent_id, title, description, position, labels, color, due_at, done_at, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+            "INSERT INTO cards (id, board_id, column_id, parent_id, title, description, position, labels, color, due_at, done_at, created_at, updated_at, attachments)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
         )
         .bind(ids[&c.id])
         .bind(board)
@@ -267,6 +270,7 @@ pub async fn import(db: &PgPool, user: Uuid, b: &DBoard, a: &Apply) -> Result<Ap
         .bind(done_at)
         .bind(c.created_at)
         .bind(c.last_modified)
+        .bind(&c.attachments)
         .execute(&mut *tx)
         .await?;
     }
@@ -279,7 +283,7 @@ mod tests {
     use super::*;
 
     fn card(id: i64, title: &str, stack: i64) -> DCard {
-        DCard { id, title: title.into(), description: String::new(), stack_id: stack, created_at: 1, last_modified: 2, due_at: None, done_at: None, labels: vec![], color: None }
+        DCard { id, title: title.into(), description: String::new(), stack_id: stack, created_at: 1, last_modified: 2, due_at: None, done_at: None, labels: vec![], color: None, attachments: vec![] }
     }
 
     fn board() -> DBoard {
@@ -321,8 +325,11 @@ mod tests {
         let Some((db, u)) = crate::kanban::tests::db_user().await else { return };
         let mut b = board();
         b.cards[5].done_at = Some(99);
+        b.cards[6].attachments = vec!["Deck/a.pdf".into()];
         let r = import(&db, u, &b, &Apply { board_id: 3, parents: HashMap::from([(16, Some(10)), (13, None)]), skip_stacks: vec![] }).await.unwrap();
         assert_eq!((r.cards, r.subtasks), (7, 2)); // 12 -> HSK 1, 16 -> HSK 1 (sửa tay), 13 bỏ cha
+        let att: Vec<String> = sqlx::query_scalar("SELECT attachments FROM cards WHERE board_id = $1 AND title = 'Viết blog'").bind(r.board).fetch_one(&db).await.unwrap();
+        assert_eq!(att, vec!["Deck/a.pdf".to_string()]);
         let cols: Vec<(String, bool)> = sqlx::query_as("SELECT title, is_done FROM board_columns WHERE board_id = $1 ORDER BY position").bind(r.board).fetch_all(&db).await.unwrap();
         assert_eq!(cols.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(), ["Bigtask", "To do", "Done"]);
         let done: (Option<i64>,) = sqlx::query_as("SELECT done_at FROM cards WHERE board_id = $1 AND title = 'esp32'").bind(r.board).fetch_one(&db).await.unwrap();

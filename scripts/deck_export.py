@@ -22,6 +22,13 @@ def main(db, owner, out):
     c = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     c.row_factory = sqlite3.Row
     boards = []
+    # File đính kèm (Deck >= 1.3): share kiểu 12 (deck), share_with = id card, file trong thư mục của owner.
+    att = {}
+    for card_id, path in c.execute(
+        "SELECT s.share_with, f.path FROM oc_share s JOIN oc_filecache f ON f.fileid = s.file_source "
+        "JOIN oc_storages st ON st.numeric_id = f.storage WHERE s.share_type = 12 AND st.id = ? AND f.path LIKE 'files/%'",
+        (f"home::{owner}",)):
+        att.setdefault(int(card_id), []).append(path[len("files/"):])
     for b in c.execute("SELECT id, title, archived FROM oc_deck_boards WHERE owner = ? AND deleted_at = 0 ORDER BY id", (owner,)):
         labels = {r["id"]: (r["title"], "#" + (r["color"] or "888888")) for r in c.execute("SELECT id, title, color FROM oc_deck_labels WHERE board_id = ?", (b["id"],))}
         stacks = [dict(id=s["id"], title=s["title"], order=s["order"]) for s in c.execute(
@@ -35,12 +42,14 @@ def main(db, owner, out):
                 id=k["id"], title=k["title"], description=k["description"] or "", stack_id=k["stack_id"], order=k["order"],
                 created_at=k["created_at"], last_modified=k["last_modified"], due_at=ts(k["duedate"]), done_at=ts(k["done"]),
                 archived=bool(k["archived"]), labels=lab, color=("#" + k["color"]) if k["color"] else None,
+                attachments=sorted(att.get(k["id"], [])),
             ))
         boards.append(dict(id=b["id"], title=b["title"], archived=bool(b["archived"]),
                            labels=[dict(title=t, color=col) for t, col in labels.values()], stacks=stacks, cards=cards))
     with open(out, "w") as f:
         json.dump(dict(source="nextcloud-deck", boards=boards), f, ensure_ascii=False)
-    print(f"{len(boards)} board, {sum(len(b['cards']) for b in boards)} card -> {out}")
+    n_att = sum(len(k["attachments"]) for b in boards for k in b["cards"])
+    print(f"{len(boards)} board, {sum(len(b['cards']) for b in boards)} card, {n_att} đính kèm -> {out}")
 
 
 if __name__ == "__main__":

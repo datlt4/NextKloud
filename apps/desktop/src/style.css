@@ -882,3 +882,11 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 .tile:has(.menu) { z-index: 30; }
 .pick-root { margin: 10px 0 4px; }
 .pick-root button { display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; }
+/* file đính kèm của card */
+.kb-sec:has(.grow) { display: flex; align-items: center; gap: 8px; }
+.kb-atts { display: grid; gap: 4px; }
+.kb-att { display: flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 8px; padding: 3px 4px; }
+.kb-att-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; background: none; border: 0; color: inherit; text-align: left; cursor: pointer; }
+.kb-att-open img, .kb-att-ic { width: 36px; height: 36px; border-radius: 6px; object-fit: cover; flex-shrink: 0; display: grid; place-items: center; background: var(--hover); }
+.kb-att-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.kb-att-open:hover .kb-att-name { text-decoration: underline; }

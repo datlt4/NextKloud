@@ -54,12 +54,13 @@ pub struct Card {
     pub done_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+    pub attachments: Vec<String>,
     /// Số subtask / số subtask đã xong.
     pub sub_total: i64,
     pub sub_done: i64,
 }
 
-const CARD_COLS: &str = "c.id, c.column_id, c.parent_id, c.title, c.description, c.position, c.labels, c.color, c.due_at, c.done_at, c.created_at, c.updated_at,
+const CARD_COLS: &str = "c.id, c.column_id, c.parent_id, c.title, c.description, c.position, c.labels, c.color, c.due_at, c.done_at, c.created_at, c.updated_at, c.attachments,
     (SELECT COUNT(*) FROM cards s WHERE s.parent_id = c.id AND NOT s.archived) AS sub_total,
     (SELECT COUNT(*) FROM cards s WHERE s.parent_id = c.id AND NOT s.archived AND s.done_at IS NOT NULL) AS sub_done";
 
@@ -354,6 +355,7 @@ pub struct CardPatch {
     #[serde(default, deserialize_with = "opt")]
     pub parent_id: Option<Option<Uuid>>,
     pub archived: Option<bool>,
+    pub attachments: Option<Vec<String>>,
 }
 
 pub async fn update_card(State(s): State<AppState>, user: AuthUser, Path(id): Path<Uuid>, Json(b): Json<CardPatch>) -> Result<Json<Card>, AppError> {
@@ -374,12 +376,13 @@ pub async fn update_card(State(s): State<AppState>, user: AuthUser, Path(id): Pa
     if let Some(Some(p)) = b.parent_id {
         check_parent(&s.db, board, Some(id), p).await?;
     }
+    let attachments = b.attachments.map(|v| v.iter().map(|p| crate::ops::user_path(p)).collect::<Result<Vec<_>, _>>()).transpose()?;
     sqlx::query(
         "UPDATE cards SET title = COALESCE($2, title), description = COALESCE($3, description), column_id = COALESCE($4, column_id),
             position = COALESCE($5, position), labels = COALESCE($6, labels),
             color = CASE WHEN $7 THEN $8 ELSE color END, due_at = CASE WHEN $9 THEN $10 ELSE due_at END,
             parent_id = CASE WHEN $11 THEN $12 ELSE parent_id END, archived = COALESCE($13, archived),
-            done_at = $14, updated_at = $15
+            done_at = $14, updated_at = $15, attachments = COALESCE($16, attachments)
          WHERE id = $1",
     )
     .bind(id)
@@ -397,6 +400,7 @@ pub async fn update_card(State(s): State<AppState>, user: AuthUser, Path(id): Pa
     .bind(b.archived)
     .bind(done_at)
     .bind(now())
+    .bind(attachments)
     .execute(&s.db)
     .await?;
     Ok(Json(card(&s.db, user.id, id).await?.0))

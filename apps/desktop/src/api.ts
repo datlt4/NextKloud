@@ -91,10 +91,11 @@ export interface KCard {
   done_at: number | null;
   created_at: number;
   updated_at: number;
+  attachments: string[];
   sub_total: number;
   sub_done: number;
 }
-export type KCardPatch = Partial<Pick<KCard, "title" | "description" | "column_id" | "position" | "labels" | "color" | "due_at" | "parent_id">> & { archived?: boolean };
+export type KCardPatch = Partial<Pick<KCard, "title" | "description" | "column_id" | "position" | "labels" | "color" | "due_at" | "parent_id" | "attachments">> & { archived?: boolean };
 export interface DeckPreview {
   id: number;
   title: string;

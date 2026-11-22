@@ -2,7 +2,7 @@ import { marked } from "marked";
 import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup } from "solid-js";
 import { api, type DeckPreview, type KBoard, type KCard, type KCardPatch, type KColumn } from "./api";
 import { errText } from "./fileops";
-import { Icon } from "./icons";
+import { Icon, kindOf } from "./icons";
 
 const DONE_LIMIT = 10;
 const fmtDay = (s: number) => new Date(s * 1000).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "2-digit" });
@@ -17,7 +17,7 @@ const checklist = (md: string): [number, number] => {
   return [all.filter((l) => /\[[xX]\]/.test(l)).length, all.length];
 };
 
-export function KanbanPage(props: { boardId: string | null; onBoard: (id: string | null) => void; isAdmin: boolean; onError: (m: string) => void }) {
+export function KanbanPage(props: { boardId: string | null; onBoard: (id: string | null) => void; isAdmin: boolean; onError: (m: string) => void; onOpenFile: (path: string) => void }) {
   const [boards, { refetch }] = createResource(() => api.boards(), { initialValue: [] });
   const [importing, setImporting] = createSignal(false);
   const active = () => boards().filter((b) => !b.archived);
@@ -63,7 +63,7 @@ export function KanbanPage(props: { boardId: string | null; onBoard: (id: string
         </div>
       </div>
       <Show when={props.boardId ? boards().find((b) => b.id === props.boardId) : undefined} keyed>
-        {(b) => <BoardView board={b} onError={props.onError} onChanged={refetch} onDeleted={() => { refetch(); props.onBoard(null); }} />}
+        {(b) => <BoardView board={b} onOpenFile={props.onOpenFile} onError={props.onError} onChanged={refetch} onDeleted={() => { refetch(); props.onBoard(null); }} />}
       </Show>
       <Show when={!boards.loading && !boards().length}>
         <div class="empty"><Icon name="kanban" size={48} /><p>Chưa có board. Bấm “+ Board” để tạo.</p></div>
@@ -75,7 +75,7 @@ export function KanbanPage(props: { boardId: string | null; onBoard: (id: string
   );
 }
 
-function BoardView(props: { board: KBoard; onError: (m: string) => void; onChanged: () => void; onDeleted: () => void }) {
+function BoardView(props: { board: KBoard; onOpenFile: (path: string) => void; onError: (m: string) => void; onChanged: () => void; onDeleted: () => void }) {
   const [cols, setCols] = createSignal<KColumn[]>([]);
   const [cards, setCards] = createSignal<KCard[]>([]);
   const [loading, setLoading] = createSignal(true);
@@ -381,6 +381,7 @@ function BoardView(props: { board: KBoard; onError: (m: string) => void; onChang
             }
             firstOpen={firstOpen()}
             firstDone={firstDone()}
+            onOpenFile={props.onOpenFile}
             onError={props.onError}
           />
         )}
@@ -403,7 +404,7 @@ function CardItem(props: { card: KCard; parent?: KCard; labelColor: (t: string) 
       </Show>
       <Show when={props.parent}>{(p) => <div class="kb-parent" title="Task cha"><Icon name="sub" size={12} /> {p().title}</div>}</Show>
       <div class="kb-title">{k().title}</div>
-      <Show when={k().due_at || k().sub_total || cl()[1] || k().description}>
+      <Show when={k().due_at || k().sub_total || cl()[1] || k().description || k().attachments.length}>
         <div class="kb-meta">
           <Show when={k().due_at}><span classList={{ "kb-due": true, late: overdue() }}><Icon name="calendar" size={12} /> {fmtDay(k().due_at!)}</span></Show>
           <Show when={k().sub_total}>
@@ -414,6 +415,7 @@ function CardItem(props: { card: KCard; parent?: KCard; labelColor: (t: string) 
           </Show>
           <Show when={cl()[1]}><span title="Checklist trong mô tả">☑ {cl()[0]}/{cl()[1]}</span></Show>
           <Show when={k().description.trim() && !cl()[1]}><Icon name="text" size={12} class="ic muted" /></Show>
+          <Show when={k().attachments.length}><span title="File đính kèm"><Icon name="clip" size={12} /> {k().attachments.length}</span></Show>
         </div>
       </Show>
     </div>
@@ -433,9 +435,34 @@ function CardDrawer(props: {
   onDelete: () => void;
   firstOpen?: KColumn;
   firstDone?: KColumn;
+  onOpenFile: (path: string) => void;
   onError: (m: string) => void;
 }) {
   const k = () => props.card;
+  const [attaching, setAttaching] = createSignal(false);
+  let attachInput!: HTMLInputElement;
+  /** Tải file lên thư mục Deck/ (trùng tên thì thêm số) rồi gắn vào card. */
+  const attach = async (list: FileList | null) => {
+    if (!list?.length) return;
+    setAttaching(true);
+    try {
+      const added: string[] = [];
+      for (const f of Array.from(list)) {
+        const dot = f.name.lastIndexOf(".");
+        const [base, ext] = dot > 0 ? [f.name.slice(0, dot), f.name.slice(dot)] : [f.name, ""];
+        let p = `Deck/${f.name}`;
+        for (let i = 2; await api.exists(p).then(() => true, () => false); i++) p = `Deck/${base} (${i})${ext}`;
+        await api.upload(p, f);
+        added.push(p);
+      }
+      props.onPatch({ attachments: [...k().attachments, ...added] });
+    } catch (e) {
+      props.onError(errText(e));
+    } finally {
+      setAttaching(false);
+      attachInput.value = "";
+    }
+  };
   const [editDesc, setEditDesc] = createSignal(false);
   const [subs, { mutate: setSubs, refetch: refetchSubs }] = createResource(() => k().id, (id) => api.subtasks(id), { initialValue: [] });
   const parents = () => props.cards.filter((c) => !c.parent_id && c.id !== k().id).sort((a, b) => a.title.localeCompare(b.title));
@@ -542,6 +569,35 @@ function CardDrawer(props: {
           }
         >
           <textarea class="kb-desc-edit" value={k().description} placeholder="Markdown, checklist: - [ ] việc cần làm" ref={(el) => queueMicrotask(() => el.focus())} onBlur={(e) => e.currentTarget.value !== k().description && props.onPatch({ description: e.currentTarget.value })} />
+        </Show>
+        <div class="kb-sec">
+          <b>Đính kèm {k().attachments.length || ""}</b>
+          <span class="grow" />
+          <button class="btn ghost sm" disabled={attaching()} onClick={() => attachInput.click()}><Icon name="clip" size={14} /> {attaching() ? "Đang tải…" : "Thêm file"}</button>
+          <input ref={attachInput} type="file" multiple hidden onChange={(e) => attach(e.currentTarget.files)} />
+        </div>
+        <Show when={k().attachments.length}>
+          <div class="kb-atts">
+            <For each={k().attachments}>
+              {(p) => {
+                const name = p.split("/").pop() ?? p;
+                const img = /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
+                return (
+                  <div class="kb-att">
+                    <button class="kb-att-open" onClick={() => props.onOpenFile(p)} title={p}>
+                      <Show when={img} fallback={<span class="kb-att-ic" style={{ color: kindOf(name, false).color }}><Icon name={kindOf(name, false).icon} size={18} /></span>}>
+                        <img src={api.thumbUrl(p, 128)} alt="" loading="lazy" />
+                      </Show>
+                      <span class="kb-att-name">{name}</span>
+                    </button>
+                    <button class="icon-btn sm" title="Bỏ đính kèm (file vẫn giữ)" onClick={() => props.onPatch({ attachments: k().attachments.filter((x) => x !== p) })}>
+                      <Icon name="close" size={13} />
+                    </button>
+                  </div>
+                );
+              }}
+            </For>
+          </div>
         </Show>
         <Show when={!k().parent_id}>
           <div class="kb-sec"><b>Subtask {k().sub_total ? `${k().sub_done}/${k().sub_total}` : ""}</b></div>

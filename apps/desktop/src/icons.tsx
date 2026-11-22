@@ -44,6 +44,7 @@ const P: Record<string, string> = {
   kanban: "M4 4h4v16H4zM10 4h4v10h-4zM16 4h4v6h-4z",
   calendar: "M4 6h16v14H4zM4 10h16M8 3v4M16 3v4",
   sub: "M6 4v10a3 3 0 0 0 3 3h9M15 14l3 3-3 3",
+  clip: "M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7",
   copy: "M9 9h11v11H9zM5 15H4V4h11v1",
   lock: "M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4",
   key: "M15.5 7.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0zM12 11v10M12 15h3M12 18h2",
