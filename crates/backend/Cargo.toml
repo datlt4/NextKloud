@@ -31,6 +31,7 @@ flate2 = { workspace = true }
 crc32fast = { workspace = true }
 opendal = { workspace = true }
 futures = { workspace = true }
+tokio-tungstenite = "0.24"
 
 [dev-dependencies]
 tower = "0.5"

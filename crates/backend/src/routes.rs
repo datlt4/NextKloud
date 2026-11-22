@@ -140,6 +140,7 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/office/config", post(crate::office::config))
         .route("/api/office/file", get(crate::office::file_dl))
         .route("/api/office/callback", post(crate::office::callback))
+        .route("/oo/*rest", axum::routing::any(crate::ooproxy::proxy))
         .with_state(state)
 }
 

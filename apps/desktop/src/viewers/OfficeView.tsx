@@ -1,5 +1,5 @@
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
-import { api } from "../api";
+import { api, serverOrigin } from "../api";
 
 declare global {
   interface Window {
@@ -12,11 +12,14 @@ function loadDocsApi(): Promise<void> {
   if (window.DocsAPI) return Promise.resolve();
   if (!scriptPromise) {
     scriptPromise = new Promise((res, rej) => {
-      const host = window.location.hostname || "localhost";
       const s = document.createElement("script");
-      s.src = `http://${host}:8027/web-apps/apps/api/documents/api.js`;
-      s.onload = () => (window.DocsAPI ? res() : rej(new Error("không tải được DocsAPI từ :8027")));
-      s.onerror = () => rej(new Error("không tải được DocsAPI từ :8027 (DocumentServer có chạy không?)"));
+      // DocumentServer đi qua proxy /oo của backend: cùng origin, https.
+      s.src = `${serverOrigin()}/oo/web-apps/apps/api/documents/api.js`;
+      s.onload = () => (window.DocsAPI ? res() : rej(new Error("không tải được trình soạn thảo OnlyOffice")));
+      s.onerror = () => {
+        scriptPromise = null; // lần sau thử lại
+        rej(new Error("không kết nối được OnlyOffice (kiểm tra ONLYOFFICE_URL trên server)"));
+      };
       document.head.appendChild(s);
     });
   }
@@ -24,7 +27,7 @@ function loadDocsApi(): Promise<void> {
 }
 
 /**
- * Mở/sửa office trực tiếp bằng OnlyOffice DocumentServer (:8027).
+ * Mở/sửa office trực tiếp bằng OnlyOffice DocumentServer (qua proxy /oo).
  * File lưu qua callback của server -> ghi đè lên store + cập nhật quota/chỉ mục.
  */
 export default function OfficeView(props: { path: string }) {
@@ -39,7 +42,11 @@ export default function OfficeView(props: { path: string }) {
       if (dead) return;
       const { config, token } = await api.officeConfig(props.path);
       if (dead) return;
-      editor = new window.DocsAPI.DocEditor(box, {
+      // DocEditor nhận id của placeholder (không nhận element); nó thay placeholder bằng iframe.
+      const ph = document.createElement("div");
+      ph.id = `oo-${Math.random().toString(36).slice(2)}`;
+      box.replaceChildren(ph);
+      editor = new window.DocsAPI.DocEditor(ph.id, {
         ...config,
         token,
         width: "100%",

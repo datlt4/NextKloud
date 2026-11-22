@@ -7,6 +7,7 @@ pub mod git;
 pub mod index;
 pub mod notes;
 pub mod office;
+pub mod ooproxy;
 pub mod ops;
 pub mod quota;
 pub mod routes;

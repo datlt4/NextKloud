@@ -132,7 +132,8 @@ pub async fn config(
     let mtime = mtime_of(&meta);
     let size = meta.content_length();
     let key = doc_key(&user.id, &path, mtime, size);
-    let base = public_base(&headers);
+    // DocumentServer tải file + gọi callback: ưu tiên địa chỉ nội bộ (NextKloud public có thể nằm sau lớp đăng nhập).
+    let base = std::env::var("ONLYOFFICE_BACKEND_URL").ok().map(|v| v.trim_end_matches('/').to_string()).filter(|v| !v.is_empty()).unwrap_or_else(|| public_base(&headers));
     let dl = dl_token(user.id, &path, &s.enc)?;
 
     sqlx::query(
@@ -234,9 +235,11 @@ pub async fn callback(
     let (user_id, path) = row.ok_or_else(|| AppError::NotFound("phiên office hết hạn".into()))?;
 
     // Tải bản đã lưu về staging rồi ghi đè qua cùng đường quota như upload.
-    let bytes = s
-        .http
-        .get(&url)
+    let mut get = s.http.get(crate::ooproxy::internal_url(&url));
+    for (k, v) in crate::ooproxy::extra_headers() {
+        get = get.header(k, v);
+    }
+    let bytes = get
         .timeout(std::time::Duration::from_secs(300))
         .send()
         .await

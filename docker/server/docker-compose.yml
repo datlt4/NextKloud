@@ -26,8 +26,13 @@ services:
       # Chunk upload ghi tạm ở đây rồi stream lên RustFS (multipart).
       - STAGING_DIR=/data/staging
       - TTS_URL=http://tts:8016
-      # Dùng OnlyOffice sẵn có trên mini PC (port 8027), không chạy thêm.
+      # Dùng OnlyOffice sẵn có trên mini PC (port 8027), trình duyệt đi qua proxy /oo của backend.
       - ONLYOFFICE_URL=http://host.docker.internal:8027
+      - ONLYOFFICE_JWT_SECRET=${ONLYOFFICE_JWT_SECRET:-}
+      # Địa chỉ DocumentServer gọi ngược về backend (tải file, callback lưu).
+      - ONLYOFFICE_BACKEND_URL=${ONLYOFFICE_BACKEND_URL:-}
+      # Header thêm khi gọi DocumentServer, vd "P-Access-Token-Id: x; P-Access-Token: y".
+      - ONLYOFFICE_HEADERS=${ONLYOFFICE_HEADERS:-}
       - ALLOWED_ORIGINS=*
       # Không có TRUSTED_DOMAINS — cố tình bỏ giống yêu cầu (khác Nextcloud).
     extra_hosts:
