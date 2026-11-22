@@ -194,21 +194,62 @@ async function vaultOutline(path: string): Promise<VaultOutline | null> {
   if (v) outlineCache = { at: Date.now(), v };
   return v;
 }
-/** Thư mục gốc đã tìm thấy ảnh lần trước (thường là gốc vault) -> thử trước, đỡ dò lại. */
+/** Thư mục gốc đã tìm thấy ảnh lần trước (thường là gốc vault) -> thử trước, đỡ dò lại (chỉ dùng khi ngoài vault, không có mục lục). */
 const imgBases: string[] = [];
 
-/** Ảnh Obsidian có thể ghi tương đối với file, với gốc vault, hoặc chỉ tên file: thử lần lượt như Obsidian. */
-async function loadImg(mdPath: string, raw: string): Promise<string> {
+/** Chỉ mục tra nhanh từ mục lục vault: đường dẫn đầy đủ + theo tên file. */
+interface ImgIndex {
+  root: string;
+  set: Set<string>;
+  byName: Map<string, string[]>;
+}
+function buildImgIndex(o: VaultOutline): ImgIndex {
+  const set = new Set<string>();
+  const byName = new Map<string, string[]>();
+  for (const f of o.files) {
+    set.add(f.path);
+    const n = f.path.split("/").pop() ?? f.path;
+    const l = byName.get(n);
+    if (l) l.push(f.path);
+    else byName.set(n, [f.path]);
+  }
+  return { root: o.root, set, byName };
+}
+
+/** Ảnh Obsidian có thể ghi tương đối với file, với gốc vault, hoặc chỉ tên file.
+ *  Trong vault: tra mục lục đã tải sẵn (0 request dò, hết loạt 404).
+ *  Ngoài vault: dò mạng lần lượt như Obsidian (giữ hành vi cũ). */
+async function loadImg(mdPath: string, raw: string, idx?: ImgIndex | null): Promise<string> {
+  const clean = raw.split("#")[0].split("?")[0] || raw;
   const dir = mdPath.includes("/") ? mdPath.slice(0, mdPath.lastIndexOf("/")) : "";
   const ups: string[] = [];
   for (let d = dir; ; d = d.includes("/") ? d.slice(0, d.lastIndexOf("/")) : "") {
     ups.push(d);
     if (!d) break;
   }
+  if (idx) {
+    // ref tuyệt đối từ gốc vault: /assets/x.png (Obsidian) -> <vaultRoot>/assets/x.png
+    if (clean.startsWith("/")) {
+      const rp = `${idx.root}/${clean.replace(/^\/+/, "")}`;
+      if (idx.set.has(rp)) return api.downloadUrl(rp);
+    } else {
+      for (let d = dir; ; d = d.includes("/") ? d.slice(0, d.lastIndexOf("/")) : "") {
+        const p = joinRel(d, clean);
+        if (idx.set.has(p)) return api.downloadUrl(p);
+        if (!d) break;
+      }
+    }
+    // chỉ có tên file: tra theo tên trong cây thư mục gần nhất (không gọi /api/search)
+    const name = clean.split("/").pop()!;
+    const hits = (idx.byName.get(name) ?? []).filter((p) => ups.some((u) => !u || p.startsWith(u + "/")));
+    hits.sort((a, b) => a.length - b.length);
+    if (hits.length) return api.downloadUrl(hits[0]);
+    throw new Error("404");
+  }
   const bases = [dir, ...imgBases.filter((b) => ups.includes(b)), ...ups];
   const tried = new Set<string>();
   for (const b of bases) {
-    const p = joinRel(b, raw);
+    const p = joinRel(b, clean);
     if (tried.has(p)) continue;
     tried.add(p);
     try {
@@ -220,7 +261,7 @@ async function loadImg(mdPath: string, raw: string): Promise<string> {
     }
   }
   // chỉ có tên file: tìm theo tên trong cây thư mục gần nhất
-  const name = raw.split("/").pop()!;
+  const name = clean.split("/").pop()!;
   const hit = (await api.search(name)).filter((e) => !e.is_dir && e.name === name && ups.some((u) => !u || e.path.startsWith(u + "/")));
   hit.sort((a, b) => a.path.length - b.path.length);
   if (!hit.length) throw new Error("404");
@@ -272,6 +313,11 @@ export default function MarkdownView(props: {
   const list = createMemo(() => blocks(props.text));
   const [lb, setLb] = createSignal<{ src: string; alt: string } | null>(null);
   const [outline] = createResource(() => props.path, vaultOutline);
+  /** Chỉ mục tra ảnh từ mục lục vault (null = ngoài vault -> dò mạng như cũ). */
+  const imgIdx = createMemo(() => {
+    const o = outline();
+    return o ? buildImgIndex(o) : null;
+  });
   const reader = createReader(() => props.path, (m) => (props.onError ?? console.error)(m));
   const plain = createMemo(() => list().map((b) => b.html.replace(/<[^>]+>/g, "").replace(/\s+/g, " ")));
   // Annotation -> block: ưu tiên đoạn chứa đúng câu đã trích (bài có thể đã sửa), không thì theo số thứ tự.
@@ -391,9 +437,13 @@ export default function MarkdownView(props: {
   createEffect(() => {
     // gắn lại sau mỗi lần render danh sách block
     list();
-    // 1) ảnh tương đối / embed -> blob URL có auth
+    // 1) ảnh tương đối / embed -> blob URL có auth.
+    // Đợi mục lục vault xong mới tra đường dẫn (khớp chính xác, không dò 404);
+    // effect đăng ký outline() qua imgIdx() nên tự chạy lại khi mục lục về.
+    const idx = imgIdx();
+    const ready = !outline.loading;
     const imgs = host?.querySelectorAll<HTMLImageElement>("img[data-wsrc]") ?? [];
-    imgs.forEach((img) => {
+    if (ready) imgs.forEach((img) => {
       const raw = decodeURIComponent(img.getAttribute("data-wsrc") ?? "");
       const key = `${dirOf(props.path)}${String.fromCharCode(0)}${raw}`;
       const hit = imgUrlCache.get(key);
@@ -402,7 +452,7 @@ export default function MarkdownView(props: {
         img.removeAttribute("data-wsrc");
         return;
       }
-      loadImg(props.path, raw)
+      loadImg(props.path, raw, idx)
       .then((url) => {
         if (img.isConnected) {
           imgUrlCache.set(key, url);
