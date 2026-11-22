@@ -107,6 +107,8 @@ export default function App() {
   const shownName = () => me()?.display_name || me()?.username || "";
   const [upload, setUpload] = createSignal<{ name: string; pct: number; left: number } | null>(null);
   let fileInput!: HTMLInputElement;
+  let dirInput!: HTMLInputElement;
+  const [dropping, setDropping] = createSignal(false);
   let scrollEl: HTMLDivElement | undefined;
   let vbox: HTMLDivElement | undefined;
   let pages = new Map<number, Entry[]>();
@@ -743,15 +745,18 @@ export default function App() {
     else openEntry(f);
   };
 
-  const doUpload = async (list: FileList | null) => {
-    if (!list?.length) return;
-    const items = Array.from(list);
+  /** Upload giữ cấu trúc thư mục: `rel` là đường dẫn tương đối ("A/b/c.txt"), `dirs` là thư mục rỗng cần tạo. */
+  const doUpload = async (list: FileList | { file: File; rel: string }[] | null, dirs: string[] = []) => {
+    const items = Array.isArray(list) ? list : Array.from(list ?? []).map((f) => ({ file: f, rel: f.webkitRelativePath || f.name }));
+    if (!items.length && !dirs.length) return;
+    const base = prefix();
     try {
+      for (const d of dirs) await api.mkdir(joinPath(base, d)).catch(() => {}); // đã có thì thôi
       for (let i = 0; i < items.length; i++) {
-        const f = items[i];
-        setUpload({ name: f.name, pct: 0, left: items.length - i });
-        await api.upload(join(f.name), f, (done) =>
-          setUpload({ name: f.name, pct: Math.round((done / Math.max(f.size, 1)) * 100), left: items.length - i }),
+        const { file: f, rel } = items[i];
+        setUpload({ name: rel, pct: 0, left: items.length - i });
+        await api.upload(joinPath(base, rel), f, (done) =>
+          setUpload({ name: rel, pct: Math.round((done / Math.max(f.size, 1)) * 100), left: items.length - i }),
         );
       }
     } catch (e) {
@@ -759,9 +764,54 @@ export default function App() {
     } finally {
       setUpload(null);
       fileInput.value = "";
+      dirInput.value = "";
       refresh();
       refreshMe();
     }
+  };
+
+  /** Kéo file/thư mục từ máy vào: duyệt cây thư mục (webkitGetAsEntry), giữ đường dẫn con. */
+  const readDrop = async (dt: DataTransfer) => {
+    const files: { file: File; rel: string }[] = [];
+    const dirs: string[] = [];
+    const walk = async (e: any, rel: string): Promise<void> => {
+      if (e.isFile) {
+        files.push({ file: await new Promise<File>((ok, no) => e.file(ok, no)), rel });
+      } else if (e.isDirectory) {
+        const r = e.createReader();
+        let n = 0;
+        // readEntries trả từng đợt (~100 mục), đọc tới khi rỗng
+        for (;;) {
+          const batch: any[] = await new Promise((ok, no) => r.readEntries(ok, no));
+          if (!batch.length) break;
+          n += batch.length;
+          for (const c of batch) await walk(c, `${rel}/${c.name}`);
+        }
+        if (!n) dirs.push(rel);
+      }
+    };
+    const entries = Array.from(dt.items).map((it) => it.webkitGetAsEntry?.()).filter(Boolean);
+    if (!entries.length) return { files: Array.from(dt.files).map((f) => ({ file: f, rel: f.name })), dirs };
+    for (const e of entries) await walk(e, e!.name);
+    return { files, dirs };
+  };
+  const externalDrag = (e: DragEvent) => !!e.dataTransfer?.types.includes("Files") && !e.dataTransfer.types.includes(DND);
+  const panelDrop = {
+    onDragOver: (e: DragEvent) => {
+      if (page() !== "files" || !externalDrag(e)) return;
+      e.preventDefault();
+      setDropping(true);
+    },
+    onDragLeave: (e: DragEvent) => {
+      if (!(e.currentTarget as Element).contains(e.relatedTarget as Node)) setDropping(false);
+    },
+    onDrop: async (e: DragEvent) => {
+      setDropping(false);
+      if (page() !== "files" || !externalDrag(e)) return;
+      e.preventDefault();
+      const { files, dirs } = await readDrop(e.dataTransfer!);
+      doUpload(files, dirs);
+    },
   };
 
   const quotaPct = () => {
@@ -1010,7 +1060,7 @@ export default function App() {
               </div>
             </aside>
 
-            <main class="panel glass">
+            <main class="panel glass" classList={{ dropping: dropping() }} {...panelDrop}>
               <Show when={page() === "settings" && me()}>
                 <Show when={err()}>
                   <div class="err banner">
@@ -1078,7 +1128,11 @@ export default function App() {
                     <Icon name="folderPlus" /> <span class="hide-xs">Thư mục mới</span>
                   </button>
                 </Show>
+                <button class="btn ghost" title="Tải lên cả thư mục (giữ thư mục con)" onClick={() => dirInput.click()} disabled={!!upload()}>
+                  <Icon name="folder" /> <span class="hide-xs">Tải thư mục</span>
+                </button>
                 <input ref={fileInput} type="file" multiple hidden onChange={(e) => doUpload(e.currentTarget.files)} />
+                <input ref={dirInput} type="file" multiple hidden {...{ webkitdirectory: true }} onChange={(e) => doUpload(e.currentTarget.files)} />
                 <nav class="crumbs">
                   <button class="crumb" classList={{ drop: dropOn() === "" }} onClick={() => load("")} {...dropProps(() => "")}>
                     <Icon name="home" size={16} />

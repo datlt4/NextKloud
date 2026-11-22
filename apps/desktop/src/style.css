@@ -874,3 +874,6 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 .secret-set .two button { margin-top: 0; }
 .danger-txt { color: #c0392b !important; }
 .ok-msg { color: #2e7d32; margin: 8px 0 0; }
+/* kéo file/thư mục từ máy vào để tải lên */
+.panel.dropping { position: relative; outline: 2px dashed var(--accent); outline-offset: -8px; }
+.panel.dropping::after { content: "Thả để tải lên (giữ cấu trúc thư mục)"; position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 8px 14px; border-radius: 10px; background: var(--accent); color: var(--accent-fg); font-weight: 600; pointer-events: none; z-index: 20; }
