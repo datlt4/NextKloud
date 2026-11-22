@@ -44,7 +44,7 @@ fn now() -> i64 {
 }
 
 /// Some(is_dir) nếu path có trong chỉ mục.
-async fn kind(db: &PgPool, user: Uuid, path: &str) -> Result<Option<bool>, sqlx::Error> {
+pub(crate) async fn kind(db: &PgPool, user: Uuid, path: &str) -> Result<Option<bool>, sqlx::Error> {
     let r: Option<(bool,)> = sqlx::query_as("SELECT is_dir FROM files WHERE user_id = $1 AND path = $2")
         .bind(user)
         .bind(path)
@@ -54,7 +54,7 @@ async fn kind(db: &PgPool, user: Uuid, path: &str) -> Result<Option<bool>, sqlx:
 }
 
 /// Không cho tạo con bên dưới một file.
-async fn check_parents(db: &PgPool, user: Uuid, path: &str) -> Result<(), AppError> {
+pub(crate) async fn check_parents(db: &PgPool, user: Uuid, path: &str) -> Result<(), AppError> {
     for a in ancestors(path) {
         if kind(db, user, a).await? == Some(false) {
             return Err(AppError::Conflict(format!("'{a}' là file, không phải thư mục")));
@@ -207,6 +207,82 @@ pub async fn move_path(db: &PgPool, store: &Store, user: Uuid, from: &str, to: &
         return Err(AppError::Internal(format!("chuyển được {}/{} file: {e}", ok.len(), files.len())));
     }
     Ok(ok.len() as u64)
+}
+
+/// Một file/thư mục trong chỉ mục: các file (path, size, modified) và thư mục con (kể cả chính nó nếu là thư mục).
+pub(crate) struct Tree {
+    pub files: Vec<(String, i64, i64)>,
+    pub dirs: Vec<String>,
+}
+
+pub(crate) async fn tree(db: &PgPool, user: Uuid, path: &str) -> Result<Tree, AppError> {
+    let is_dir = kind(db, user, path).await?.ok_or_else(|| AppError::NotFound("not found".into()))?;
+    let rows: Vec<(String, bool, i64, i64)> = sqlx::query_as(
+        "SELECT path, is_dir, size, modified FROM files WHERE user_id = $1 AND (path = $2 OR ($3 AND path LIKE $4))",
+    )
+    .bind(user)
+    .bind(path)
+    .bind(is_dir)
+    .bind(format!("{}/%", like_escape(path)))
+    .fetch_all(db)
+    .await?;
+    let (mut files, mut dirs) = (vec![], vec![]);
+    for (p, d, size, m) in rows {
+        if d { dirs.push(p) } else { files.push((p, size, m)) }
+    }
+    Ok(Tree { files, dirs })
+}
+
+/// Sao chép file hoặc cả thư mục (S3 copy phía server, không qua client). Trả về số file.
+pub async fn copy_path(db: &PgPool, store: &Store, user: Uuid, from: &str, to: &str) -> Result<u64, AppError> {
+    if to == from || to.starts_with(&format!("{from}/")) {
+        return Err(AppError::BadRequest("không thể sao chép thư mục vào chính nó".into()));
+    }
+    let t = tree(db, user, from).await?;
+    if kind(db, user, to).await?.is_some() {
+        return Err(AppError::Conflict("đích đã tồn tại".into()));
+    }
+    check_parents(db, user, to).await?;
+    let total: i64 = t.files.iter().map(|f| f.1).sum();
+    let row = crate::state::load_user(db, user).await?;
+    crate::quota::Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64)
+        .can_add(total as u64)
+        .map_err(|e| AppError::Conflict(format!("quota exceeded: {e}")))?;
+    let dest = |p: &str| format!("{to}{}", &p[from.len()..]);
+    let mut tx = db.begin().await?;
+    let mut dirs: Vec<String> = t.dirs.iter().map(|d| dest(d)).collect();
+    dirs.extend(ancestors(to).into_iter().map(String::from));
+    let dirs: Vec<&str> = dirs.iter().map(String::as_str).collect();
+    ensure_dirs(&mut tx, user, &dirs, now()).await?;
+    tx.commit().await?;
+    let op = &store.op;
+    let results: Vec<Result<(String, i64, i64), StoreError>> = futures::stream::iter(t.files.iter().cloned())
+        .map(|(p, size, m)| {
+            let (a, b) = (format!("{user}/{p}"), format!("{user}/{}", dest(&p)));
+            async move { op.copy(&a, &b).await.map(|_| (dest(&p), size, m)).map_err(StoreError::from) }
+        })
+        .buffer_unordered(16)
+        .collect()
+        .await;
+    let mut n = 0u64;
+    let mut added = 0i64;
+    let mut first_err = None;
+    for r in results {
+        match r {
+            Ok((p, size, m)) => {
+                crate::index::add_file(db, user, &p, size as u64, m).await?;
+                crate::fulltext::put_from_store(db, store, user, &p, size as u64).await;
+                n += 1;
+                added += size;
+            }
+            Err(e) => first_err = first_err.or(Some(e)),
+        }
+    }
+    sqlx::query("UPDATE users SET quota_used = quota_used + $2 WHERE id = $1").bind(user).bind(added).execute(db).await?;
+    if let Some(e) = first_err {
+        return Err(AppError::Internal(format!("sao chép được {n}/{} file: {e}", t.files.len())));
+    }
+    Ok(n)
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]

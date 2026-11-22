@@ -877,3 +877,8 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 /* kéo file/thư mục từ máy vào để tải lên */
 .panel.dropping { position: relative; outline: 2px dashed var(--accent); outline-offset: -8px; }
 .panel.dropping::after { content: "Thả để tải lên (giữ cấu trúc thư mục)"; position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 8px 14px; border-radius: 10px; background: var(--accent); color: var(--accent-fg); font-weight: 600; pointer-events: none; z-index: 20; }
+/* menu ⋯ trong lưới: nổi trên các ô hàng dưới (trước đó bị che, bấm trượt vào ô khác) */
+.vrow:has(.menu), .vgrid-row:has(.menu) { z-index: 30; }
+.tile:has(.menu) { z-index: 30; }
+.pick-root { margin: 10px 0 4px; }
+.pick-root button { display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; }

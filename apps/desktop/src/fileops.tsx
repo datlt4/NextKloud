@@ -91,6 +91,7 @@ export function NameDialog(props: {
 export function MoveDialog(props: {
   paths: string[];
   start: string;
+  copy?: boolean;
   onSubmit: (dest: string) => Promise<void>;
   onClose: () => void;
 }) {
@@ -98,25 +99,38 @@ export function MoveDialog(props: {
   const [err, setErr] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [dirs] = createResource(cur, async (p) => {
-    const r = await api.files(p, { sort: "name", desc: false, offset: 0, limit: 1000 });
-    return r.entries.filter((e) => e.is_dir);
+    try {
+      const r = await api.files(p, { sort: "name", desc: false, offset: 0, limit: 1000 });
+      setErr("");
+      return r.entries.filter((e) => e.is_dir);
+    } catch (e) {
+      setErr(isSecret(p) ? "Khu Bí mật đang khoá: mở khoá (mục Bí mật) rồi thử lại" : errText(e));
+      return [];
+    }
   });
   const blocked = (p: string) => props.paths.some((m) => p === m || p.startsWith(m + "/"));
-  const sameDir = () => props.paths.every((m) => m.split("/").slice(0, -1).join("/") === cur());
-  const root = isSecret(props.start) ? SECRET_ROOT : "";
+  const sameDir = () => !props.copy && props.paths.every((m) => m.split("/").slice(0, -1).join("/") === cur());
+  const root = () => (isSecret(cur()) ? SECRET_ROOT : "");
+  /** Chuyển từ file thường vào Bí mật: bản gốc bị xoá hẳn. */
+  const intoSecret = () => isSecret(cur()) && !isSecret(props.paths[0] ?? "");
   const crumbs = () => cur().split("/").filter(Boolean).filter((c) => c !== SECRET_ROOT);
-  const title = () => (props.paths.length === 1 ? `Di chuyển "${baseName(props.paths[0])}"` : `Di chuyển ${props.paths.length} mục`);
+  const verb = props.copy ? "Sao chép" : "Di chuyển";
+  const title = () => (props.paths.length === 1 ? `${verb} "${baseName(props.paths[0])}"` : `${verb} ${props.paths.length} mục`);
   return (
     <div class="modal-bg" onClick={() => !busy() && props.onClose()}>
       <div class="modal glass form" onClick={(e) => e.stopPropagation()}>
         <Head title={title()} onClose={props.onClose} />
+        <div class="seg pick-root">
+          <button classList={{ on: !root() }} onClick={() => setCur("")}><Icon name="home" size={15} /> Tất cả file</button>
+          <button classList={{ on: !!root() }} onClick={() => setCur(SECRET_ROOT)}><Icon name="lock" size={15} /> Bí mật</button>
+        </div>
         <nav class="crumbs pick-crumbs">
-          <button class="crumb" onClick={() => setCur(root)}><Icon name={root ? "lock" : "home"} size={16} /></button>
+          <button class="crumb" onClick={() => setCur(root())}><Icon name={root() ? "lock" : "home"} size={16} /></button>
           <For each={crumbs()}>
             {(c, i) => (
               <>
                 <Icon name="chevron" size={14} class="ic dim" />
-                <button class="crumb" classList={{ cur: i() === crumbs().length - 1 }} onClick={() => setCur(joinPath(root, crumbs().slice(0, i() + 1).join("/")))}>
+                <button class="crumb" classList={{ cur: i() === crumbs().length - 1 }} onClick={() => setCur(joinPath(root(), crumbs().slice(0, i() + 1).join("/")))}>
                   {c}
                 </button>
               </>
@@ -135,6 +149,9 @@ export function MoveDialog(props: {
           </Show>
         </div>
         <Show when={err()}><p class="err">{err()}</p></Show>
+        <Show when={intoSecret() && !props.copy}>
+          <p class="muted sm">Bản gốc sẽ bị <b>xoá hẳn</b> sau khi mã hoá vào Bí mật (không vào thùng rác).</p>
+        </Show>
         <div class="pick-foot">
           <button type="button" class="btn ghost" onClick={async () => {
             const n = prompt("Tên thư mục mới")?.trim();
@@ -161,7 +178,7 @@ export function MoveDialog(props: {
               setBusy(false);
             }
           }}>
-            {busy() ? "Đang chuyển…" : "Chuyển vào đây"}
+            {busy() ? (props.copy ? "Đang sao chép…" : "Đang chuyển…") : props.copy ? "Sao chép vào đây" : "Chuyển vào đây"}
           </button>
         </div>
       </div>

@@ -85,7 +85,7 @@ export default function App() {
   const [vaultLeft, setVaultLeft] = createSignal(0);
   const inSecret = () => isSecret(prefix()) || page() === "secret-trash";
   const [boardId, setBoardId] = createSignal<string | null>(null);
-  type Dlg = { kind: "mkdir" } | { kind: "rename"; f: Entry } | { kind: "move"; paths: string[] };
+  type Dlg = { kind: "mkdir" } | { kind: "rename"; f: Entry } | { kind: "move"; paths: string[] } | { kind: "copy"; paths: string[] };
   const [dlg, setDlg] = createSignal<Dlg | null>(null);
   const [sel, setSel] = createSignal<Set<string>>(new Set());
   const [notice, setNotice] = createSignal<{ text: string; undo?: () => Promise<void> } | null>(null);
@@ -654,6 +654,17 @@ export default function App() {
     await each("Đang di chuyển", todo, (p) => api.move(p, joinPath(dest, p.split("/").pop()!)));
     flash(`Đã chuyển ${todo.length} mục tới ${pretty(dest)}`);
   };
+  /** Sao chép vào `dest`; trùng tên trong cùng thư mục thì thêm " (bản sao)". */
+  const copyTo = async (paths: string[], dest: string) => {
+    const name = (p: string) => {
+      const n = p.split("/").pop()!;
+      if (parentOf(p) !== dest) return n;
+      const i = n.lastIndexOf(".");
+      return i > 0 ? `${n.slice(0, i)} (bản sao)${n.slice(i)}` : `${n} (bản sao)`;
+    };
+    await each("Đang sao chép", paths, (p) => api.copy(p, joinPath(dest, name(p))));
+    flash(`Đã sao chép ${paths.length} mục tới ${pretty(dest)}`);
+  };
 
   // --- chọn nhiều ---
   const toggleSel = (p: string, on?: boolean) => {
@@ -850,6 +861,9 @@ export default function App() {
           </button>
           <button onClick={() => { closeMenu(); setDlg({ kind: "move", paths: [p.f.path] }); }}>
             <Icon name="move" /> Di chuyển
+          </button>
+          <button onClick={() => { closeMenu(); setDlg({ kind: "copy", paths: [p.f.path] }); }}>
+            <Icon name="copy" /> Sao chép
           </button>
           <button onClick={() => { closeMenu(); toggleSel(p.f.path, true); lastIdx = -1; }}>
             <Icon name="check" /> Chọn
@@ -1113,6 +1127,9 @@ export default function App() {
                   <span class="grow" />
                   <button class="btn ghost sm" onClick={() => setDlg({ kind: "move", paths: [...sel()] })}>
                     <Icon name="move" /> <span class="hide-xs">Di chuyển</span>
+                  </button>
+                  <button class="btn ghost sm" onClick={() => setDlg({ kind: "copy", paths: [...sel()] })}>
+                    <Icon name="copy" /> <span class="hide-xs">Sao chép</span>
                   </button>
                   <button class="btn danger sm" onClick={() => remove([...sel()])}>
                     <Icon name="trash" /> <span class="hide-xs">Xoá</span>
@@ -1439,6 +1456,14 @@ export default function App() {
                   {(paths) => (
                     <MoveDialog paths={paths()} start={prefix()} onClose={() => setDlg(null)} onSubmit={async (dest) => {
                       await moveTo(paths(), dest);
+                      setDlg(null);
+                    }} />
+                  )}
+                </Match>
+                <Match when={d().kind === "copy" && (d() as { paths: string[] }).paths}>
+                  {(paths) => (
+                    <MoveDialog copy paths={paths()} start={prefix()} onClose={() => setDlg(null)} onSubmit={async (dest) => {
+                      await copyTo(paths(), dest);
                       setDlg(null);
                     }} />
                   )}

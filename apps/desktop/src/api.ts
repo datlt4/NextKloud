@@ -330,10 +330,17 @@ export const api = {
   },
   /** Đổi tên hoặc di chuyển (file/thư mục). */
   async move(from: string, to: string) {
-    const sec = isSecret(from);
-    if (sec !== isSecret(to)) throw new Error("Không chuyển được giữa Bí mật và file thường (hãy tải xuống rồi tải lên lại)");
-    const b = sec ? { from: sRel(from), to: sRel(to) } : { from, to };
-    const r = await req(sec ? "/api/secret/move" : "/api/move", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) });
+    return this.xfer(from, to, false);
+  },
+  async copy(from: string, to: string) {
+    return this.xfer(from, to, true);
+  },
+  /** Chuyển/sao chép; qua lại giữa file thường và Bí mật thì server mã hoá/giải mã. */
+  async xfer(from: string, to: string, keep: boolean) {
+    const [a, b] = [isSecret(from), isSecret(to)];
+    const url = a && b ? (keep ? "/api/secret/copy" : "/api/secret/move") : !a && !b ? (keep ? "/api/copy" : "/api/move") : a ? "/api/secret/export" : "/api/secret/import";
+    const body = { from: a ? sRel(from) : from, to: b ? sRel(to) : to, keep };
+    const r = await req(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     return r.json() as Promise<{ files: number }>;
   },
   // --- bookmark + ghi chú ---

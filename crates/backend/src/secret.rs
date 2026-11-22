@@ -492,11 +492,12 @@ struct Node {
     id: Uuid,
     is_dir: bool,
     size: i64,
+    mtime: i64,
     object_key: Option<String>,
     stored: i64,
 }
 
-const NODE: &str = "id, is_dir, size, object_key, stored";
+const NODE: &str = "id, is_dir, size, mtime, object_key, stored";
 
 async fn child(db: &PgPool, user: Uuid, parent: Option<Uuid>, mac: &[u8]) -> Result<Option<Node>, sqlx::Error> {
     sqlx::query_as(&format!(
@@ -994,8 +995,16 @@ async fn finish(s: &AppState, c: &Ctx, up: Up, tmp: &std::path::Path) -> Result<
     if !up.buf.is_empty() {
         append(tmp, &enc_block(&up.dek, &up.hdr, up.block, &up.buf)).map_err(|e| AppError::Internal(e.to_string()))?;
     }
-    let (dir, name) = split(&up.path);
-    let existing = resolve(&s.db, c.user, &c.keys, &up.path).await?;
+    store_encrypted(s, c, &up.path, tmp, up.size, up.mtime, true).await
+}
+
+/// Đưa file bản mã (đã nằm ở staging) vào vault tại `path`. `overwrite` = cho ghi đè file cùng tên.
+async fn store_encrypted(s: &AppState, c: &Ctx, path: &str, tmp: &std::path::Path, size: u64, mtime: Option<i64>, overwrite: bool) -> Result<StatusCode, AppError> {
+    let (dir, name) = split(path);
+    let existing = resolve(&s.db, c.user, &c.keys, path).await?;
+    if existing.is_some() && !overwrite {
+        return Err(AppError::Conflict(format!("Bí mật đã có \"{path}\"")));
+    }
     if existing.as_ref().is_some_and(|n| n.is_dir) {
         return Err(AppError::Conflict("đã có thư mục cùng tên".into()));
     }
@@ -1003,14 +1012,14 @@ async fn finish(s: &AppState, c: &Ctx, up: Up, tmp: &std::path::Path) -> Result<
     let row = load_user(&s.db, c.user).await?;
     let mut q = Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64);
     let obj = format!("{OBJ_DIR}/{}", Uuid::new_v4());
-    let mtime = s.store.put_local(c.user, &obj, tmp, up.mtime, &mut q).await?;
-    let stored = (HDR + ct_len(up.size)) as i64;
+    let mtime = s.store.put_local(c.user, &obj, tmp, mtime, &mut q).await?;
+    let stored = (HDR + ct_len(size)) as i64;
     match existing {
         Some(old) => {
             sqlx::query("UPDATE secret_files SET object_key = $2, size = $3, mtime = $4, stored = $5 WHERE id = $1")
                 .bind(old.id)
                 .bind(&obj)
-                .bind(up.size as i64)
+                .bind(size as i64)
                 .bind(mtime)
                 .bind(stored)
                 .execute(&s.db)
@@ -1018,7 +1027,7 @@ async fn finish(s: &AppState, c: &Ctx, up: Up, tmp: &std::path::Path) -> Result<
             drop_objects(&s.db, &s.store, c.user, &[(old.object_key, old.stored)]).await?;
         }
         None => {
-            if let Err(e) = insert(&s.db, c.user, &c.keys, parent, name, false, up.size as i64, mtime, Some(&obj), stored).await {
+            if let Err(e) = insert(&s.db, c.user, &c.keys, parent, name, false, size as i64, mtime, Some(&obj), stored).await {
                 let _ = s.store.op.delete(&s.store.key(c.user, &obj)?).await;
                 return Err(e);
             }
@@ -1031,6 +1040,225 @@ async fn finish(s: &AppState, c: &Ctx, up: Up, tmp: &std::path::Path) -> Result<
         .await?;
     crate::index::add_file(&s.db, c.user, &obj, stored as u64, mtime).await?;
     Ok(StatusCode::CREATED)
+}
+
+/// Mã hoá 1 stream bản rõ ra file staging (chỉ bản mã chạm đĩa).
+async fn encrypt_to_staging<S, E>(s: &AppState, c: &Ctx, mut src: S, size: u64) -> Result<std::path::PathBuf, AppError>
+where
+    S: futures::Stream<Item = Result<Bytes, E>> + Unpin,
+    E: std::fmt::Display,
+{
+    use futures::StreamExt;
+    let (hdr, dek) = new_header(&c.keys.vk, size);
+    let tmp = s.store.stage_path(c.user, &format!("s-{}", Uuid::new_v4()));
+    let io = |e: std::io::Error| AppError::Internal(e.to_string());
+    std::fs::create_dir_all(tmp.parent().unwrap()).map_err(io)?;
+    std::fs::write(&tmp, &hdr).map_err(io)?;
+    let (mut buf, mut block, mut got) = (Vec::<u8>::new(), 0u64, 0u64);
+    let r: Result<(), AppError> = async {
+        while let Some(b) = src.next().await {
+            let b = b.map_err(|e| AppError::Internal(e.to_string()))?;
+            got += b.len() as u64;
+            buf.extend_from_slice(&b);
+            let full = buf.len() / BLOCK as usize * BLOCK as usize;
+            let mut out = Vec::with_capacity(full + 1024);
+            for blk in buf[..full].chunks(BLOCK as usize) {
+                out.extend(enc_block(&dek, &hdr, block, blk));
+                block += 1;
+            }
+            buf.drain(..full);
+            append(&tmp, &out).map_err(io)?;
+        }
+        if !buf.is_empty() {
+            append(&tmp, &enc_block(&dek, &hdr, block, &buf)).map_err(io)?;
+        }
+        if got != size {
+            return Err(AppError::Conflict(format!("đọc được {got}/{size} byte")));
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(e) = r {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(tmp)
+}
+
+#[derive(Deserialize)]
+pub struct XferBody {
+    from: String,
+    to: String,
+    /// true = sao chép (giữ bản gốc), false = di chuyển.
+    #[serde(default)]
+    keep: bool,
+}
+
+/// File thường -> Bí mật. Di chuyển thì xoá hẳn bản gốc (không vào thùng rác thường, để bản rõ không còn lại).
+pub async fn import(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+    Json(b): Json<XferBody>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let c = ctx(&s, &headers, &q).await?;
+    let from = crate::ops::user_path(&b.from)?;
+    let to = clean_path(&b.to)?;
+    if to.is_empty() {
+        return Err(AppError::BadRequest("đích rỗng".into()));
+    }
+    if resolve(&s.db, c.user, &c.keys, &to).await?.is_some() {
+        return Err(AppError::Conflict(format!("Bí mật đã có \"{to}\"")));
+    }
+    let t = crate::ops::tree(&s.db, c.user, &from).await?;
+    let dest = |p: &str| format!("{to}{}", &p[from.len()..]);
+    for d in &t.dirs {
+        ensure_dir(&s.db, c.user, &c.keys, &dest(d)).await?;
+    }
+    for (p, size, m) in &t.files {
+        let key = s.store.key(c.user, p)?;
+        let src = s.store.op.reader_with(&key).chunk(4 * 1024 * 1024).await.map_err(StoreError::from)?;
+        let src = src.into_bytes_stream(0..*size as u64).await.map_err(StoreError::from)?;
+        let tmp = encrypt_to_staging(&s, &c, src, *size as u64).await?;
+        let r = store_encrypted(&s, &c, &dest(p), &tmp, *size as u64, Some(*m), false).await;
+        let _ = tokio::fs::remove_file(&tmp).await;
+        r?;
+    }
+    if !b.keep {
+        let item = crate::ops::trash(&s.db, &s.store, c.user, &from).await?;
+        crate::ops::purge(&s.db, &s.store, c.user, item.id).await?;
+    }
+    Ok(Json(serde_json::json!({ "files": t.files.len() })))
+}
+
+/// Cây con của 1 mục trong vault: (đường dẫn tương đối tính từ mục, node).
+async fn subtree(db: &PgPool, user: Uuid, k: &Keys, root: Node, name: &str) -> Result<Vec<(String, Node)>, AppError> {
+    let mut out = vec![];
+    let mut stack = vec![(name.to_string(), root)];
+    while let Some((p, n)) = stack.pop() {
+        if n.is_dir {
+            let kids: Vec<(Vec<u8>, Uuid, bool, i64, i64, Option<String>, i64)> = sqlx::query_as(
+                "SELECT name_enc, id, is_dir, size, mtime, object_key, stored FROM secret_files WHERE user_id = $1 AND parent_id = $2 AND trashed_at IS NULL",
+            )
+            .bind(user)
+            .bind(n.id)
+            .fetch_all(db)
+            .await?;
+            for (ne, id, is_dir, size, mtime, object_key, stored) in kids {
+                stack.push((format!("{p}/{}", k.dec_name(&ne)), Node { id, is_dir, size, mtime, object_key, stored }));
+            }
+        }
+        out.push((p, n));
+    }
+    Ok(out)
+}
+
+/// Bí mật -> file thường. Di chuyển thì mục gốc vào thùng rác Bí mật (vẫn mã hoá, khôi phục được).
+pub async fn export(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+    Json(b): Json<XferBody>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let c = ctx(&s, &headers, &q).await?;
+    let from = clean_path(&b.from)?;
+    let to = crate::ops::user_path(&b.to)?;
+    let root = resolve(&s.db, c.user, &c.keys, &from).await?.ok_or_else(|| AppError::NotFound("not found".into()))?;
+    if crate::ops::kind(&s.db, c.user, &to).await?.is_some() {
+        return Err(AppError::Conflict("đích đã tồn tại".into()));
+    }
+    crate::ops::check_parents(&s.db, c.user, &to).await?;
+    let root_id = root.id;
+    let items = subtree(&s.db, c.user, &c.keys, root, "").await?;
+    let dest = |rel: &str| format!("{to}{rel}");
+    let mut files = 0;
+    for (rel, n) in &items {
+        let p = dest(rel);
+        if n.is_dir {
+            crate::ops::mkdir(&s.db, c.user, &p).await.or_else(|e| if matches!(e, AppError::Conflict(_)) { Ok(()) } else { Err(e) })?;
+            continue;
+        }
+        let Some(obj) = &n.object_key else { continue };
+        let key = s.store.key(c.user, obj)?;
+        let hdr = s.store.op.read_with(&key).range(0..HDR).await.map_err(StoreError::from)?.to_vec();
+        let dek = parse_header(&c.keys.vk, &hdr, n.size as u64).ok_or_else(|| AppError::Internal("file mã hoá bị hỏng".into()))?;
+        let size = n.size as u64;
+        let tmp = s.store.stage_path(c.user, &format!("x-{}", Uuid::new_v4()));
+        let r: Result<(), AppError> = async {
+            use futures::StreamExt;
+            use tokio::io::AsyncWriteExt;
+            tokio::fs::create_dir_all(tmp.parent().unwrap()).await.map_err(|e| AppError::Internal(e.to_string()))?;
+            let mut f = tokio::fs::File::create(&tmp).await.map_err(|e| AppError::Internal(e.to_string()))?;
+            let mut st = plain_stream(s.store.clone(), key, dek, hdr, size, 0, size);
+            while let Some(b) = st.next().await {
+                f.write_all(&b.map_err(|e| AppError::Internal(e.to_string()))?).await.map_err(|e| AppError::Internal(e.to_string()))?;
+            }
+            f.flush().await.map_err(|e| AppError::Internal(e.to_string()))?;
+            let row = load_user(&s.db, c.user).await?;
+            let mut q = Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64);
+            let mtime = s.store.put_local(c.user, &p, &tmp, Some(n.mtime), &mut q).await?;
+            sqlx::query("UPDATE users SET quota_used = GREATEST(0, quota_used + $1) WHERE id = $2")
+                .bind(q.used_bytes as i64 - row.quota_used.max(0))
+                .bind(c.user)
+                .execute(&s.db)
+                .await?;
+            crate::index::add_file(&s.db, c.user, &p, size, mtime).await?;
+            crate::fulltext::put_from_store(&s.db, &s.store, c.user, &p, size).await;
+            Ok(())
+        }
+        .await;
+        let _ = tokio::fs::remove_file(&tmp).await;
+        r?;
+        files += 1;
+    }
+    if !b.keep {
+        sqlx::query("UPDATE secret_files SET trashed_at = $2 WHERE id = $1").bind(root_id).bind(now()).execute(&s.db).await?;
+    }
+    Ok(Json(serde_json::json!({ "files": files })))
+}
+
+/// Sao chép trong vault: chép nguyên object bản mã (DEK nằm trong header, bọc bằng VK).
+pub async fn copy(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+    Json(b): Json<XferBody>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let c = ctx(&s, &headers, &q).await?;
+    let (from, to) = (clean_path(&b.from)?, clean_path(&b.to)?);
+    if to.is_empty() || to == from || to.starts_with(&format!("{from}/")) {
+        return Err(AppError::BadRequest("không thể sao chép thư mục vào chính nó".into()));
+    }
+    let root = resolve(&s.db, c.user, &c.keys, &from).await?.ok_or_else(|| AppError::NotFound("not found".into()))?;
+    if resolve(&s.db, c.user, &c.keys, &to).await?.is_some() {
+        return Err(AppError::Conflict("đích đã tồn tại".into()));
+    }
+    let items = subtree(&s.db, c.user, &c.keys, root, "").await?;
+    let total: i64 = items.iter().map(|(_, n)| n.stored).sum();
+    let row = load_user(&s.db, c.user).await?;
+    Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64)
+        .can_add(total as u64)
+        .map_err(|e| AppError::Conflict(format!("quota exceeded: {e}")))?;
+    let mut files = 0;
+    let mut items = items;
+    items.sort_by(|a, b| a.0.len().cmp(&b.0.len())); // thư mục cha trước
+    for (rel, n) in &items {
+        let p = format!("{to}{rel}");
+        if n.is_dir {
+            ensure_dir(&s.db, c.user, &c.keys, &p).await?;
+            continue;
+        }
+        let Some(obj) = &n.object_key else { continue };
+        let new_obj = format!("{OBJ_DIR}/{}", Uuid::new_v4());
+        s.store.op.copy(&s.store.key(c.user, obj)?, &s.store.key(c.user, &new_obj)?).await.map_err(StoreError::from)?;
+        let (dir, name) = split(&p);
+        let parent = ensure_dir(&s.db, c.user, &c.keys, dir).await?;
+        insert(&s.db, c.user, &c.keys, parent, name, false, n.size, n.mtime, Some(&new_obj), n.stored).await?;
+        sqlx::query("UPDATE users SET quota_used = quota_used + $2 WHERE id = $1").bind(c.user).bind(n.stored).execute(&s.db).await?;
+        crate::index::add_file(&s.db, c.user, &new_obj, n.stored as u64, n.mtime).await?;
+        files += 1;
+    }
+    Ok(Json(serde_json::json!({ "files": files })))
 }
 
 /// Xoá object + hoàn quota (không cần khoá vault).
@@ -1313,6 +1541,26 @@ mod tests {
         assert_eq!(call("DELETE", format!("/api/secret/trash/{tid}"), t(), None, None).await.0, StatusCode::NO_CONTENT);
         let used: i64 = sqlx::query_scalar("SELECT quota_used FROM users WHERE id = $1").bind(u).fetch_one(&db).await.unwrap();
         assert_eq!(used, 0);
+
+        // sao chép file thường; chuyển vào / sao chép trong / chuyển ra khỏi vault
+        let body: Vec<u8> = (0..150_000u32).map(|i| (i % 97) as u8).collect();
+        let (_, b) = call("POST", "/api/files/uploads".into(), None, js(json!({"path": "n/sub/a.bin", "size": body.len()})), None).await;
+        let id = val(&b)["id"].as_str().unwrap().to_string();
+        call("PUT", format!("/api/files/uploads/{id}?offset=0"), None, Some(body.clone()), None).await;
+        assert_eq!(call("POST", format!("/api/files/uploads/{id}/complete"), None, None, None).await.0, StatusCode::CREATED);
+        assert_eq!(call("POST", "/api/copy".into(), None, js(json!({"from": "n", "to": "n2"})), None).await.0, StatusCode::OK);
+        assert_eq!(call("GET", "/api/files/n2/sub/a.bin".into(), None, None, None).await.1, body);
+        assert_eq!(call("POST", "/api/secret/import".into(), t(), js(json!({"from": "n", "to": "S/n"})), None).await.0, StatusCode::OK);
+        assert_eq!(call("GET", "/api/files/n/sub/a.bin".into(), None, None, None).await.0, StatusCode::NOT_FOUND);
+        let tr: Vec<(i64,)> = sqlx::query_as("SELECT COUNT(*) FROM trash WHERE user_id = $1").bind(u).fetch_all(&db).await.unwrap();
+        assert_eq!(tr[0].0, 0); // bản rõ không nằm lại trong thùng rác thường
+        assert_eq!(call("GET", "/api/secret/files/S/n/sub/a.bin".into(), t(), None, None).await.1, body);
+        assert_eq!(call("POST", "/api/secret/copy".into(), t(), js(json!({"from": "S/n", "to": "S/m"})), None).await.0, StatusCode::OK);
+        assert_eq!(call("GET", "/api/secret/files/S/m/sub/a.bin".into(), t(), None, None).await.1, body);
+        assert_eq!(call("POST", "/api/secret/export".into(), t(), js(json!({"from": "S/m", "to": "out"})), None).await.0, StatusCode::OK);
+        assert_eq!(call("GET", "/api/files/out/sub/a.bin".into(), None, None, None).await.1, body);
+        assert_eq!(call("GET", "/api/secret/files/S/m/sub/a.bin".into(), t(), None, None).await.0, StatusCode::NOT_FOUND);
+        assert_eq!(call("GET", "/api/secret/files/S/n/sub/a.bin".into(), t(), None, None).await.0, StatusCode::OK);
 
         // khoá; sai PIN đếm lần; mở bằng mã khôi phục rồi đặt PIN mới không cần PIN cũ
         call("POST", "/api/secret/lock".into(), t(), None, None).await;

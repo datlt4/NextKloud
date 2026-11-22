@@ -230,6 +230,17 @@ pub async fn move_entry(
     Ok(Json(serde_json::json!({ "files": n })))
 }
 
+/// Sao chép file/thư mục. Trả về số file đã chép.
+pub async fn copy_entry(
+    State(s): State<AppState>,
+    user: AuthUser,
+    Json(b): Json<MoveBody>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let (from, to) = (ops::user_path(&b.from)?, ops::user_path(&b.to)?);
+    let n = ops::copy_path(&s.db, &s.store, user.id, &from, &to).await?;
+    Ok(Json(serde_json::json!({ "files": n })))
+}
+
 pub async fn list_trash(State(s): State<AppState>, user: AuthUser) -> Result<Json<Vec<ops::TrashItem>>, AppError> {
     Ok(Json(ops::list_trash(&s.db, user.id).await?))
 }
