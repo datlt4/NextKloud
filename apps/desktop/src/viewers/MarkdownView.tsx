@@ -301,10 +301,12 @@ export default function MarkdownView(props: {
   };
   // Mục đang đọc = heading cuối cùng đã cuộn qua đỉnh khung xem.
   const onScroll = () => {
-    const hs = host?.querySelectorAll<HTMLElement>(".md-block[data-level]") ?? [];
+    if (!host?.isConnected) return;
+    const hs = host.querySelectorAll<HTMLElement>(".md-block[data-level]");
+    const top = (scroller?.getBoundingClientRect().top ?? 0) + 80;
     let cur = "";
     for (const h of Array.from(hs)) {
-      if (h.getBoundingClientRect().top > 140) break;
+      if (h.getBoundingClientRect().top > top) break;
       cur = h.dataset.anchor ?? "";
     }
     setCurrent(cur || toc()[0]?.anchor || "");
@@ -423,7 +425,7 @@ export default function MarkdownView(props: {
     <ReaderLayout
       r={reader}
       toc={toc()}
-      current={current()}
+      current={current() || toc()[0]?.anchor || ""}
       onJump={jump}
       anchorOf={anchorOf}
       vault={outline() ? { outline: outline()!, path: props.path, onOpen: (p, h) => props.onOpenLink?.("/" + p, h) } : null}
@@ -435,7 +437,7 @@ export default function MarkdownView(props: {
         queueMicrotask(() => {
           scroller = el.closest(".viewer");
           scroller?.addEventListener("scroll", onScroll, { passive: true });
-          onScroll();
+          setTimeout(onScroll, 60); // đợi layout xong mới đo vị trí heading
           if (props.mark) setTimeout(() => jump(props.mark!), 50);
         });
       }}
