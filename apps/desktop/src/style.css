@@ -469,6 +469,16 @@ input { font: inherit; color: var(--text); }
   .nc-body { font-size: 15px; }
 }
 
+/* trang Ghi chú tổng hợp */
+.notes-page { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.np-bar { flex-wrap: wrap; row-gap: 8px; }
+.np-bar .chips { padding: 0; }
+.np-search { flex: 1; min-width: 180px; height: 34px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--input); }
+.np-list { padding: 4px 12px 16px; }
+.np-group { max-width: 860px; margin: 0 auto 18px; }
+.np-file { display: flex; align-items: center; gap: 8px; padding: 6px 4px 8px; position: sticky; top: 0; background: var(--surface); z-index: 1; }
+.np-file b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-dir { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stale { background: var(--warn-bg); border: 1px solid var(--warn-line); padding: 10px 12px; border-radius: 10px; }
 
 /* admin: người dùng */

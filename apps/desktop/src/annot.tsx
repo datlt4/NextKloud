@@ -316,3 +316,95 @@ function Composer(props: { quote?: string; body?: string; onSave: (b: string) =>
     </div>
   );
 }
+
+const whereLabel = (a: Annotation) => (a.anchor.startsWith("p") ? `Trang ${a.anchor.slice(1)}` : `Đoạn ${+a.anchor.slice(1) + 1}`);
+
+/** Trang "Ghi chú": mọi ghi chú của user, gom theo file, lọc theo trạng thái — danh sách việc cần sửa vault. */
+export function NotesPage(props: { onOpen: (path: string, mark: string) => void; onError: (m: string) => void }) {
+  const [all, { mutate, refetch }] = createResource(() => api.allNotes(), { initialValue: [] });
+  const [filter, setFilter] = createSignal<NoteState | "open" | "all">("open");
+  const [q, setQ] = createSignal("");
+  const match = (a: Annotation) => {
+    const f = filter();
+    if (f === "open" ? a.state === "done" : f !== "all" && a.state !== f) return false;
+    const s = q().trim().toLowerCase();
+    return !s || `${a.path} ${a.quote} ${a.body}`.toLowerCase().includes(s);
+  };
+  const groups = createMemo(() => {
+    const m = new Map<string, Annotation[]>();
+    for (const a of all().filter(match)) m.set(a.path, [...(m.get(a.path) ?? []), a]);
+    const byPos = (a: Annotation, b: Annotation) => (+a.anchor.slice(1) || 0) - (+b.anchor.slice(1) || 0);
+    return [...m.entries()].map(([path, l]) => ({ path, list: l.sort(byPos) })).sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }));
+  });
+  const n = (s: NoteState) => all().filter((a) => a.state === s).length;
+  const run = async (f: () => Promise<void>) => {
+    try {
+      await f();
+    } catch (e) {
+      props.onError(errText(e));
+      refetch();
+    }
+  };
+  const setState = (a: Annotation, s: NoteState) =>
+    run(async () => {
+      const u = await api.updateAnnotation(a.id, { state: s });
+      mutate((l) => l.map((x) => (x.id === a.id ? u : x)));
+    });
+  const remove = (a: Annotation) =>
+    confirm("Xoá ghi chú này?") &&
+    run(async () => {
+      await api.removeAnnotation(a.id);
+      mutate((l) => l.filter((x) => x.id !== a.id));
+    });
+  return (
+    <div class="notes-page">
+      <div class="toolbar np-bar">
+        <h2 class="tb-title"><Icon name="note" /> Ghi chú</h2>
+        <div class="chips">
+          <button classList={{ on: filter() === "open" }} onClick={() => setFilter("open")}>Chưa xong {n("todo") + n("doing")}</button>
+          <For each={["todo", "doing", "done"] as NoteState[]}>
+            {(s) => (
+              <button class={`st-${s}`} classList={{ on: filter() === s }} onClick={() => setFilter(s)} title={STATE_UI[s].label}>
+                <Icon name={STATE_UI[s].icon} size={13} /> {n(s)}
+              </button>
+            )}
+          </For>
+          <button classList={{ on: filter() === "all" }} onClick={() => setFilter("all")}>Tất cả {all().length}</button>
+        </div>
+        <input class="np-search" placeholder="Lọc theo file, đoạn trích, nội dung…" value={q()} onInput={(e) => setQ(e.currentTarget.value)} />
+      </div>
+      <div class="scroll np-list">
+        <For each={groups()} fallback={
+          <Show when={!all.loading}>
+            <div class="empty"><Icon name="note" size={48} /><p>{all().length ? "Không có ghi chú khớp bộ lọc" : "Chưa có ghi chú. Mở 1 file .md hoặc .pdf, bôi đen rồi bấm “Ghi chú”."}</p></div>
+          </Show>
+        }>
+          {(g) => (
+            <section class="np-group">
+              <div class="np-file">
+                <Icon name="text" size={16} />
+                <b title={g.path}>{g.path.split("/").pop()}</b>
+                <span class="muted xs np-dir">{g.path.split("/").slice(0, -1).join(" / ")}</span>
+                <span class="rs-count">{g.list.length}</span>
+              </div>
+              <For each={g.list}>
+                {(a) => (
+                  <div class={`note-card st-${a.state}`}>
+                    <div class="nc-head">
+                      <StateButton state={a.state} onChange={(s) => setState(a, s)} />
+                      <button class="nc-where" onClick={() => props.onOpen(a.path, a.anchor)} title="Mở tới vị trí này">{whereLabel(a)} →</button>
+                      <span class="muted xs">{ago(a.updated_at)}</span>
+                      <button class="icon-btn sm" title="Xoá" onClick={() => remove(a)}><Icon name="trash" size={14} /></button>
+                    </div>
+                    <Show when={a.quote}><blockquote class="nc-quote" onClick={() => props.onOpen(a.path, a.anchor)}>{a.quote}</blockquote></Show>
+                    <Show when={a.body}><p class="nc-body">{a.body}</p></Show>
+                  </div>
+                )}
+              </For>
+            </section>
+          )}
+        </For>
+      </div>
+    </div>
+  );
+}

@@ -29,6 +29,7 @@ function ThumbImg(props: { path: string; name: string }) {
   );
 }
 import { MoveDialog, NameDialog, TrashPage, errText, joinPath } from "./fileops";
+import { NotesPage } from "./annot";
 
 type SortKey = "name" | "size" | "modified";
 
@@ -56,7 +57,7 @@ export default function App() {
   const [viewW, setViewW] = createSignal(800);
   const [tileH, setTileH] = createSignal(0);
   const [loading, setLoading] = createSignal(false);
-  const [open, setOpen] = createSignal<{ path: string; name: string; kind: VKind; text?: string; anchor?: string | null } | null>(null);
+  const [open, setOpen] = createSignal<{ path: string; name: string; kind: VKind; text?: string; anchor?: string | null; mark?: string } | null>(null);
   const [query, setQuery] = createSignal("");
   const [sort, setSort] = createSignal<{ key: SortKey; asc: boolean }>({ key: "name", asc: true });
   const [view, setView] = createSignal<"list" | "grid">((localStorage.getItem("nk-view") as "grid") || "list");
@@ -66,7 +67,7 @@ export default function App() {
   const [userMenu, setUserMenu] = createSignal(false);
   const [userMenuUp, setUserMenuUp] = createSignal(false);
   const [showLook, setShowLook] = createSignal(false);
-  const [page, setPage] = createSignal<"files" | "settings" | "trash">("files");
+  const [page, setPage] = createSignal<"files" | "settings" | "trash" | "notes">("files");
   type Dlg = { kind: "mkdir" } | { kind: "rename"; f: Entry } | { kind: "move"; paths: string[] };
   const [dlg, setDlg] = createSignal<Dlg | null>(null);
   const [sel, setSel] = createSignal<Set<string>>(new Set());
@@ -339,6 +340,19 @@ export default function App() {
       if (scrollEl) scrollEl.scrollTop = 0;
       setScrollTop(0);
       fetchSet(prefix(), [0]).catch((e) => fail(e, "Không tải được danh sách file"));
+    }
+  };
+
+  /** Mở file tại 1 vị trí annotation ("b12" đoạn md, "p3" trang pdf), từ trang Ghi chú. */
+  const openAt = async (path: string, mark: string) => {
+    await load(parentOf(path));
+    const name = path.split("/").pop() ?? path;
+    const kind = viewerKind(name);
+    try {
+      if (kind === "markdown") setOpen({ path, name, kind, text: await api.readText(path), mark });
+      else setOpen({ path, name, kind, mark });
+    } catch (e) {
+      fail(e, "Không mở được file");
     }
   };
 
@@ -807,6 +821,9 @@ export default function App() {
                 <button class="nav" classList={{ active: page() === "files" && !prefix() && !open() }} onClick={() => load("")}>
                   <Icon name="home" /> Tất cả file
                 </button>
+                <button class="nav" classList={{ active: page() === "notes" }} onClick={() => { setPage("notes"); setSideOpen(false); }}>
+                  <Icon name="note" /> Ghi chú
+                </button>
                 <button class="nav" classList={{ active: page() === "trash" }} onClick={() => { setPage("trash"); setSideOpen(false); }}>
                   <Icon name="trash" /> Thùng rác
                 </button>
@@ -846,6 +863,9 @@ export default function App() {
                   </div>
                 </Show>
                 <Settings me={me()!} tab={setTab()} onTab={setSetTab} onMe={setMe} onError={setErr} onOpen={(f) => load(f)} />
+              </Show>
+              <Show when={page() === "notes"}>
+                <NotesPage onOpen={openAt} onError={setErr} />
               </Show>
               <Show when={page() === "trash"}>
                 <Show when={err()}>
@@ -934,7 +954,7 @@ export default function App() {
                     <Suspense fallback={<p class="muted">Đang mở…</p>}>
                       <Switch>
                         <Match when={open()!.kind === "markdown"}>
-                          <MarkdownView path={open()!.path} text={open()!.text ?? ""} anchor={open()!.anchor ?? null} onOpenLink={openWikiLink} onError={setErr} />
+                          <MarkdownView path={open()!.path} text={open()!.text ?? ""} anchor={open()!.anchor ?? null} onOpenLink={openWikiLink} onError={setErr} mark={open()!.mark} />
                         </Match>
                         <Match when={open()!.kind === "text"}>
                           <TextView path={open()!.path} />
@@ -949,7 +969,7 @@ export default function App() {
                           <VideoView path={open()!.path} />
                         </Match>
                         <Match when={open()!.kind === "pdf"}>
-                          <PdfView path={open()!.path} onError={setErr} />
+                          <PdfView path={open()!.path} onError={setErr} mark={open()!.mark} />
                         </Match>
                         <Match when={open()!.kind === "zip"}>
                           <ZipView path={open()!.path} />

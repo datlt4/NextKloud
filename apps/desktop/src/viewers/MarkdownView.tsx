@@ -146,6 +146,8 @@ export default function MarkdownView(props: {
   anchor?: string | null;
   onOpenLink?: (target: string, anchor?: string) => void;
   onError?: (m: string) => void;
+  /** Mở sẵn tại vị trí annotation ("b12"). */
+  mark?: string;
 }) {
   const list = createMemo(() => blocks(props.text));
   const reader = createReader(() => props.path, (m) => (props.onError ?? console.error)(m));
@@ -296,6 +298,7 @@ export default function MarkdownView(props: {
           scroller = el.closest(".viewer");
           scroller?.addEventListener("scroll", onScroll, { passive: true });
           onScroll();
+          if (props.mark) setTimeout(() => jump(props.mark!), 50);
         });
       }}
       onClick={onArticleClick}

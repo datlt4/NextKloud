@@ -8,7 +8,7 @@ import { ReaderLayout, STATE_UI, type TocItem, createReader, topState } from "..
 pdfjs.GlobalWorkerOptions.workerPort = new PdfWorker();
 
 /** PDF: render từng trang bằng pdfjs, nút trước/tiếp + zoom. Lazy import nên không phình bundle chính. */
-export default function PdfView(props: { path: string; onError?: (m: string) => void }) {
+export default function PdfView(props: { path: string; onError?: (m: string) => void; mark?: string }) {
   const reader = createReader(() => props.path, (m) => (props.onError ?? console.error)(m));
   const [toc, setToc] = createSignal<TocItem[]>([]);
   const here = () => `p${page()}`;
@@ -45,6 +45,7 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
       doc = await task.promise;
       if (cancelled) return;
       setPages(doc.numPages);
+      if (props.mark) setPage(Math.min(Math.max(1, +props.mark.slice(1) || 1), doc.numPages));
       await render();
       loadOutline(doc).then((t) => !cancelled && setToc(t)).catch(() => {});
     } catch (e: any) {
