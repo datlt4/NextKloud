@@ -77,6 +77,17 @@ Tách toàn bộ chuỗi tiếng Việt ra file dịch (vi, en, ja, zh), lưu l�
 
 1. P0 (mục 1) → 2. Upload/download lớn → 3. Obsidian → 4. Kanban + nhập Deck → 5. Sao lưu (nên chen sớm, ngay sau P0) → 6. Chia sẻ/versions → 7. Desktop/mobile → 8. i18n.
 
+## Quyết định của người dùng (22/11/2026)
+
+- Làm trước: **P0 + Obsidian**. Sau đó Kanban, chia sẻ, v.v.
+- Deck: **không có cột "Done2"** (người dùng nhầm).
+- Vault Obsidian: **không đẩy ngược lên git**. Thay vào đó là mục lục + bookmark + ghi chú (3 trạng thái: chưa làm ⏸ xám, đang làm ▶ vàng, xong ✓ xanh lá) để ghi lại chỗ cần sửa vault sau. PDF có cùng tính năng. Sidebar hiện cố định trên màn rộng; mobile ẩn, mở bằng nút nổi thành bottom sheet. ✅ đã làm (`annot.tsx`, `notes.rs`).
+- Thư mục vault: `Vaults` → **`Obsidian Vaults`** (mặc định mới + tự chuyển thư mục cũ), icon Obsidian tím cho thư mục đó và các vault con. ✅ đã làm.
+- Chia sẻ: **cả link công khai lẫn giữa các user**, như Google Drive.
+- Sao lưu: ra **HDD 1TB trên mini PC** (`/mnt/hdd_1tb/backup/nextkloud`), mỗi đêm 3:00, **giữ 2 bản gần nhất** (bản mới lỗi thì còn bản cũ). ✅ đã làm (`docker/server/backup.sh`, service `backup`).
+- **Không** chuyển thùng rác và lịch sử phiên bản từ Nextcloud. Thùng rác NextKloud tự dọn mục quá `TRASH_DAYS` (mặc định 30), kiểm tra mỗi giờ.
+- **Secret vault** (PIN, ẩn, mã hoá trên đĩa, không chia sẻ): thiết kế ở `SECRET_VAULT.md`, **chờ review**.
+
 ## Câu hỏi cần người dùng trả lời
 
 - **Q1.** Thứ tự trên được chưa? Nhất là: làm Kanban trước hay upload/download lớn trước?
