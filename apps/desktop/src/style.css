@@ -674,8 +674,13 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 .media-wrap audio { max-height: none; margin-top: 12px; }
 .pdf-wrap { display: flex; flex-direction: column; gap: 8px; }
 .pdf-bar { display: flex; align-items: center; gap: 8px; }
-.pdf-page { overflow: auto; display: grid; justify-items: center; }
-.pdf-page canvas { max-width: 100%; border-radius: 8px; box-shadow: var(--shadow); }
+.pdf-bar { flex-wrap: wrap; position: sticky; top: 0; z-index: 2; background: var(--glass); border-radius: 10px; padding: 2px 4px; }
+.pdf-layout { height: 32px; padding: 0 8px; background: var(--input); color: var(--text); border: 1px solid var(--line); border-radius: 8px; font: inherit; font-size: 13px; }
+.pdf-list { display: grid; gap: 14px; }
+.pdf-row { display: flex; justify-content: center; gap: 8px; min-width: 0; }
+.pdf-row.two > .pdf-pg { max-width: calc(50% - 4px); }
+.pdf-pg { scroll-margin-top: 52px; max-width: 100%; flex: none; background: #fff; border-radius: 6px; box-shadow: var(--shadow); overflow: hidden; }
+.pdf-pg canvas { display: block; width: 100%; height: 100%; }
 .epub-wrap { display: flex; flex-direction: column; gap: 8px; height: 100%; }
 .epub-book { height: 70dvh; min-height: 420px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .zip-wrap ul.files { margin-top: 8px; }
