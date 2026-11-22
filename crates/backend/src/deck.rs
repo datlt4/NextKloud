@@ -94,6 +94,24 @@ pub fn propose(b: &DBoard) -> HashMap<i64, i64> {
             out.insert(c.id, *id);
         }
     }
+    // Nhóm "Tên - phần" (>= 2 card) chưa có cha: cha là card tên đúng "Tên", hoặc card duy nhất "Tên ..." (vd "Hành Thư 8000").
+    let mut groups: HashMap<String, Vec<i64>> = HashMap::new();
+    for c in b.cards.iter().filter(|c| !out.contains_key(&c.id) && !big.contains(&c.stack_id)) {
+        if let Some((pre, _)) = norm(&c.title).split_once(" - ") {
+            groups.entry(pre.trim().to_string()).or_default().push(c.id);
+        }
+    }
+    for (pre, kids) in groups.into_iter().filter(|(_, v)| v.len() >= 2) {
+        let exact: Vec<i64> = b.cards.iter().filter(|c| norm(&c.title) == pre).map(|c| c.id).collect();
+        let loose: Vec<i64> = b.cards.iter().filter(|c| { let t = norm(&c.title); t.starts_with(&format!("{pre} ")) && !t.contains(" - ") }).map(|c| c.id).collect();
+        let parent = if exact.len() == 1 { exact[0] } else if exact.is_empty() && loose.len() == 1 { loose[0] } else { continue };
+        if out.contains_key(&parent) {
+            continue; // chỉ 1 cấp
+        }
+        for k in kids {
+            out.insert(k, parent);
+        }
+    }
     out
 }
 
@@ -145,6 +163,8 @@ pub async fn preview(State(s): State<AppState>, user: AuthUser) -> Result<Json<V
             .map(|b| {
                 let prop = propose(b);
                 let big: HashSet<i64> = b.stacks.iter().filter(|s| is(s, "bigtask")).map(|s| s.id).collect();
+                // card làm cha (đề xuất) cũng là "task lớn" để chọn được trong danh sách
+                let heads: HashSet<i64> = prop.values().copied().collect();
                 PBoard {
                     id: b.id,
                     title: b.title.clone(),
@@ -164,7 +184,7 @@ pub async fn preview(State(s): State<AppState>, user: AuthUser) -> Result<Json<V
                     cards: b
                         .cards
                         .iter()
-                        .map(|c| PCard { id: c.id, title: c.title.clone(), stack_id: c.stack_id, big: big.contains(&c.stack_id), done: c.done_at.is_some(), parent: prop.get(&c.id).copied() })
+                        .map(|c| PCard { id: c.id, title: c.title.clone(), stack_id: c.stack_id, big: big.contains(&c.stack_id) || heads.contains(&c.id), done: c.done_at.is_some(), parent: prop.get(&c.id).copied() })
                         .collect(),
                 }
             })
@@ -315,6 +335,13 @@ mod tests {
                 card(14, "HSK 12 khác", 2),
                 card(15, "esp32", 4),
                 card(16, "Viết blog", 3),
+                card(20, "Khải thư 8000", 4),
+                card(21, "Khải thư - p55", 4),
+                card(22, "Khải thư - p56", 3),
+                card(23, "CUDA Mastery", 3),
+                card(24, "CUDA Mastery - Chapter 4", 3),
+                card(25, "CUDA Mastery - Chapter 5", 4),
+                card(26, "Lẻ - một mình", 3),
             ],
         }
     }
@@ -327,6 +354,9 @@ mod tests {
         assert_eq!(p.get(&14), None); // "HSK 12" không phải "HSK 1"
         assert_eq!(p.get(&15), None); // trùng tên, không phải con
         assert_eq!(p.get(&16), None);
+        assert_eq!((p.get(&21), p.get(&22)), (Some(&20), Some(&20))); // cha "Khải thư 8000"
+        assert_eq!((p.get(&24), p.get(&25)), (Some(&23), Some(&23))); // cha đúng tên "CUDA Mastery"
+        assert_eq!(p.get(&26), None); // nhóm 1 card
     }
 
     #[tokio::test]
@@ -336,7 +366,7 @@ mod tests {
         b.cards[5].done_at = Some(99);
         b.cards[6].attachments = vec!["Deck/a.pdf".into()];
         let r = import(&db, u, &b, &Apply { board_id: 3, parents: HashMap::from([(16, Some(10)), (13, None)]), skip_stacks: vec![] }).await.unwrap();
-        assert_eq!((r.cards, r.subtasks), (7, 2)); // 12 -> HSK 1, 16 -> HSK 1 (sửa tay), 13 bỏ cha
+        assert_eq!((r.cards, r.subtasks), (14, 6)); // 12, 16 (sửa tay) -> HSK 1; 13 bỏ cha; 21,22 -> Khải thư 8000; 24,25 -> CUDA Mastery
         let att: Vec<String> = sqlx::query_scalar("SELECT attachments FROM cards WHERE board_id = $1 AND title = 'Viết blog'").bind(r.board).fetch_one(&db).await.unwrap();
         assert_eq!(att, vec!["Deck/a.pdf".to_string()]);
         let cols: Vec<(String, bool)> = sqlx::query_as("SELECT title, is_done FROM board_columns WHERE board_id = $1 ORDER BY position").bind(r.board).fetch_all(&db).await.unwrap();
