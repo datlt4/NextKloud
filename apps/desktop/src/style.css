@@ -479,6 +479,34 @@ input { font: inherit; color: var(--text); }
 .np-file { display: flex; align-items: center; gap: 8px; padding: 6px 4px 8px; position: sticky; top: 0; background: var(--surface); z-index: 1; }
 .np-file b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .np-dir { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Obsidian: callout, frontmatter, tag, công thức */
+/* khung có nền (callout, trích dẫn) đứng cạnh nút loa thay vì chui dưới nó */
+.md-content > .callout, .md-content > blockquote { display: flow-root; }
+.md-content > blockquote { margin-top: 0; }
+.callout { --c: 59, 130, 246; margin: 10px 0; padding: 10px 14px; border-radius: 10px; border-left: 4px solid rgb(var(--c)); background: rgba(var(--c), .08); }
+.callout-title { display: flex; align-items: center; gap: 6px; font-weight: 700; color: rgb(var(--c)); }
+summary.callout-title { cursor: pointer; list-style: none; }
+summary.callout-title::before { content: "▸"; transition: transform .15s; }
+details[open] > summary.callout-title::before { transform: rotate(90deg); }
+.callout-body > :first-child { margin-top: 6px; }
+.callout-body > :last-child { margin-bottom: 0; }
+.callout[data-callout="tip"], .callout[data-callout="hint"], .callout[data-callout="important"] { --c: 8, 145, 178; }
+.callout[data-callout="success"], .callout[data-callout="check"], .callout[data-callout="done"] { --c: 22, 163, 74; }
+.callout[data-callout="question"], .callout[data-callout="help"], .callout[data-callout="faq"] { --c: 202, 138, 4; }
+.callout[data-callout="warning"], .callout[data-callout="caution"], .callout[data-callout="attention"] { --c: 234, 88, 12; }
+.callout[data-callout="failure"], .callout[data-callout="fail"], .callout[data-callout="missing"], .callout[data-callout="danger"], .callout[data-callout="error"], .callout[data-callout="bug"] { --c: 220, 38, 38; }
+.callout[data-callout="example"] { --c: 124, 58, 237; }
+.callout[data-callout="quote"], .callout[data-callout="cite"] { --c: 120, 113, 108; }
+.callout[data-callout="abstract"], .callout[data-callout="summary"], .callout[data-callout="tldr"] { --c: 13, 148, 136; }
+.frontmatter { display: grid; gap: 2px; margin: 0 0 14px; padding: 8px 12px; border-radius: 10px; background: var(--hover); font-size: 13px; }
+.fm-row { display: grid; grid-template-columns: minmax(80px, max-content) 1fr; gap: 12px; }
+.fm-k { color: var(--muted); font-weight: 600; }
+.fm-v { overflow-wrap: anywhere; }
+.md-tag { display: inline-block; padding: 0 7px; border-radius: 10px; background: rgba(124, 58, 237, .12); color: #7c3aed; font-size: .88em; line-height: 1.6; }
+.math-block { margin: 10px 0; overflow-x: auto; overflow-y: hidden; text-align: center; }
+.math-inline { white-space: nowrap; }
+.math-block:not([data-done]), .math-inline:not([data-done]) { font-family: ui-monospace, monospace; font-size: .9em; color: var(--muted); }
+
 .stale { background: var(--warn-bg); border: 1px solid var(--warn-line); padding: 10px 12px; border-radius: 10px; }
 
 /* admin: người dùng */

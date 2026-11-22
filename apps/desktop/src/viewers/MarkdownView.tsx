@@ -16,10 +16,75 @@ export interface Block {
 function escapeHtml(s: string) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
+const escAttr = (s: string) => escapeHtml(s).replace(/"/g, "&quot;");
+
+// Công thức $...$ / $$...$$: giữ nguyên TeX trong data-tex (marked không được đụng vào _ và *), KaTeX render sau (lazy).
+marked.use({
+  extensions: [
+    {
+      name: "mathBlock",
+      level: "block",
+      start: (src: string) => src.match(/\$\$/)?.index,
+      tokenizer(src: string) {
+        const m = /^\$\$([\s\S]+?)\$\$[^\n]*(?:\n|$)/.exec(src);
+        if (m) return { type: "mathBlock", raw: m[0], text: m[1].trim() };
+      },
+      renderer: (t: any) => `<div class="math-block" data-tex="${escAttr(t.text)}">${escapeHtml(t.text)}</div>`,
+    },
+    {
+      name: "mathInline",
+      level: "inline",
+      start: (src: string) => src.match(/\$/)?.index,
+      tokenizer(src: string) {
+        const m = /^\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/.exec(src);
+        if (m) return { type: "mathInline", raw: m[0], text: m[1] };
+      },
+      renderer: (t: any) => `<span class="math-inline" data-tex="${escAttr(t.text)}">${escapeHtml(t.text)}</span>`,
+    },
+  ],
+});
+
+/** Frontmatter YAML đầu file Obsidian -> bảng thuộc tính nhỏ (không đọc TTS). */
+function frontmatter(md: string): { html: string; rest: string } | null {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(md);
+  if (!m) return null;
+  const rows = m[1]
+    .split(/\r?\n/)
+    .filter((l) => l.trim())
+    .map((l) => {
+      const i = l.indexOf(":");
+      return i > 0 && !/^\s/.test(l)
+        ? `<div class="fm-row"><span class="fm-k">${escapeHtml(l.slice(0, i))}</span><span class="fm-v">${escapeHtml(l.slice(i + 1).trim())}</span></div>`
+        : `<div class="fm-row"><span class="fm-k"></span><span class="fm-v">${escapeHtml(l.trim())}</span></div>`;
+    })
+    .join("");
+  return { html: `<div class="frontmatter">${rows}</div>`, rest: md.slice(m[0].length) };
+}
+
+/** Callout Obsidian: > [!type]± Tiêu đề. "-" = thu gọn sẵn, "+" = mở sẵn (dùng <details>). */
+function callout(raw: string): { html: string; text: string } | null {
+  const lines = raw.split("\n");
+  const m = /^\s*>\s*\[!([\w-]+)\]([+-]?)[ \t]*(.*)$/.exec(lines[0]);
+  if (!m) return null;
+  const type = m[1].toLowerCase();
+  const title = m[3].trim() || type.charAt(0).toUpperCase() + type.slice(1);
+  const body = lines.slice(1).map((l) => l.replace(/^\s*> ?/, "")).join("\n");
+  const inner = `<div class="callout-body">${linkifyWiki(marked.parse(body) as string)}</div>`;
+  const head = linkifyWiki(marked.parseInline(title) as string);
+  const html = m[2]
+    ? `<details class="callout" data-callout="${escAttr(type)}"${m[2] === "+" ? " open" : ""}><summary class="callout-title">${head}</summary>${inner}</details>`
+    : `<div class="callout" data-callout="${escAttr(type)}"><div class="callout-title">${head}</div>${inner}</div>`;
+  return { html, text: `${title}. ${body}` };
+}
 
 /** Tách md thành block đọc được. Code fence + math ($$/$$...$$) -> skip (không có nút voice). */
 export function blocks(md: string): Block[] {
   const out: Block[] = [];
+  const fm = frontmatter(md);
+  if (fm) {
+    out.push({ kind: "skip", html: fm.html, text: "" });
+    md = fm.rest;
+  }
   for (const t of marked.lexer(md)) {
     if (t.type === "space") continue;
     switch (t.type) {
@@ -28,17 +93,20 @@ export function blocks(md: string): Block[] {
         break;
       case "heading":
       case "paragraph":
-        if (/^\s*\$\$[\s\S]*\$\$\s*$/.test(t.raw) || /^\s*\$[^$]+\$\s*$/.test(t.raw)) {
-          out.push({ kind: "skip", html: `<pre class="math">${escapeHtml(t.raw)}</pre>`, text: "" });
+        if (/^\s*\$[^$]+\$\s*$/.test(t.raw)) {
+          // đoạn chỉ có 1 công thức: không có gì để đọc
+          out.push({ kind: "skip", html: marked.parse(t.raw) as string, text: "" });
         } else {
           const h = t.type === "heading" ? { level: t.depth as number, label: stripMd(t.text ?? "").replace(/[*_`]/g, "") } : {};
           out.push({ kind: "speak", html: linkifyWiki(marked.parse(t.raw) as string), text: t.text ?? t.raw, ...h });
         }
         break;
-      case "blockquote":
+      case "blockquote": {
         // annotation/callout của Anh cũng cần TTS -> speak
-        out.push({ kind: "speak", html: linkifyWiki(marked.parse(t.raw) as string), text: stripMd(t.raw) });
+        const c = callout(t.raw);
+        out.push(c ? { kind: "speak", ...c } : { kind: "speak", html: linkifyWiki(marked.parse(t.raw) as string), text: stripMd(t.raw) });
         break;
+      }
       case "list":
         for (const item of t.items) {
           out.push({ kind: "speak", html: linkifyWiki(marked.parse(item.text) as string), text: item.text });
@@ -81,6 +149,10 @@ export function linkifyWiki(html: string): string {
         const label = escapeHtml(a !== undefined && a !== "" ? a : displayOf(target, h));
         return `<a href="#" class="wiki-link" data-wiki="${enc}"${anc}>${label}</a>`;
       });
+      // 4) #tag Obsidian (chỉ trong chữ, không trong thuộc tính HTML)
+      p = p.replace(/(^|>)([^<]*)/g, (_m, gt: string, text: string) =>
+        gt + text.replace(/(^|[\s(])#([\p{L}_][\p{L}\p{N}_/-]*)/gu, (_x, pre: string, tag: string) => `${pre}<span class="md-tag">#${tag}</span>`),
+      );
       return p;
     })
     .join("");
@@ -271,7 +343,17 @@ export default function MarkdownView(props: {
         img.alt = raw;
       });
     });
-    // 2) cuộn tới heading nếu mở link có #section
+    // 2) công thức: chỉ tải KaTeX khi bài có công thức
+    const maths = host?.querySelectorAll<HTMLElement>("[data-tex]:not([data-done])") ?? [];
+    if (maths.length) {
+      Promise.all([import("katex"), import("katex/dist/katex.min.css")]).then(([{ default: katex }]) => {
+        maths.forEach((el) => {
+          katex.render(el.dataset.tex ?? "", el, { displayMode: el.classList.contains("math-block"), throwOnError: false });
+          el.dataset.done = "1";
+        });
+      });
+    }
+    // 3) cuộn tới heading nếu mở link có #section
     if (props.anchor) {
       const needle = props.anchor.toLowerCase().replace(/[-_]+/g, " ");
       const hs = host?.querySelectorAll("h1,h2,h3,h4,h5,h6") ?? [];
@@ -358,6 +440,8 @@ export default function MarkdownView(props: {
 function stripForSpeech(t: string): string {
   // dùng chung logic stripMd nhưng giữ nguyên text hiển thị cho TTS
   return t
+    .replace(/\$\$[\s\S]*?\$\$/g, " ")
+    .replace(/\$[^$\n]+\$/g, " ")
     .replace(/!\[\[[^\]]*\]\]/g, " ")
     .replace(/\[\[([^\]|#\]]+)(?:#[^\]|]*)?(?:\|([^\]]*))?\]\]/g, (_m, tt: string, a: string | undefined) => a ?? tt);
 }

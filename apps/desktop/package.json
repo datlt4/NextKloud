@@ -12,6 +12,7 @@
     "@excalidraw/excalidraw": "^0.17.6",
     "@tanstack/solid-virtual": "^3.10.0",
     "epubjs": "^0.3.93",
+    "katex": "^0.19.1",
     "marked": "^18.2.1",
     "pdfjs-dist": "^6.5.438",
     "react": "^18.3.1",
