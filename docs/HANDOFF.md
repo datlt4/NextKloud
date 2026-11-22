@@ -311,6 +311,10 @@ git_repos(id, user_id → users CASCADE, url, branch, folder, ssh_key, ssh_pub, 
 - **Sửa lỗi** (`869fdfb`): 9.1 chặn ghi vào `.nextkloud` làm hỏng lưu giao diện/ảnh nền; giờ cho phép riêng `settings.json` và `background.webp` (`ops::upload_path`).
 - **Trình đọc (22/11):** sidebar mục lục + bookmark + ghi chú 3 trạng thái cho Markdown và PDF (`annot.tsx`, `notes.rs`, migration 0007); tải file trực tiếp bằng token ngắn hạn; quota upload cộng phần chênh; `.whiteboard` mở bằng Excalidraw; thư mục `Obsidian Vaults` (đã chuyển 14.261 mục của datlt4 từ `Vaults`, mất 7 phút); nút loa ngang dòng đầu.
 - **Sao lưu** (`docker/server/backup.sh`, service `backup`): 3:00 mỗi đêm, `pg_dump -Fc` + `rclone sync` toàn bộ bucket ra `/mnt/hdd_1tb/backup/nextkloud/<ngày_giờ>/` (file thường, đọc được không cần RustFS), hardlink với bản trước nên chỉ tốn phần thay đổi, giữ 2 bản. Khôi phục: `pg_restore -d nextkloud db.dump` + `rclone copy files/ nk:nextkloud`. Bản sao lưu **chưa mã hoá** và có chứa SSH key của repo git (trong DB).
+- **Cài app mobile qua IPA Resign Dashboard** (máy Mac `mabu-wg`, `~/ipa-resign/jobs/`):
+  - `nextkloud-android.json`: tải `nextkloud_android_*.apk` từ GitHub release, `adb install` (package `com.nextkloud.app`) khi Samsung G885F cắm vào.
+  - `nextkloud.json` + `~/nextkloud-ios/` (script, helper Xcode project, launchd `com.datlt4.nextkloud-resign` mỗi 6 giờ): ký lại `nextkloud_ios_*_unsigned.ipa` với bundle `com.datlt4.nextkloud` bằng Apple ID miễn phí (profile 7 ngày).
+  - Apple ID miễn phí chỉ cho 3 app tự ký: đã **tắt** (không xoá) job Kellyfin iOS và gỡ app Kellyfin để lấy slot. Ký qua SSH lỗi `errSecInternalComponent` (keychain khoá): phải chạy qua launchd (`launchctl kickstart gui/$UID/com.datlt4.nextkloud-resign`).
 - **Hồ sơ & Cài đặt:** `Settings.tsx` có các tab Hồ sơ (ảnh đại diện, tên hiển thị, dung lượng), Mật khẩu, Giao diện, và cho admin: Người dùng, Hệ thống (thống kê + nút dựng lại chỉ mục). Menu user mới; header và danh sách user hiện ảnh đại diện.
 
 ## 9. Backlog chi tiết
