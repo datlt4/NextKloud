@@ -2,11 +2,15 @@ import { marked } from "marked";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { api, hashText, speak } from "../api";
 import { Icon } from "../icons";
+import { ReaderLayout, STATE_UI, type TocItem, createReader, topState } from "../annot";
 
 export interface Block {
   kind: "speak" | "skip";
   html: string;
   text: string;
+  /** Heading: cấp (1-6) + chữ, dùng cho mục lục. */
+  level?: number;
+  label?: string;
 }
 
 function escapeHtml(s: string) {
@@ -27,7 +31,8 @@ export function blocks(md: string): Block[] {
         if (/^\s*\$\$[\s\S]*\$\$\s*$/.test(t.raw) || /^\s*\$[^$]+\$\s*$/.test(t.raw)) {
           out.push({ kind: "skip", html: `<pre class="math">${escapeHtml(t.raw)}</pre>`, text: "" });
         } else {
-          out.push({ kind: "speak", html: linkifyWiki(marked.parse(t.raw) as string), text: t.text ?? t.raw });
+          const h = t.type === "heading" ? { level: t.depth as number, label: stripMd(t.text ?? "").replace(/[*_`]/g, "") } : {};
+          out.push({ kind: "speak", html: linkifyWiki(marked.parse(t.raw) as string), text: t.text ?? t.raw, ...h });
         }
         break;
       case "blockquote":
@@ -135,15 +140,62 @@ function VoiceButton(props: { text: string; onPlay: () => void }) {
   );
 }
 
-export default function MarkdownView(props: { path: string; text: string; anchor?: string | null; onOpenLink?: (target: string, anchor?: string) => void }) {
+export default function MarkdownView(props: {
+  path: string;
+  text: string;
+  anchor?: string | null;
+  onOpenLink?: (target: string, anchor?: string) => void;
+  onError?: (m: string) => void;
+}) {
   const list = createMemo(() => blocks(props.text));
+  const reader = createReader(() => props.path, (m) => (props.onError ?? console.error)(m));
+  const plain = createMemo(() => list().map((b) => b.html.replace(/<[^>]+>/g, "").replace(/\s+/g, " ")));
+  // Annotation -> block: ưu tiên đoạn chứa đúng câu đã trích (bài có thể đã sửa), không thì theo số thứ tự.
+  const blockOf = (anchor: string, quote: string) => {
+    const i = +anchor.slice(1) || 0;
+    const q = quote.replace(/\s+/g, " ").trim().slice(0, 80);
+    if (!q || plain()[i]?.includes(q)) return i;
+    const j = plain().findIndex((t) => t.includes(q));
+    return j >= 0 ? j : i;
+  };
+  const byBlock = createMemo(() => {
+    const m = new Map<number, typeof reader.items extends () => infer T ? T : never>();
+    for (const a of reader.items()) {
+      const i = blockOf(a.anchor, a.quote);
+      m.set(i, [...(m.get(i) ?? []), a]);
+    }
+    return m;
+  });
+  const toc = createMemo<TocItem[]>(() =>
+    list().flatMap((b, i) => (b.level ? [{ anchor: `b${i}`, label: b.label || "…", level: b.level }] : [])),
+  );
+  const [current, setCurrent] = createSignal("");
+  const jump = (anchor: string) => {
+    const el = host?.querySelector<HTMLElement>(`[data-anchor="${anchor}"]`);
+    if (!el) return;
+    el.scrollIntoView({ block: "start", behavior: "smooth" });
+    el.classList.add("flash");
+    setTimeout(() => el.classList.remove("flash"), 1400);
+  };
+  // Mục đang đọc = heading cuối cùng đã cuộn qua đỉnh khung xem.
+  const onScroll = () => {
+    const hs = host?.querySelectorAll<HTMLElement>(".md-block[data-level]") ?? [];
+    let cur = "";
+    for (const h of Array.from(hs)) {
+      if (h.getBoundingClientRect().top > 140) break;
+      cur = h.dataset.anchor ?? "";
+    }
+    setCurrent(cur || toc()[0]?.anchor || "");
+  };
+  let scroller: HTMLElement | null = null;
+  onCleanup(() => scroller?.removeEventListener("scroll", onScroll));
   // Stale: hash lúc mở vs hash lúc ấn "đọc cả bài".
   const [builtHash, setBuiltHash] = createSignal<string | null>(null);
   const [playingAll, setPlayingAll] = createSignal(false);
   const [prepping, setPrepping] = createSignal<[number, number] | null>(null);
   const curHash = createMemo(() => hashText(props.text));
   const stale = () => builtHash() !== null && builtHash() !== curHash();
-  let host!: HTMLElement;
+  let host: HTMLElement | undefined;
   const dirOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 
   const readAll = async () => {
@@ -230,8 +282,24 @@ export default function MarkdownView(props: { path: string; text: string; anchor
     }
   });
 
+  const anchorOf = (n: Node) => {
+    const el = (n instanceof Element ? n : n.parentElement)?.closest<HTMLElement>(".md-block");
+    return el?.dataset.anchor ?? null;
+  };
   return (
-    <article class="md-body" ref={host!} onClick={onArticleClick}>
+    <ReaderLayout r={reader} toc={toc()} current={current()} onJump={jump} anchorOf={anchorOf}>
+    <article
+      class="md-body"
+      ref={(el) => {
+        host = el;
+        queueMicrotask(() => {
+          scroller = el.closest(".viewer");
+          scroller?.addEventListener("scroll", onScroll, { passive: true });
+          onScroll();
+        });
+      }}
+      onClick={onArticleClick}
+    >
       <div class="md-bar">
         <b>{props.path}</b>
         <button onClick={readAll} disabled={playingAll()}>
@@ -245,16 +313,42 @@ export default function MarkdownView(props: { path: string; text: string; anchor
         <p class="stale">⚠️ Bài đã sửa sau khi bấm đọc — âm thanh đã cũ, bấm "Đọc cả bài" lại để render mới.</p>
       </Show>
       <For each={list()}>
-        {(b) => (
-          <div class="md-block">
-            <Show when={b.kind === "speak"}>
-              <VoiceButton text={stripForSpeech(b.text)} onPlay={() => setBuiltHash(curHash())} />
-            </Show>
-            <div class="md-content" innerHTML={b.html} />
-          </div>
-        )}
+        {(b, i) => {
+          const anns = () => byBlock().get(i()) ?? [];
+          const bm = () => anns().find((a) => a.kind === "bookmark");
+          const st = () => topState(anns());
+          const quote = () => plain()[i()].slice(0, 160);
+          return (
+            <div class="md-block" data-anchor={`b${i()}`} data-level={b.level} classList={{ [`has-${st()}`]: !!st() }}>
+              <Show when={b.kind === "speak"}>
+                <VoiceButton text={stripForSpeech(b.text)} onPlay={() => setBuiltHash(curHash())} />
+              </Show>
+              <div class="md-content" innerHTML={b.html} />
+              <div class="md-rail">
+                <Show when={bm()}>
+                  <button class="mk mk-bm" title="Bỏ bookmark" onClick={() => reader.toggleBookmark(`b${i()}`, "")}><Icon name="bookmark" size={14} /></button>
+                </Show>
+                <Show when={st()}>
+                  {(s) => (
+                    <button class={`mk mk-note st-${s()}`} title="Xem ghi chú" onClick={() => reader.showNotes(anns().find((a) => a.kind === "note")!.id)}>
+                      <Icon name={STATE_UI[s()].icon} size={12} />
+                      <Show when={anns().filter((a) => a.kind === "note").length > 1}>{anns().filter((a) => a.kind === "note").length}</Show>
+                    </button>
+                  )}
+                </Show>
+                <span class="md-tools">
+                <Show when={!bm()}>
+                  <button title="Bookmark đoạn này" onClick={() => reader.toggleBookmark(`b${i()}`, quote())}><Icon name="bookmark" size={14} /></button>
+                </Show>
+                <button title="Ghi chú cho đoạn này" onClick={() => reader.startNote(`b${i()}`, quote())}><Icon name="note" size={14} /></button>
+                </span>
+              </div>
+            </div>
+          );
+        }}
       </For>
     </article>
+    </ReaderLayout>
   );
 }
 

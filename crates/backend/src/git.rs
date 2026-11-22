@@ -385,6 +385,27 @@ pub async fn due(db: &PgPool) -> Result<Vec<Uuid>, sqlx::Error> {
     Ok(rows.into_iter().map(|r| r.0).collect())
 }
 
+/// Thư mục mặc định chứa các vault mirror.
+pub const VAULTS: &str = "Obsidian Vaults";
+
+/// Một lần: đổi thư mục cũ "Vaults" (mặc định trước đây) thành "Obsidian Vaults" cho user có repo nằm trong đó.
+pub async fn migrate_vaults_folder(db: &PgPool, store: &Store) -> Result<(), AppError> {
+    let users: Vec<(Uuid,)> = sqlx::query_as("SELECT DISTINCT user_id FROM git_repos WHERE folder LIKE 'Vaults/%'").fetch_all(db).await?;
+    for (u,) in users {
+        let has = |p: &'static str| sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM files WHERE user_id = $1 AND path = $2").bind(u).bind(p).fetch_one(db);
+        if has("Vaults").await?.0 == 1 && has(VAULTS).await?.0 == 0 {
+            ops::move_path(db, store, u, "Vaults", VAULTS).await?;
+        }
+        sqlx::query("UPDATE git_repos SET folder = $2 || substr(folder, 7) WHERE user_id = $1 AND folder LIKE 'Vaults/%'")
+            .bind(u)
+            .bind(VAULTS)
+            .execute(db)
+            .await?;
+        tracing::info!("git: đổi Vaults -> {VAULTS} cho user {u}");
+    }
+    Ok(())
+}
+
 /// Server vừa khởi động: sync đang dở coi như lỗi để chạy lại.
 pub async fn reset_stuck(db: &PgPool) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE git_repos SET state = 'error', last_error = 'bị ngắt do server khởi động lại' WHERE state = 'syncing'")
@@ -442,7 +463,7 @@ pub async fn create(State(s): State<AppState>, user: AuthUser, Json(b): Json<Cre
     let branch = b.branch.trim().to_string();
     check_url(&url).map_err(AppError::BadRequest)?;
     check_branch(&branch).map_err(AppError::BadRequest)?;
-    let folder = ops::user_path(b.folder.as_deref().filter(|f| !f.trim().is_empty()).unwrap_or(&format!("Vaults/{}", repo_name(&url))))?;
+    let folder = ops::user_path(b.folder.as_deref().filter(|f| !f.trim().is_empty()).unwrap_or(&format!("{VAULTS}/{}", repo_name(&url))))?;
     let interval = b.interval_h.unwrap_or(8).clamp(1, 24 * 7);
     // 2 repo không được ghi chồng lên nhau (so từng segment trong Rust,
     // không dùng LIKE để khỏi dính wildcard %/_ trong tên thư mục).
@@ -736,5 +757,10 @@ mod tests {
         assert_eq!(r.state, "error");
         assert!(r.last_error.is_some());
         assert!(matches!(begin(&db, Uuid::new_v4(), Some(u)).await, Err(AppError::NotFound(_))));
+
+        // đổi thư mục cũ "Vaults" -> "Obsidian Vaults", cập nhật luôn repo
+        migrate_vaults_folder(&db, &s).await.unwrap();
+        assert_eq!(names("Obsidian Vaults/v").await, [("d".to_string(), 0), ("c.md".to_string(), 1)]);
+        assert_eq!(get(&db, id, u).await.unwrap().folder, "Obsidian Vaults/v");
     }
 }

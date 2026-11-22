@@ -462,12 +462,10 @@ export default function App() {
 
   const download = async (path: string, name: string) => {
     try {
-      const url = await api.downloadUrl(path);
       const a = document.createElement("a");
-      a.href = url;
+      a.href = await api.directDownloadUrl(path);
       a.download = name;
       a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
     } catch (e) {
       fail(e, "Không tải được file");
     }
@@ -936,7 +934,7 @@ export default function App() {
                     <Suspense fallback={<p class="muted">Đang mở…</p>}>
                       <Switch>
                         <Match when={open()!.kind === "markdown"}>
-                          <MarkdownView path={open()!.path} text={open()!.text ?? ""} anchor={open()!.anchor ?? null} onOpenLink={openWikiLink} />
+                          <MarkdownView path={open()!.path} text={open()!.text ?? ""} anchor={open()!.anchor ?? null} onOpenLink={openWikiLink} onError={setErr} />
                         </Match>
                         <Match when={open()!.kind === "text"}>
                           <TextView path={open()!.path} />
@@ -951,7 +949,7 @@ export default function App() {
                           <VideoView path={open()!.path} />
                         </Match>
                         <Match when={open()!.kind === "pdf"}>
-                          <PdfView path={open()!.path} />
+                          <PdfView path={open()!.path} onError={setErr} />
                         </Match>
                         <Match when={open()!.kind === "zip"}>
                           <ZipView path={open()!.path} />
@@ -1003,7 +1001,7 @@ export default function App() {
                           return (
                             <Show when={entryAt(i())} fallback={<div class="row vrow skel" style={pos()}><span class="sk" /></div>}>
                               {(f) => {
-                                const k = () => kindOf(f().name, f().is_dir);
+                                const k = () => kindOf(f().name, f().is_dir, f().path);
                                 return (
                                   <div
                                     class="row vrow"
@@ -1056,7 +1054,7 @@ export default function App() {
                               {(i) => (
                                 <Show when={entryAt(i())} fallback={<div class="tile skel"><div class="tile-art" /></div>}>
                                   {(f) => {
-                                    const k = () => kindOf(f().name, f().is_dir);
+                                    const k = () => kindOf(f().name, f().is_dir, f().path);
                                     return (
                                       <div
                                         class="tile"

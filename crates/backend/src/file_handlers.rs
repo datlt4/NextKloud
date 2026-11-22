@@ -87,9 +87,21 @@ pub async fn download(
     Path(path): Path<String>,
     Query(q): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Response, AppError> {
-    let user = crate::thumb::auth_opt(&headers, &q, &s)
-        .await
-        .ok_or_else(|| AppError::Auth("missing token".into()))?;
+    // ?dl=<token tải 1 file> (link tải trực tiếp) hoặc đăng nhập thường.
+    let dl = match q.get("dl") {
+        Some(t) => {
+            let c = crate::auth::verify_dl_token(t, &s.dec).map_err(AppError::Auth)?;
+            if clean_path(&c.path)? != clean_path(&path)? {
+                return Err(AppError::Forbidden("token không dành cho file này".into()));
+            }
+            Some(c.sub)
+        }
+        None => None,
+    };
+    let user = match dl {
+        Some(id) => crate::state::AuthUser { id, admin: false },
+        None => crate::thumb::auth_opt(&headers, &q, &s).await.ok_or_else(|| AppError::Auth("missing token".into()))?,
+    };
     let meta = s.store.stat(user.id, &path).await?;
     if meta.is_dir() {
         return Err(AppError::BadRequest("not a file (use ?prefix= to list)".into()));
@@ -126,7 +138,33 @@ pub async fn download(
     if status == StatusCode::PARTIAL_CONTENT {
         res = res.header(header::CONTENT_RANGE, format!("bytes {start}-{}/{size}", end - 1));
     }
+    if dl.is_some() {
+        let name = path.rsplit('/').next().unwrap_or("file");
+        res = res.header(header::CONTENT_DISPOSITION, format!("attachment; filename*=UTF-8''{}", pct(name)));
+    }
     Ok(res.body(Body::from_stream(stream)).unwrap())
+}
+
+/// Percent-encode cho `filename*` (RFC 5987): tên tiếng Việt/khoảng trắng vẫn đúng.
+fn pct(s: &str) -> String {
+    s.bytes()
+        .map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .collect()
+}
+
+#[derive(Deserialize)]
+pub struct DlBody {
+    pub path: String,
+}
+
+/// Cấp token tải 1 file (10 phút) để trình duyệt tự stream xuống đĩa, không qua RAM của tab.
+pub async fn dl_token(State(s): State<AppState>, user: AuthUser, Json(b): Json<DlBody>) -> Result<Json<serde_json::Value>, AppError> {
+    let p = clean_path(&b.path)?;
+    if s.store.stat(user.id, &p).await?.is_dir() {
+        return Err(AppError::BadRequest("not a file".into()));
+    }
+    let t = crate::auth::create_dl_token(user.id, &p, &s.enc).map_err(AppError::Internal)?;
+    Ok(Json(serde_json::json!({ "token": t })))
 }
 
 /// Xoá = chuyển vào thùng rác (file hoặc cả thư mục).
@@ -271,8 +309,9 @@ pub async fn complete_upload(
         let _ = std::fs::remove_file(s.store.stage_path(user.id, &id));
     }
     let mtime = r?;
-    sqlx::query("UPDATE users SET quota_used = $1 WHERE id = $2")
-        .bind(q.used_bytes as i64)
+    // Cộng phần chênh (file mới, hoặc chênh khi ghi đè), không ghi đè giá trị: upload song song không lệch.
+    sqlx::query("UPDATE users SET quota_used = GREATEST(0, quota_used + $1) WHERE id = $2")
+        .bind(q.used_bytes as i64 - row.quota_used.max(0))
         .bind(user.id)
         .execute(&s.db)
         .await?;
@@ -283,6 +322,11 @@ pub async fn complete_upload(
 #[cfg(test)]
 mod tests {
     use super::parse_range;
+
+    #[test]
+    fn pct_filename() {
+        assert_eq!(super::pct("Báo cáo 1.pdf"), "B%C3%A1o%20c%C3%A1o%201.pdf");
+    }
 
     #[test]
     fn range_parsing() {

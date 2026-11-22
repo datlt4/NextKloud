@@ -110,6 +110,9 @@ pub fn api_router(state: AppState) -> Router {
         // Không đặt dưới /api/files/ để khỏi đụng file tên "search".
         .route("/api/search", get(f::search_files))
         .route("/api/mkdir", post(f::mkdir))
+        .route("/api/dl", post(f::dl_token))
+        .route("/api/annotations", get(crate::notes::list).post(crate::notes::create))
+        .route("/api/annotations/:id", axum::routing::patch(crate::notes::update).delete(crate::notes::remove))
         .route("/api/move", post(f::move_entry))
         .route("/api/config", get(crate::config::get))
         .route("/api/trash", get(f::list_trash).delete(f::empty_trash))

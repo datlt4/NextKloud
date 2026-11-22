@@ -49,9 +49,39 @@ pub fn verify_jwt(token: &str, dec: &DecodingKey) -> Result<Claims, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Token tải 1 file, sống ngắn: đặt được vào URL `<a download>` mà không lộ JWT đăng nhập.
+/// Không có trường `adm` nên không giải mã được thành `Claims` (không dùng làm token đăng nhập được).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DlClaims {
+    pub sub: Uuid,
+    pub path: String,
+    pub exp: usize,
+}
+
+pub fn create_dl_token(user: Uuid, path: &str, enc: &EncodingKey) -> Result<String, String> {
+    let exp = (chrono::Utc::now() + chrono::Duration::minutes(10)).timestamp() as usize;
+    encode(&Header::default(), &DlClaims { sub: user, path: path.into(), exp }, enc).map_err(|e| e.to_string())
+}
+
+pub fn verify_dl_token(token: &str, dec: &DecodingKey) -> Result<DlClaims, String> {
+    decode::<DlClaims>(token, dec, &Validation::default()).map(|d| d.claims).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dl_token_scoped() {
+        let (enc, dec) = (EncodingKey::from_secret(b"s"), DecodingKey::from_secret(b"s"));
+        let u = Uuid::new_v4();
+        let t = create_dl_token(u, "a/b.bin", &enc).unwrap();
+        let c = verify_dl_token(&t, &dec).unwrap();
+        assert_eq!((c.sub, c.path.as_str()), (u, "a/b.bin"));
+        assert!(verify_jwt(&t, &dec).is_err()); // không dùng làm token đăng nhập được
+        let login = create_jwt(u, true, &enc).unwrap();
+        assert!(verify_dl_token(&login, &dec).is_err());
+    }
 
     #[test]
     fn hash_roundtrip_and_wrong_rejected() {

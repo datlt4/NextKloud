@@ -57,6 +57,19 @@ export interface GitRepo {
   created_at: number;
 }
 
+export type NoteState = "todo" | "doing" | "done";
+export interface Annotation {
+  id: string;
+  path: string;
+  kind: "bookmark" | "note";
+  anchor: string;
+  quote: string;
+  body: string;
+  state: NoteState;
+  created_at: number;
+  updated_at: number;
+}
+
 export interface UserRow {
   id: string;
   username: string;
@@ -228,6 +241,24 @@ export const api = {
     const r = await req("/api/move", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ from, to }) });
     return r.json() as Promise<{ files: number }>;
   },
+  // --- bookmark + ghi chú ---
+  async annotations(path: string) {
+    return (await req(`/api/annotations?path=${encodeURIComponent(path)}`)).json() as Promise<Annotation[]>;
+  },
+  async allNotes(state?: NoteState) {
+    return (await req(`/api/annotations${state ? `?state=${state}` : ""}`)).json() as Promise<Annotation[]>;
+  },
+  async addAnnotation(b: { path: string; kind: "bookmark" | "note"; anchor: string; quote: string; body?: string }) {
+    const r = await req("/api/annotations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) });
+    return r.json() as Promise<Annotation>;
+  },
+  async updateAnnotation(id: string, b: { body?: string; state?: NoteState }) {
+    const r = await req(`/api/annotations/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) });
+    return r.json() as Promise<Annotation>;
+  },
+  async removeAnnotation(id: string) {
+    await req(`/api/annotations/${id}`, { method: "DELETE" });
+  },
   // --- git mirror ---
   async gitRepos() {
     return (await req("/api/git")).json() as Promise<GitRepo[]>;
@@ -291,6 +322,12 @@ export const api = {
   async readText(path: string) {
     const r = await req(`/api/files/${encPath(path)}`);
     return r.text();
+  },
+  /** Link tải trực tiếp (token 10 phút, chỉ cho file này): trình duyệt stream xuống đĩa, không qua RAM. */
+  async directDownloadUrl(path: string): Promise<string> {
+    const r = await req("/api/dl", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
+    const { token: t } = (await r.json()) as { token: string };
+    return `${serverOrigin()}/api/files/${encPath(path)}?dl=${encodeURIComponent(t)}`;
   },
   async downloadUrl(path: string): Promise<string> {
     const r = await req(`/api/files/${encPath(path)}`);

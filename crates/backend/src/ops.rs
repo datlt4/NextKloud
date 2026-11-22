@@ -161,6 +161,7 @@ pub async fn move_path(db: &PgPool, store: &Store, user: Uuid, from: &str, to: &
             .execute(&mut *tx)
             .await?;
             ensure_dirs(&mut tx, user, &ancestors(to), modified).await?;
+            crate::notes::move_paths(&mut tx, user, from, to).await?;
         } else {
             // Hỏng giữa chừng: chỉ dời những file đã chuyển xong, phần còn lại giữ chỗ cũ.
             for p in &ok {
@@ -175,6 +176,7 @@ pub async fn move_path(db: &PgPool, store: &Store, user: Uuid, from: &str, to: &
                     .execute(&mut *tx)
                     .await?;
                 ensure_dirs(&mut tx, user, &ancestors(&np), modified).await?;
+                crate::notes::move_paths(&mut tx, user, p, &np).await?;
             }
         }
         tx.commit().await
@@ -308,6 +310,7 @@ pub async fn purge(db: &PgPool, store: &Store, user: Uuid, id: Uuid) -> Result<i
         .bind(freed)
         .execute(&mut *tx)
         .await?;
+    crate::notes::delete_under(&mut tx, user, &dir).await?;
     sqlx::query("DELETE FROM trash WHERE id = $1").bind(id).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(freed)

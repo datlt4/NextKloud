@@ -243,7 +243,7 @@ function AddDialog(props: { onClose: () => void; onDone: () => void }) {
           </div>
           <div>
             <label>Thư mục đích</label>
-            <input value={folder()} onInput={(e) => setFolder(e.currentTarget.value)} placeholder={`Vaults/${url().trim() ? repoName(url().trim()) : "<tên repo>"}`} spellcheck={false} />
+            <input value={folder()} onInput={(e) => setFolder(e.currentTarget.value)} placeholder={`Obsidian Vaults/${url().trim() ? repoName(url().trim()) : "<tên repo>"}`} spellcheck={false} />
           </div>
         </div>
         <label>Khoá truy cập</label>

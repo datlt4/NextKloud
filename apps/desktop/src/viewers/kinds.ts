@@ -21,7 +21,8 @@ export function viewerKind(name: string): VKind {
   if (e === "zip" || e === "cbz") return "zip";
   if (e === "epub") return "epub";
   if (e === "drawio" || e === "dio") return "drawio";
-  if (e === "excalidraw") return "excalidraw";
+  // .whiteboard của Nextcloud Whiteboard cũng là JSON Excalidraw (file rỗng -> bảng trắng)
+  if (e === "excalidraw" || e === "whiteboard") return "excalidraw";
   if (OFFICE.has(e)) return "office";
   if (TEXT.has(e)) return "text";
   return "other";

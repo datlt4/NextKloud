@@ -127,6 +127,9 @@ async fn main() {
             if let Err(e) = git::reset_stuck(&db).await {
                 tracing::error!("git reset: {e}");
             }
+            if let Err(e) = git::migrate_vaults_folder(&db, &store).await {
+                tracing::error!("git migrate Vaults: {e:?}");
+            }
             loop {
                 for id in git::due(&db).await.unwrap_or_default() {
                     if let Ok(r) = git::begin(&db, id, None).await {
