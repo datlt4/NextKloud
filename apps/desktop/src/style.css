@@ -840,9 +840,9 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 
 /* Xem ảnh toàn màn hình */
 .md-content img { cursor: zoom-in; }
-.lightbox { position: fixed; inset: 0; z-index: 200; background: rgba(10, 9, 8, .9); overflow: hidden; touch-action: none; cursor: grab; }
-.lightbox:active { cursor: grabbing; }
-.lightbox img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; user-select: none; -webkit-user-drag: none; background: #fff; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+.zoombox { position: fixed; inset: 0; z-index: 200; background: rgba(10, 9, 8, .9); overflow: hidden; touch-action: none; cursor: grab; }
+.zoombox:active { cursor: grabbing; }
+.zoombox img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; user-select: none; -webkit-user-drag: none; background: #fff; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
 .lb-bar { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; gap: 4px; padding: 5px; border-radius: 14px; background: rgba(30, 28, 26, .85); color: #f3ede4; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
 .lb-bar button { min-width: 38px; height: 36px; padding: 0 8px; border-radius: 10px; display: inline-grid; place-items: center; font-size: 13px; font-weight: 600; }
 .lb-bar button:hover { background: rgba(255,255,255,.12); }

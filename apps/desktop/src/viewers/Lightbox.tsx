@@ -76,7 +76,7 @@ export default function Lightbox(props: { src: string; alt?: string; onClose: ()
     });
   });
   return (
-    <div class="lightbox" ref={box} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
+    <div class="zoombox" ref={box} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
       <img
         ref={img}
         src={props.src}
