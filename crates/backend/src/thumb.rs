@@ -1,5 +1,5 @@
 //! Thumbnail webp render phía server, cache vào S3.
-//! GET /api/thumb/*path?s=256 -> image/webp, ETag + Cache-Control immutable.
+//! GET /api/thumb/*path?s=256 -> JPEG (ảnh đục) hoặc WebP lossless (ảnh có trong suốt), ETag + Cache-Control immutable.
 //! Hỗ trợ ảnh (decode bằng crate image) và video (cắt 1 frame bằng ffmpeg).
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -57,20 +57,31 @@ fn thumb_object(hash: &str) -> String {
     format!(".nextkloud/thumbs/{hash}.webp")
 }
 
-/// Decode ảnh rồi resize vừa khung s×s, encode webp lossy.
+/// Content-Type theo magic bytes (cache cũ là webp, mới có thể là jpeg).
+pub fn mime_of(b: &[u8]) -> &'static str {
+    if b.starts_with(b"RIFF") { "image/webp" } else { "image/jpeg" }
+}
+
+/// Decode ảnh, thu nhỏ vừa khung s×s (không phóng to). Ảnh có điểm trong suốt -> webp lossless, còn lại JPEG q85 (nhẹ hơn nhiều).
 pub fn render_image(data: &[u8], s: u32) -> Result<Vec<u8>, String> {
     let img = image::ImageReader::new(Cursor::new(data))
         .with_guessed_format()
         .map_err(|e| format!("không đọc được ảnh: {e}"))?
         .decode()
         .map_err(|e| format!("không decode được ảnh: {e}"))?;
-    let t = img.thumbnail(s, s);
-    let rgba = t.to_rgba8();
-    let (w, h) = (rgba.width(), rgba.height());
+    let t = if img.width() <= s && img.height() <= s { img } else { img.thumbnail(s, s) };
+    let (w, h) = (t.width(), t.height());
     let mut out = Vec::new();
-    image::codecs::webp::WebPEncoder::new_lossless(&mut out)
-        .encode(&rgba.into_raw(), w, h, image::ExtendedColorType::Rgba8)
-        .map_err(|e| format!("không encode được webp: {e}"))?;
+    let transparent = t.color().has_alpha() && t.to_rgba8().pixels().any(|p| p.0[3] < 255);
+    if transparent {
+        image::codecs::webp::WebPEncoder::new_lossless(&mut out)
+            .encode(&t.to_rgba8().into_raw(), w, h, image::ExtendedColorType::Rgba8)
+            .map_err(|e| format!("không encode được webp: {e}"))?;
+    } else {
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 85)
+            .encode(&t.to_rgb8().into_raw(), w, h, image::ExtendedColorType::Rgb8)
+            .map_err(|e| format!("không encode được jpeg: {e}"))?;
+    }
     Ok(out)
 }
 
@@ -131,7 +142,7 @@ pub async fn thumb(
     // Ảnh <img> không gửi được Bearer -> chấp nhận token qua ?t=.
     let user = auth_opt(&headers, &q, &s).await.ok_or_else(|| AppError::Auth("missing token".into()))?;
     let is_img = thumb_kind(&path).ok_or_else(|| AppError::BadRequest("loại file này chưa có thumbnail".into()))?;
-    let size_px: u32 = q.get("s").and_then(|v| v.parse().ok()).unwrap_or(256).clamp(64, 1024);
+    let size_px: u32 = q.get("s").and_then(|v| v.parse().ok()).unwrap_or(256).clamp(64, 2048);
     let meta = s.store.stat(user.id, &path).await?;
     if meta.is_dir() {
         return Err(AppError::BadRequest("not a file".into()));
@@ -149,7 +160,7 @@ pub async fn thumb(
     // Cache hit?
     if let Ok(cached) = s.store.op.read(&tkey).await {
         return Ok(Response::builder()
-            .header(header::CONTENT_TYPE, "image/webp")
+            .header(header::CONTENT_TYPE, mime_of(&cached.to_vec()))
             .header(header::ETAG, &etag)
             .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
             .body(Body::from(cached.to_vec()))
@@ -165,17 +176,17 @@ pub async fn thumb(
         video_frame_png(user.id, &path, &s.store).await.map_err(AppError::Internal)?
     };
     // Decode/resize tốn CPU: chạy ngoài worker async.
-    let webp = tokio::task::spawn_blocking(move || render_image(&src, size_px))
+    let out = tokio::task::spawn_blocking(move || render_image(&src, size_px))
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?
         .map_err(AppError::Internal)?;
     // Lưu cache, best-effort (lỗi thì vẫn trả ảnh vừa render).
-    let _ = s.store.op.write(&tkey, webp.clone()).await;
+    let _ = s.store.op.write(&tkey, out.clone()).await;
     Ok(Response::builder()
-        .header(header::CONTENT_TYPE, "image/webp")
+        .header(header::CONTENT_TYPE, mime_of(&out))
         .header(header::ETAG, &etag)
         .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
-        .body(Body::from(webp))
+        .body(Body::from(out))
         .unwrap())
 }
 
@@ -227,23 +238,27 @@ mod tests {
     #[test]
     fn render_png_thumbnail() {
         use image::ImageEncoder as _;
-        // PNG 8x4 đỏ -> thumb webp, vẫn mở được.
-        let mut img = image::RgbaImage::new(8, 4);
-        for p in img.pixels_mut() {
-            *p = image::Rgba([255, 0, 0, 255]);
-        }
-        let mut src = Vec::new();
-        image::codecs::png::PngEncoder::new(&mut src)
-            .write_image(&img, 8, 4, image::ExtendedColorType::Rgba8.into())
-            .unwrap();
-        let webp = render_image(&src, 256).unwrap();
-        assert!(webp.starts_with(b"RIFF"));
-        let back = image::ImageReader::new(Cursor::new(&webp))
-            .with_guessed_format()
-            .unwrap()
-            .decode()
-            .unwrap();
-        assert!(back.width() <= 256 && back.height() <= 256);
+        // PNG 600x300: đục -> JPEG, có trong suốt -> webp; thu về khung 256, ảnh nhỏ giữ nguyên cỡ.
+        let png = |a: u8| {
+            let mut img = image::RgbaImage::new(600, 300);
+            for p in img.pixels_mut() {
+                *p = image::Rgba([255, 0, 0, a]);
+            }
+            let mut src = Vec::new();
+            image::codecs::png::PngEncoder::new(&mut src)
+                .write_image(&img, 600, 300, image::ExtendedColorType::Rgba8.into())
+                .unwrap();
+            src
+        };
+        let dims = |b: &[u8]| {
+            let i = image::ImageReader::new(Cursor::new(b)).with_guessed_format().unwrap().decode().unwrap();
+            (i.width(), i.height())
+        };
+        let j = render_image(&png(255), 256).unwrap();
+        assert_eq!((mime_of(&j), dims(&j)), ("image/jpeg", (256, 128)));
+        let w = render_image(&png(100), 256).unwrap();
+        assert_eq!((mime_of(&w), dims(&w)), ("image/webp", (256, 128)));
+        assert_eq!(dims(&render_image(&png(255), 2048).unwrap()), (600, 300));
     }
 
     #[test]

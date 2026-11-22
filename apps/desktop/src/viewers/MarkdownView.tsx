@@ -201,6 +201,15 @@ async function vaultOutline(path: string): Promise<VaultOutline | null> {
 /** Thư mục gốc đã tìm thấy ảnh lần trước (thường là gốc vault) -> thử trước, đỡ dò lại (chỉ dùng khi ngoài vault, không có mục lục). */
 const imgBases: string[] = [];
 
+/** Ảnh tĩnh: tải bản thu nhỏ theo màn hình (server resize + cache), giữ link gốc để xem phóng to. */
+const origOf = new Map<string, string>();
+function srcFor(p: string): Promise<string> | string {
+  if (!/\.(jpe?g|png|webp|bmp|tiff?)$/i.test(p)) return api.downloadUrl(p); // gif/svg giữ bản gốc
+  const u = api.thumbUrl(p, 1920);
+  origOf.set(u, api.streamUrl(p));
+  return u;
+}
+
 /** Chỉ mục tra nhanh từ mục lục vault: đường dẫn đầy đủ + theo tên file. */
 interface ImgIndex {
   root: string;
@@ -235,11 +244,11 @@ async function loadImg(mdPath: string, raw: string, idx?: ImgIndex | null): Prom
     // ref tuyệt đối từ gốc vault: /assets/x.png (Obsidian) -> <vaultRoot>/assets/x.png
     if (clean.startsWith("/")) {
       const rp = `${idx.root}/${clean.replace(/^\/+/, "")}`;
-      if (idx.set.has(rp)) return api.downloadUrl(rp);
+      if (idx.set.has(rp)) return srcFor(rp);
     } else {
       for (let d = dir; ; d = d.includes("/") ? d.slice(0, d.lastIndexOf("/")) : "") {
         const p = joinRel(d, clean);
-        if (idx.set.has(p)) return api.downloadUrl(p);
+        if (idx.set.has(p)) return srcFor(p);
         if (!d) break;
       }
     }
@@ -247,7 +256,7 @@ async function loadImg(mdPath: string, raw: string, idx?: ImgIndex | null): Prom
     const name = clean.split("/").pop()!;
     const hits = (idx.byName.get(name) ?? []).filter((p) => ups.some((u) => !u || p.startsWith(u + "/")));
     hits.sort((a, b) => a.length - b.length);
-    if (hits.length) return api.downloadUrl(hits[0]);
+    if (hits.length) return srcFor(hits[0]);
     // không có trong mục lục (có thể cache cũ) -> dò mạng như ngoài vault
   }
   const bases = [dir, ...imgBases.filter((b) => ups.includes(b)), ...ups];
@@ -269,7 +278,7 @@ async function loadImg(mdPath: string, raw: string, idx?: ImgIndex | null): Prom
   const hit = (await api.search(name)).filter((e) => !e.is_dir && e.name === name && ups.some((u) => !u || e.path.startsWith(u + "/")));
   hit.sort((a, b) => a.path.length - b.path.length);
   if (!hit.length) throw new Error("404");
-  return api.downloadUrl(hit[0].path);
+  return srcFor(hit[0].path);
 }
 
 function VoiceButton(props: { text: string; onPlay: () => void }) {
@@ -425,7 +434,7 @@ export default function MarkdownView(props: {
   const onArticleClick = (e: MouseEvent) => {
     const t = e.target as HTMLElement;
     // bấm ảnh: xem toàn màn hình (ảnh to chữ nhỏ)
-    if (t instanceof HTMLImageElement && t.closest(".md-content") && !t.closest("a") && t.src && !t.src.startsWith("data:")) return setLb({ src: t.src, alt: t.alt });
+    if (t instanceof HTMLImageElement && t.closest(".md-content") && !t.closest("a") && t.src && !t.src.startsWith("data:")) return setLb({ src: origOf.get(t.getAttribute("src") ?? "") ?? t.src, alt: t.alt });
     const a = t.closest?.("a.wiki-link") as HTMLElement | null;
     if (!a) return;
     e.preventDefault();
@@ -485,6 +494,8 @@ export default function MarkdownView(props: {
           p.then((url) => {
             imgUrlCache.set(key, url);
             if (img.isConnected) {
+              // thumb lỗi (ảnh quá lớn / không decode được) -> dùng bản gốc
+              img.onerror = () => { const o = origOf.get(url); if (o && img.src !== o) img.src = o; };
               img.src = url;
               img.removeAttribute("data-wsrc");
             }
