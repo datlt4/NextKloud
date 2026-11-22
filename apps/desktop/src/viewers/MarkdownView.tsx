@@ -1,7 +1,9 @@
 import { marked } from "marked";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import { api, hashText, speak, type VaultOutline } from "../api";
+import { Portal } from "solid-js/web";
 import { Icon } from "../icons";
+import Lightbox from "./Lightbox";
 import { ReaderLayout, STATE_UI, type TocItem, createReader, topState } from "../annot";
 
 export interface Block {
@@ -93,9 +95,12 @@ export function blocks(md: string): Block[] {
         break;
       case "heading":
       case "paragraph":
-        if (/^\s*\$[^$]+\$\s*$/.test(t.raw) || /^\s*(?:(?:!\[\[[^\]]+\]\]|!\[[^\]]*\]\([^)]*\))\s*)+$/.test(t.raw)) {
-          // đoạn chỉ có 1 công thức hoặc chỉ có ảnh: không có gì để đọc
+        if (/^\s*\$[^$]+\$\s*$/.test(t.raw)) {
+          // đoạn chỉ có 1 công thức: không có gì để đọc
           out.push({ kind: "skip", html: marked.parse(t.raw) as string, text: "" });
+        } else if (/^\s*(?:(?:!\[\[[^\]]+\]\]|!\[[^\]]*\]\([^)]*\))\s*)+$/.test(t.raw)) {
+          // đoạn chỉ có ảnh: không đọc
+          out.push({ kind: "skip", html: linkifyWiki(marked.parse(t.raw) as string), text: "" });
         } else {
           const h = t.type === "heading" ? { level: t.depth as number, label: stripMd(t.text ?? "").replace(/[*_`]/g, "") } : {};
           out.push({ kind: "speak", html: linkifyWiki(marked.parse(t.raw) as string), text: t.text ?? t.raw, ...h });
@@ -265,6 +270,7 @@ export default function MarkdownView(props: {
   mark?: string;
 }) {
   const list = createMemo(() => blocks(props.text));
+  const [lb, setLb] = createSignal<{ src: string; alt: string } | null>(null);
   const [outline] = createResource(() => props.path, vaultOutline);
   const reader = createReader(() => props.path, (m) => (props.onError ?? console.error)(m));
   const plain = createMemo(() => list().map((b) => b.html.replace(/<[^>]+>/g, "").replace(/\s+/g, " ")));
@@ -359,7 +365,10 @@ export default function MarkdownView(props: {
   };
 
   const onArticleClick = (e: MouseEvent) => {
-    const a = (e.target as HTMLElement).closest?.("a.wiki-link") as HTMLElement | null;
+    const t = e.target as HTMLElement;
+    // bấm ảnh: xem toàn màn hình (ảnh to chữ nhỏ)
+    if (t instanceof HTMLImageElement && t.closest(".md-content") && !t.closest("a") && t.src && !t.src.startsWith("data:")) return setLb({ src: t.src, alt: t.alt });
+    const a = t.closest?.("a.wiki-link") as HTMLElement | null;
     if (!a) return;
     e.preventDefault();
     // [[#^block]] / [[#Heading]]: nhảy trong chính bài này
@@ -503,6 +512,7 @@ export default function MarkdownView(props: {
           );
         }}
       </For>
+      <Show when={lb()}>{(l) => <Portal><Lightbox src={l().src} alt={l().alt} onClose={() => setLb(null)} /></Portal>}</Show>
     </article>
     </ReaderLayout>
   );

@@ -12,6 +12,7 @@ const P: Record<string, string> = {
   home: "M3 11l9-8 9 8M5 10v10h14V10",
   upload: "M12 16V4M7 9l5-5 5 5M4 20h16",
   plus: "M12 5v14M5 12h14",
+  minus: "M5 12h14",
   grid: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
   list: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
   search: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-5-5",
