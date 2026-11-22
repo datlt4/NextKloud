@@ -187,9 +187,47 @@ export default function App() {
 
   const refreshMe = () => api.me().then(setMe).catch(() => {});
 
+  // URL giữ vị trí (thư mục / file đang mở / trang): F5 hay gửi link vẫn về đúng chỗ, nút Back của trình duyệt dùng được.
+  const encP = (p: string) => p.split("/").map(encodeURIComponent).join("/");
+  const routeOf = () => {
+    const pg = page();
+    if (pg === "settings") return `#/settings/${setTab()}`;
+    if (pg !== "files") return `#/${pg}`;
+    const o = open();
+    if (o) return `#/o/${encP(o.path)}`;
+    return prefix() ? `#/f/${encP(prefix())}` : "#/";
+  };
+  let routing = false;
+  const [routed, setRouted] = createSignal(false); // chưa đọc URL lúc mở app thì chưa ghi đè nó
+  createEffect(() => {
+    if (!authed() || !routed()) return;
+    const h = routeOf();
+    if (!routing && location.hash !== h && !(h === "#/" && !location.hash)) history.pushState(null, "", h);
+  });
+  const go = async (h: string) => {
+    routing = true;
+    try {
+      const m = /^#\/(f|o|notes|trash|settings)(?:\/(.*))?$/.exec(h);
+      const rest = m?.[2] ? decodeURIComponent(m[2]) : "";
+      if (m?.[1] === "f") await load(rest);
+      else if (m?.[1] === "o" && rest) await openAt(rest, "");
+      else if (m?.[1] === "notes" || m?.[1] === "trash") setPage(m[1]);
+      else if (m?.[1] === "settings") openSettings((rest || "profile") as SettingsTab);
+      else await load("");
+    } finally {
+      routing = false;
+      setRouted(true);
+    }
+  };
+  onMount(() => {
+    const pop = () => authed() && go(location.hash);
+    window.addEventListener("popstate", pop);
+    onCleanup(() => window.removeEventListener("popstate", pop));
+  });
+
   const enter = () => {
     setAuthed(true);
-    load("");
+    go(location.hash);
     refreshMe();
     syncFromServer();
   };
