@@ -106,6 +106,7 @@ export interface DeckPreview {
 export interface VaultOutline {
   root: string;
   files: { path: string; headings: [number, string][] }[];
+  assets?: string[];
 }
 export type NoteState = "todo" | "doing" | "done";
 export interface Annotation {

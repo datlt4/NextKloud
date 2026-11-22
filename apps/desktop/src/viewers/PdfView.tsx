@@ -114,7 +114,8 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
   // Cuộn liên tục: trang hiện tại = trang đầu tiên còn thấy dưới thanh công cụ.
   const onScroll = () => {
     if (!scrolling()) return;
-    const top = (scroller?.getBoundingClientRect().top ?? 0) + 120;
+    const sc = document.fullscreenElement === host ? host : scroller; // toàn màn hình thì chính host cuộn
+    const top = (sc?.getBoundingClientRect().top ?? 0) + 120;
     let cur = 1;
     for (const el of Array.from(host.querySelectorAll<HTMLElement>(".pdf-row > .pdf-pg:first-child"))) {
       if (el.getBoundingClientRect().top > top) break;
@@ -126,6 +127,7 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
   onMount(async () => {
     scroller = host.closest(".viewer");
     scroller?.addEventListener("scroll", onScroll, { passive: true });
+    host.addEventListener("scroll", onScroll, { passive: true });
     document.addEventListener("fullscreenchange", onFs);
     try {
       const buf = await (await api.readBlob(props.path)).arrayBuffer();

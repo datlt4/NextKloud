@@ -186,7 +186,7 @@ function stripMd(s: string) {
 
 const imgUrlCache = new Map<string, string>();
 /** Lazy-load ảnh md: key đang tải + hàng đợi theo element (sống qua các lượt effect). */
-const imgInflight = new Set<string>();
+const imgInflight = new Map<string, Promise<string>>();
 const pendingGo = new WeakMap<Element, () => void>();
 let imgObs: IntersectionObserver | null = null;
 /** Mục lục vault dùng lại 2 phút khi chuyển giữa các file cùng vault. */
@@ -210,12 +210,12 @@ interface ImgIndex {
 function buildImgIndex(o: VaultOutline): ImgIndex {
   const set = new Set<string>();
   const byName = new Map<string, string[]>();
-  for (const f of o.files) {
-    set.add(f.path);
-    const n = f.path.split("/").pop() ?? f.path;
+  for (const p of [...o.files.map((f) => f.path), ...(o.assets ?? [])]) {
+    set.add(p);
+    const n = p.split("/").pop() ?? p;
     const l = byName.get(n);
-    if (l) l.push(f.path);
-    else byName.set(n, [f.path]);
+    if (l) l.push(p);
+    else byName.set(n, [p]);
   }
   return { root: o.root, set, byName };
 }
@@ -248,7 +248,7 @@ async function loadImg(mdPath: string, raw: string, idx?: ImgIndex | null): Prom
     const hits = (idx.byName.get(name) ?? []).filter((p) => ups.some((u) => !u || p.startsWith(u + "/")));
     hits.sort((a, b) => a.length - b.length);
     if (hits.length) return api.downloadUrl(hits[0]);
-    throw new Error("404");
+    // không có trong mục lục (có thể cache cũ) -> dò mạng như ngoài vault
   }
   const bases = [dir, ...imgBases.filter((b) => ups.includes(b)), ...ups];
   const tried = new Set<string>();
@@ -474,23 +474,22 @@ export default function MarkdownView(props: {
           img.removeAttribute("data-wsrc");
           return;
         }
-        if (imgInflight.has(key)) return; // đang tải ở lượt effect trước
         const go = () => {
           pendingGo.delete(img);
           if (!img.isConnected || !img.hasAttribute("data-wsrc")) return;
-          imgInflight.add(key);
-          loadImg(props.path, raw, idx)
-          .then((url) => {
-            imgInflight.delete(key);
+          let p = imgInflight.get(key);
+          if (!p) {
+            p = loadImg(props.path, raw, idx).finally(() => imgInflight.delete(key));
+            imgInflight.set(key, p);
+          }
+          p.then((url) => {
+            imgUrlCache.set(key, url);
             if (img.isConnected) {
-              imgUrlCache.set(key, url);
               img.src = url;
               img.removeAttribute("data-wsrc");
-            } else URL.revokeObjectURL(url);
+            }
           })
           .catch(() => {
-            imgInflight.delete(key);
-            pendingGo.delete(img);
             if (img.isConnected) {
               img.removeAttribute("data-wsrc");
               img.alt = raw;

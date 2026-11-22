@@ -150,6 +150,8 @@ pub struct OutlineFile {
 pub struct Outline {
     pub root: String,
     pub files: Vec<OutlineFile>,
+    /// File không phải md trong vault (ảnh đính kèm) để client tra đường dẫn ảnh không cần dò.
+    pub assets: Vec<String>,
 }
 
 /// Mục lục cả vault chứa `path`: vault = thư mục cha gần nhất có `.obsidian`. None nếu không thuộc vault.
@@ -164,17 +166,24 @@ pub async fn outline(db: &PgPool, user: Uuid, path: &str) -> Result<Option<Outli
     let Some((obs,)) = hit else { return Ok(None) };
     let root = obs.strip_suffix(".obsidian").unwrap_or("").trim_end_matches('/').to_string();
     let like = if root.is_empty() { "%".into() } else { format!("{}/%", like_escape(&root)) };
-    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
-        "SELECT f.path, t.body FROM files f LEFT JOIN file_text t ON t.user_id = f.user_id AND t.path = f.path
-         WHERE f.user_id = $1 AND NOT f.is_dir AND f.path LIKE $2 AND f.path NOT LIKE '.%' AND f.path NOT LIKE '%/.%'
-           AND (lower(f.name) LIKE '%.md' OR lower(f.name) LIKE '%.markdown')",
+    let rows: Vec<(String, Option<String>, bool)> = sqlx::query_as(
+        "SELECT f.path, t.body, (lower(f.name) LIKE '%.md' OR lower(f.name) LIKE '%.markdown') FROM files f
+         LEFT JOIN file_text t ON t.user_id = f.user_id AND t.path = f.path
+         WHERE f.user_id = $1 AND NOT f.is_dir AND f.path LIKE $2 AND f.path NOT LIKE '.%' AND f.path NOT LIKE '%/.%'",
     )
     .bind(user)
     .bind(like)
     .fetch_all(db)
     .await?;
-    let files = rows.into_iter().map(|(path, body)| OutlineFile { headings: body.as_deref().map(headings).unwrap_or_default(), path }).collect();
-    Ok(Some(Outline { root, files }))
+    let (mut files, mut assets) = (Vec::new(), Vec::new());
+    for (path, body, md) in rows {
+        if md {
+            files.push(OutlineFile { headings: body.as_deref().map(headings).unwrap_or_default(), path });
+        } else {
+            assets.push(path);
+        }
+    }
+    Ok(Some(Outline { root, files, assets }))
 }
 
 #[cfg(test)]
@@ -212,9 +221,13 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert!(hits[0].snippet.contains("đạo hàm"));
         assert!(outline(&db, u, "v/a.md").await.unwrap().is_none());
-        crate::index::ensure_dirs(&mut *db.acquire().await.unwrap(), u, &["v/.obsidian"], 0).await.unwrap();
+        crate::index::ensure_dirs(&mut *db.acquire().await.unwrap(), u, &["v/.obsidian", "v/img"], 0).await.unwrap();
+        s.write_chunk(u, "f2", 0, b"png").unwrap();
+        let m = s.complete(u, "f2", "v/img/x.png", 3, None, &mut q).await.unwrap();
+        crate::index::add_file(&db, u, "v/img/x.png", 3, m).await.unwrap();
         let o = outline(&db, u, "v/a.md").await.unwrap().unwrap();
         assert_eq!((o.root.as_str(), o.files.len()), ("v", 1));
+        assert_eq!(o.assets, vec!["v/img/x.png".to_string()]);
         assert_eq!(o.files[0].headings, vec![(1, "Động học".into())]);
         crate::ops::move_path(&db, &s, u, "v", "w").await.unwrap();
         assert_eq!(search(&db, u, "vận tốc", 10).await.unwrap()[0].path, "w/a.md");
