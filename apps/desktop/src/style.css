@@ -720,9 +720,8 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
   /* mobile: thanh tìm kiếm thu thành icon, bấm mở modal — không đẩy avatar ra ngoài */
   .hdr-search-inline { display: none; }
   .search-fab { display: inline-grid; }
-  /* màn bé: ẩn logo + avatar cho gọn, nút tìm kiếm dạt sang phải (vẫn giữ nút menu mở sidebar) */
+  /* màn bé: ẩn logo cho gọn, giữ avatar để vào cài đặt; nút tìm kiếm dạt sang phải (vẫn giữ nút menu mở sidebar) */
   .hdr-brand { display: none; }
-  .hdr .menu-wrap { display: none; }
   .search-fab { margin-left: auto; }
   .viewer { padding: 4px 10px 32px; }
   /* màn nhỏ: nút đọc co giãn, chữ nhỏ lại, không chừa lề phải thừa */
