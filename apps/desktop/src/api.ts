@@ -607,25 +607,69 @@ export const api = {
   async readBlob(path: string) {
     return (await req(fileUrl(path))).blob();
   },
-  /** Chunked upload 8MB tuần tự — không giữ cả file trong RAM. owner: ghi vào vùng được chia sẻ. */
+  /** Upload đang dở của chính mình (để resume): cùng vùng, path và size. */
+  async uploadActive(path: string, size: number, owner?: string) {
+    const q = new URLSearchParams({ path, size: String(size), ...(owner ? { owner } : {}) });
+    const r = await req(`/api/files/uploads/active?${q}`);
+    return r.json() as Promise<{ id: string; received: number; size: number } | null>;
+  },
+  /** Chunked upload 8MB tuần tự + resume: rớt mạng/F5 xong gửi lại cùng file là chạy tiếp từ chỗ dở. */
   async upload(path: string, data: Blob, onProgress?: (done: number) => void, owner?: string) {
     const json = { "Content-Type": "application/json" };
     const up = isSecret(path) ? "/api/secret/uploads" : "/api/files/uploads";
-    const init = await req(up, {
-      method: "POST",
-      headers: json,
-      body: JSON.stringify({
-        path: isSecret(path) ? sRel(path) : path,
-        size: data.size,
-        mtime: data instanceof File ? Math.floor(data.lastModified / 1000) : undefined,
-        ...(owner ? { owner } : {}),
-      }),
-    });
-    const { id } = (await init.json()) as { id: string };
+    const rel = isSecret(path) ? sRel(path) : path;
+    let id = "";
+    let off = 0;
+    try {
+      const a = isSecret(path) ? null : await this.uploadActive(rel, data.size, owner);
+      if (a && a.received > 0 && a.received < data.size) {
+        id = a.id;
+        off = a.received;
+        onProgress?.(off);
+      }
+    } catch {
+      /* không có gì để resume */
+    }
+    if (!id) {
+      const init = await req(up, {
+        method: "POST",
+        headers: json,
+        body: JSON.stringify({
+          path: rel,
+          size: data.size,
+          mtime: data instanceof File ? Math.floor(data.lastModified / 1000) : undefined,
+          ...(owner ? { owner } : {}),
+        }),
+      });
+      id = ((await init.json()) as { id: string }).id;
+    }
     const CHUNK = 8 * 1024 * 1024;
-    for (let off = 0; off < data.size; off += CHUNK) {
-      await req(`${up}/${id}?offset=${off}`, { method: "PUT", body: data.slice(off, off + CHUNK) });
-      onProgress?.(Math.min(off + CHUNK, data.size));
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    for (; off < data.size; ) {
+      try {
+        await req(`${up}/${id}?offset=${off}`, { method: "PUT", body: data.slice(off, off + CHUNK) });
+        off = Math.min(off + CHUNK, data.size);
+        onProgress?.(off);
+      } catch (e) {
+        const msg = String((e as Error)?.message ?? e);
+        if (msg.includes("unauthorized")) throw e;
+        // lệch offset hoặc lỗi mạng: hỏi server đang nhận tới đâu rồi gửi tiếp (tối đa 5 lần)
+        let waited = 0;
+        for (let i = 0; i < 5; i++) {
+          await sleep(500 * (i + 1));
+          try {
+            const st = (await (await req(`${up}/${id}`)).json()) as { received: number };
+            if (st.received !== off) {
+              off = st.received;
+              onProgress?.(off);
+            }
+            break;
+          } catch {
+            waited++;
+          }
+        }
+        if (waited >= 5) throw e;
+      }
     }
     await req(`${up}/${id}/complete`, { method: "POST" });
   },
@@ -633,17 +677,17 @@ export const api = {
     const r = await req(fileUrl(path));
     return r.text();
   },
+  /** Link tải cả thư mục thành zip (stream trực tiếp, không qua RAM). */
+  zipDownloadUrl(path: string) {
+    const t = token();
+    return `${serverOrigin()}/api/zip/download?path=${encodeURIComponent(path)}&t=${encodeURIComponent(t ?? "")}`;
+  },
   /** Link tải trực tiếp (token 10 phút, chỉ cho file này): trình duyệt stream xuống đĩa, không qua RAM. */
   async directDownloadUrl(path: string): Promise<string> {
     if (isSecret(path)) return `${this.streamUrl(path)}&download=1`;
     const r = await req("/api/dl", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
     const { token: t } = (await r.json()) as { token: string };
     return `${serverOrigin()}/api/files/${encPath(path)}?dl=${encodeURIComponent(t)}`;
-  },
-  async downloadUrl(path: string): Promise<string> {
-    const r = await req(fileUrl(path));
-    const b = await r.blob();
-    return URL.createObjectURL(b);
   },
 };
 

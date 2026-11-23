@@ -204,7 +204,7 @@ const imgBases: string[] = [];
 /** Ảnh tĩnh: tải bản thu nhỏ theo màn hình (server resize + cache), giữ link gốc để xem phóng to. */
 const origOf = new Map<string, string>();
 function srcFor(p: string): Promise<string> | string {
-  if (!/\.(jpe?g|png|webp|bmp|tiff?)$/i.test(p)) return api.downloadUrl(p); // gif/svg giữ bản gốc
+  if (!/\.(jpe?g|png|webp|bmp|tiff?)$/i.test(p)) return api.streamUrl(p); // gif/svg giữ bản gốc (link trực tiếp, không blob RAM)
   const u = api.thumbUrl(p, 1920);
   origOf.set(u, api.streamUrl(p));
   return u;
@@ -266,7 +266,8 @@ async function loadImg(mdPath: string, raw: string, idx?: ImgIndex | null): Prom
     if (tried.has(p)) continue;
     tried.add(p);
     try {
-      const url = await api.downloadUrl(p);
+      await api.exists(p); // HEAD, không tải nội dung vào RAM
+      const url = api.streamUrl(p); // <img> stream trực tiếp bằng token
       if (b !== dir && !imgBases.includes(b)) imgBases.unshift(b);
       return url;
     } catch {

@@ -922,6 +922,11 @@ export default function App() {
               <Icon name="folder" /> Mở
             </button>
           </Show>
+          <Show when={p.f.is_dir && !isSecret(p.f.path)}>
+            <button onClick={() => { closeMenu(); const a = document.createElement("a"); a.href = api.zipDownloadUrl(p.f.path); a.click(); }}>
+              <Icon name="download" /> Tải thư mục (zip)
+            </button>
+          </Show>
           <button onClick={() => { closeMenu(); setDlg({ kind: "rename", f: p.f }); }}>
             <Icon name="edit" /> Đổi tên
           </button>

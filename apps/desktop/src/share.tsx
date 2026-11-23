@@ -65,7 +65,7 @@ export function ShareDialog(props: { path: string; onClose: () => void; onError:
         <div class="sh-sec">
           <b>Link công khai (chỉ xem + tải)</b>
           <div class="sh-add">
-            <input type="password" value={pw()} onInput={(e) => setPw(e.currentTarget.value)} placeholder="Mật khẩu (để trống = không)" autocomplete="new-password" />
+            <input type="password" value={pw()} onInput={(e) => setPw(e.currentTarget.value)} placeholder="Mật khẩu (tối thiểu 8 ký tự, trống = không)" autocomplete="new-password" />
             <select value={days()} onChange={(e) => setDays(e.currentTarget.value)} title="Hạn dùng">
               <option value="">Vĩnh viễn</option>
               <option value="1">1 ngày</option>

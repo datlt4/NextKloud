@@ -130,6 +130,8 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/git/:id", axum::routing::patch(crate::git::update).delete(crate::git::remove))
         .route("/api/git/:id/sync", post(crate::git::sync_now))
         .route("/api/files/uploads", post(f::init_upload))
+        .route("/api/files/uploads/active", get(f::upload_active))
+        .route("/api/files/uploads/:id", get(f::upload_status))
         // axum mặc định chặn body > 2MB; chunk cho phép tới 64MB.
         .route(
             "/api/files/uploads/:id",
@@ -141,6 +143,7 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/tts/detect", get(crate::tts::detect))
         .route("/api/tts/synthesize", post(crate::tts::synthesize))
         .route("/api/zip/list", get(crate::zip::list))
+        .route("/api/zip/download", get(crate::zip::download_dir))
         .route("/api/zip/file", get(crate::zip::extract))
         .route("/api/thumb/*path", get(crate::thumb::thumb))
         .route("/api/office/config", post(crate::office::config))
@@ -168,7 +171,6 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/s/:token/list", get(crate::shares::link_list))
         .route("/api/s/:token/file", get(crate::shares::link_file_root))
         .route("/api/s/:token/file/*path", get(crate::shares::link_file))
-        .route("/api/tasks", get(crate::tracker::tasks))
         .route("/api/habits", get(crate::tracker::list_habits).post(crate::tracker::create_habit))
         .route("/api/habits/:id", axum::routing::patch(crate::tracker::update_habit).delete(crate::tracker::delete_habit))
         .route("/api/habits/:id/check", post(crate::tracker::check_habit))

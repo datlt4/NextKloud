@@ -596,7 +596,7 @@ mod tests {
         let r = create_link(
             State(s.clone()),
             auth(a),
-            Json(NewLink { path: "doc/a.txt".into(), password: "bi-mat".into(), expires_in_days: None }),
+            Json(NewLink { path: "doc/a.txt".into(), password: "bi-mat-123".into(), expires_in_days: None }),
         )
         .await
         .unwrap()
@@ -604,10 +604,10 @@ mod tests {
         let tok = r.0.token.clone().unwrap();
         // sai/không mật khẩu đều lỗi
         assert!(public_share(&s.db, &tok, "").await.is_err());
-        assert!(public_share(&s.db, &tok, "sai").await.is_err());
-        assert!(public_share(&s.db, &tok, "bi-mat").await.is_ok());
+        assert!(public_share(&s.db, &tok, "sai-mat-khau").await.is_err());
+        assert!(public_share(&s.db, &tok, "bi-mat-123").await.is_ok());
         // hết hạn
         sqlx::query("UPDATE shares SET expires_at = $1 WHERE token = $2").bind(now() - 1).bind(&tok).execute(&s.db).await.unwrap();
-        assert!(public_share(&s.db, &tok, "bi-mat").await.is_err());
+        assert!(public_share(&s.db, &tok, "bi-mat-123").await.is_err());
     }
 }

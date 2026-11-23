@@ -19,6 +19,10 @@ use crate::{
     state::{AppError, AppState, AuthUser, PendingUpload, load_user},
 };
 
+fn now() -> i64 {
+    chrono::Utc::now().timestamp()
+}
+
 #[derive(Deserialize)]
 pub struct ListQuery {
     #[serde(default)]
@@ -305,6 +309,8 @@ pub struct InitOut {
 }
 
 /// Start a resumable upload. Quota pre-checked; bytes flow via PUT chunk.
+/// Upload dở lưu ở Postgres (bảng uploads) + file .part trên đĩa -> rớt mạng,
+/// F5 hay restart server đều resume được (7 ngày). Gửi lại cùng path+size là chạy tiếp.
 pub async fn init_upload(
     State(s): State<AppState>,
     user: AuthUser,
@@ -322,12 +328,118 @@ pub async fn init_upload(
     let orow = if oid == user.id { row } else { load_user(&s.db, oid).await? };
     let oq = Quota::new(orow.quota_limit.max(0) as u64, orow.quota_used.max(0) as u64);
     oq.can_add(b.size).map_err(|e| AppError::Conflict(format!("quota exceeded: {e}")))?;
+    // dọn upload dở quá 7 ngày của user này
+    let old: Vec<(String, Uuid)> = sqlx::query_as("SELECT id, owner FROM uploads WHERE user_id = $1 AND created_at < $2")
+        .bind(user.id)
+        .bind(now() - 7 * 86_400)
+        .fetch_all(&s.db)
+        .await?;
+    for (id, ow) in old {
+        let _ = std::fs::remove_file(s.store.stage_path(ow, &id));
+    }
+    sqlx::query("DELETE FROM uploads WHERE user_id = $1 AND created_at < $2").bind(user.id).bind(now() - 7 * 86_400).execute(&s.db).await?;
+    let pc = clean_path(&b.path)?;
+    // còn dở cùng file (path+size) và file .part còn nguyên -> trả id cũ để chạy tiếp
+    let resume: Option<(String, i64)> = sqlx::query_as(
+        "SELECT id, received FROM uploads WHERE user_id = $1 AND owner = $2 AND path = $3 AND size = $4 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(user.id)
+    .bind(oid)
+    .bind(&pc)
+    .bind(b.size as i64)
+    .fetch_optional(&s.db)
+    .await?;
+    if let Some((id, received)) = resume {
+        let part = s.store.stage_path(oid, &id);
+        let len = std::fs::metadata(&part).map(|m| m.len() as i64).unwrap_or(-1);
+        if len == received {
+            s.uploads.lock().await.insert(
+                id.clone(),
+                PendingUpload { user_id: user.id, owner: oid, path: b.path, size: b.size, mtime: b.mtime },
+            );
+            return Ok(Json(InitOut { id }));
+        }
+        let _ = std::fs::remove_file(part);
+        sqlx::query("DELETE FROM uploads WHERE id = $1").bind(&id).execute(&s.db).await?;
+    }
     let id = Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO uploads (id, user_id, owner, path, size, mtime, received, created_at) VALUES ($1,$2,$3,$4,$5,$6,0,$7)")
+        .bind(&id)
+        .bind(user.id)
+        .bind(oid)
+        .bind(&pc)
+        .bind(b.size as i64)
+        .bind(b.mtime)
+        .bind(now())
+        .execute(&s.db)
+        .await?;
     s.uploads.lock().await.insert(
         id.clone(),
         PendingUpload { user_id: user.id, owner: oid, path: b.path, size: b.size, mtime: b.mtime },
     );
     Ok(Json(InitOut { id }))
+}
+
+/// Tìm upload đang dở của chính mình (để resume sau F5): cùng vùng, path và size.
+pub async fn upload_active(
+    State(s): State<AppState>,
+    user: AuthUser,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let path = q.get("path").map(String::as_str).unwrap_or("");
+    let owner: Option<Uuid> = q.get("owner").and_then(|v| v.parse().ok());
+    let oid = crate::shares::resolve(&s.db, user.id, owner, path, true).await?;
+    let pc = clean_path(path)?;
+    let size: i64 = q.get("size").and_then(|v| v.parse().ok()).unwrap_or(-1);
+    let row: Option<(String, i64, i64)> = sqlx::query_as(
+        "SELECT id, received, size FROM uploads WHERE user_id = $1 AND owner = $2 AND path = $3 AND ($4 < 0 OR size = $4) ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(user.id)
+    .bind(oid)
+    .bind(&pc)
+    .bind(size)
+    .fetch_optional(&s.db)
+    .await?;
+    match row {
+        Some((id, received, size)) => Ok(Json(serde_json::json!({ "id": id, "received": received, "size": size }))),
+        None => Ok(Json(serde_json::Value::Null)),
+    }
+}
+
+/// Số byte đã nhận của 1 upload (client lệch offset thì hỏi lại rồi chạy tiếp từ đây).
+pub async fn upload_status(
+    State(s): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let row: Option<(Uuid, Uuid, String, i64, i64)> =
+        sqlx::query_as("SELECT user_id, owner, path, size, received FROM uploads WHERE id = $1").bind(&id).fetch_optional(&s.db).await?;
+    match row {
+        Some((uid, oid, path, size, received)) if uid == user.id => {
+            Ok(Json(serde_json::json!({ "id": id, "owner": oid, "path": path, "size": size, "received": received })))
+        }
+        _ => Err(AppError::NotFound("upload gone".into())),
+    }
+}
+
+/// Lấy PendingUpload từ RAM, rớt thì dựng lại từ Postgres (sau restart server).
+async fn pending(s: &AppState, user: Uuid, id: &str) -> Result<PendingUpload, AppError> {
+    if let Some(p) = s.uploads.lock().await.get(id).cloned() {
+        if p.user_id != user {
+            return Err(AppError::Forbidden("not your upload".into()));
+        }
+        return Ok(p);
+    }
+    let row: Option<(Uuid, Uuid, String, i64, Option<i64>)> =
+        sqlx::query_as("SELECT user_id, owner, path, size, mtime FROM uploads WHERE id = $1").bind(id).fetch_optional(&s.db).await?;
+    match row {
+        Some((uid, owner, path, size, mtime)) if uid == user => {
+            let p = PendingUpload { user_id: uid, owner, path, size: size as u64, mtime };
+            s.uploads.lock().await.insert(id.to_string(), p.clone());
+            Ok(p)
+        }
+        _ => Err(AppError::NotFound("upload gone".into())),
+    }
 }
 
 #[derive(Deserialize)]
@@ -346,12 +458,11 @@ pub async fn put_chunk(
     if body.len() > 64 * 1024 * 1024 {
         return Err(AppError::BadRequest("chunk too large (max 64MiB)".into()));
     }
-    let pend = s.uploads.lock().await.get(&id).cloned().ok_or_else(|| AppError::NotFound("upload gone".into()))?;
-    if pend.user_id != user.id {
-        return Err(AppError::Forbidden("not your upload".into()));
-    }
+    let pend = pending(&s, user.id, &id).await?;
+    let received = s.store.write_chunk(pend.owner, &id, q.offset, &body)?;
+    sqlx::query("UPDATE uploads SET received = $2 WHERE id = $1").bind(&id).bind(received as i64).execute(&s.db).await?;
     let mut map = HashMap::new();
-    map.insert("received".to_string(), s.store.write_chunk(pend.owner, &id, q.offset, &body)?);
+    map.insert("received".to_string(), received);
     Ok(Json(map))
 }
 
@@ -360,15 +471,7 @@ pub async fn complete_upload(
     user: AuthUser,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let pend = s
-        .uploads
-        .lock()
-        .await
-        .remove(&id)
-        .ok_or_else(|| AppError::NotFound("upload gone".into()))?;
-    if pend.user_id != user.id {
-        return Err(AppError::Forbidden("not your upload".into()));
-    }
+    let pend = pending(&s, user.id, &id).await?;
     let row = load_user(&s.db, pend.owner).await?;
     let mut q = Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64);
     let r = s.store.complete(pend.owner, &id, &pend.path, pend.size, pend.mtime, &mut q).await;
@@ -386,12 +489,18 @@ pub async fn complete_upload(
     let p = clean_path(&pend.path)?;
     index::add_file(&s.db, pend.owner, &p, pend.size, mtime).await?;
     crate::fulltext::put_from_store(&s.db, &s.store, pend.owner, &p, pend.size).await;
+    sqlx::query("DELETE FROM uploads WHERE id = $1").bind(&id).execute(&s.db).await?;
+    s.uploads.lock().await.remove(&id);
     Ok(StatusCode::CREATED)
 }
 
 #[cfg(test)]
 mod tests {
     use super::parse_range;
+    use super::{pending, upload_active, upload_status, ChunkQuery, InitBody};
+    use crate::state::{AppState, AuthUser};
+    use axum::extract::{Path, Query, State};
+    use std::collections::HashMap;
 
     #[test]
     fn pct_filename() {
@@ -408,5 +517,61 @@ mod tests {
         assert_eq!(parse_range("bytes=5-2", 1000), None);
         assert_eq!(parse_range("bytes=0-1,5-9", 1000), None);
         assert_eq!(parse_range("items=0-1", 1000), None);
+    }
+
+    async fn up_state() -> Option<(AppState, uuid::Uuid)> {
+        let Some((db, u)) = crate::kanban::tests::db_user().await else { return None };
+        let (store, _) = crate::files::tests::tmp_store("upresume");
+        Some((
+            AppState {
+                db,
+                store,
+                enc: jsonwebtoken::EncodingKey::from_secret(b"t"),
+                dec: jsonwebtoken::DecodingKey::from_secret(b"t"),
+                uploads: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+                http: reqwest::Client::new(),
+                tts_url: String::new(),
+                vaults: Default::default(),
+            },
+            u,
+        ))
+    }
+
+    #[tokio::test]
+    async fn upload_resume_across_restart() {
+        let Some((s, u)) = up_state().await else { return };
+        let auth = AuthUser { id: u, admin: false };
+        let data = vec![7u8; 100];
+        // init -> gửi nửa đầu
+        let id = super::init_upload(State(s.clone()), auth.clone(), axum::Json(InitBody { path: "r.bin".into(), size: 100, mtime: None, owner: None }))
+            .await
+            .unwrap()
+            .0
+            .id;
+        super::put_chunk(State(s.clone()), auth.clone(), Path(id.clone()), Query(ChunkQuery { offset: 0 }), axum::body::Bytes::from(data[..40].to_vec()))
+            .await
+            .unwrap();
+        // "restart server": RAM mất, Postgres + .part còn
+        s.uploads.lock().await.clear();
+        let st = upload_status(State(s.clone()), auth.clone(), Path(id.clone())).await.unwrap();
+        assert_eq!(st.0["received"], 40);
+        // active lookup thấy upload dở
+        let mut q = HashMap::new();
+        q.insert("path".to_string(), "r.bin".to_string());
+        q.insert("size".to_string(), "100".to_string());
+        let a = upload_active(State(s.clone()), auth.clone(), Query(q)).await.unwrap();
+        assert_eq!(a.0["id"], id);
+        // gửi tiếp từ received -> xong
+        super::put_chunk(State(s.clone()), auth.clone(), Path(id.clone()), Query(ChunkQuery { offset: 40 }), axum::body::Bytes::from(data[40..].to_vec()))
+            .await
+            .unwrap();
+        super::complete_upload(State(s.clone()), auth.clone(), Path(id.clone())).await.unwrap();
+        let st2: Option<(i64,)> = sqlx::query_as("SELECT size FROM files WHERE user_id = $1 AND path = 'r.bin'").bind(u).fetch_optional(&s.db).await.unwrap();
+        assert_eq!(st2, Some((100,)));
+        // xong thì active không còn
+        let mut q2 = HashMap::new();
+        q2.insert("path".to_string(), "r.bin".to_string());
+        assert!(upload_active(State(s.clone()), auth, Query(q2)).await.unwrap().0.is_null());
+        let _ = pending(&s, u, &id).await;
     }
 }
