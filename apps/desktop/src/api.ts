@@ -239,10 +239,11 @@ async function req(path: string, init?: RequestInit) {
   const vt = sec ? vaultToken() : null;
   const r = await fetch(serverOrigin() + path, {
     ...init,
-    headers: { ...(init?.headers || {}), ...(tok ? { Authorization: `Bearer ${t}` } : {}), ...(vt ? { "X-Vault-Token": vt } : {}) },
+    headers: { ...(init?.headers || {}), ...(tok ? { Authorization: `Bearer ${tok}` } : {}), ...(vt ? { "X-Vault-Token": vt } : {}) },
   });
   if (r.status === 401) {
-    localStorage.removeItem("nk-token");
+    // sai mat khau link cong khai (/api/s/*) khong phai token login het han -> giu nguyen
+    if (!path.startsWith("/api/s/")) localStorage.removeItem("nk-token");
     throw new Error("unauthorized");
   }
   if (sec) {

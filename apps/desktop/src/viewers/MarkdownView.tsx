@@ -113,11 +113,16 @@ export function blocks(md: string): Block[] {
         out.push(c ? { kind: "speak", ...c } : { kind: "speak", html: linkifyWiki(marked.parse(t.raw) as string), text: stripMd(t.raw) });
         break;
       }
-      case "list":
-        for (const item of t.items) {
-          out.push({ kind: "speak", html: linkifyWiki(marked.parse(item.text) as string), text: item.text });
-        }
+      case "list": {
+        // giữ <ul>/<ol><li> để hiện dấu đầu dòng như Obsidian; mỗi item vẫn là 1 block riêng (voice/note từng dòng)
+        const tag = t.ordered ? "ol" : "ul";
+        const base = t.ordered && t.start !== "" ? Number(t.start) : NaN;
+        t.items.forEach((item: { text: string }, i: number) => {
+          const val = Number.isFinite(base) ? ` value="${(base as number) + i}"` : "";
+          out.push({ kind: "speak", html: `<${tag}><li${val}>${linkifyWiki(marked.parse(item.text) as string)}</li></${tag}>`, text: item.text });
+        });
         break;
+      }
       case "table":
         out.push({ kind: "skip", html: marked.parse(t.raw) as string, text: "" });
         break;
