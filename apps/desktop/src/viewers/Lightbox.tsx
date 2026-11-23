@@ -1,8 +1,8 @@
-import { createSignal, onCleanup, onMount } from "solid-js";
+import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { Icon } from "../icons";
 
 /** Xem ảnh toàn màn hình: lăn chuột / nút / chụm 2 ngón để zoom, kéo để di chuyển, Esc hoặc bấm nền để đóng. */
-export default function Lightbox(props: { src: string; alt?: string; onClose: () => void }) {
+export default function Lightbox(props: { src: string; alt?: string; onClose: () => void; onPrev?: () => void; onNext?: () => void; label?: string }) {
   const [s, setS] = createSignal(1);
   const [x, setX] = createSignal(0);
   const [y, setY] = createSignal(0);
@@ -58,6 +58,8 @@ export default function Lightbox(props: { src: string; alt?: string; onClose: ()
   };
   const key = (e: KeyboardEvent) => {
     if (e.key === "Escape") props.onClose();
+    else if (e.key === "ArrowLeft" && props.onPrev) props.onPrev();
+    else if (e.key === "ArrowRight" && props.onNext) props.onNext();
     else if (e.key === "+" || e.key === "=") zoomAt(1.25);
     else if (e.key === "-") zoomAt(0.8);
     else if (e.key === "0") reset(fit);
@@ -87,6 +89,14 @@ export default function Lightbox(props: { src: string; alt?: string; onClose: ()
         style={{ transform: `translate(${x()}px, ${y()}px) scale(${s()})` }}
       />
       <div class="lb-bar">
+        <Show when={props.onPrev}>
+          <button onClick={() => props.onPrev!()} title="Ảnh trước (←)"><Icon name="back" /></button>
+        </Show>
+        <Show when={props.label}><span class="lb-label">{props.label}</span></Show>
+        <Show when={props.onNext}>
+          <button onClick={() => props.onNext!()} title="Ảnh tiếp (→)"><Icon name="next" /></button>
+          <span class="lb-sep" />
+        </Show>
         <button onClick={() => zoomAt(0.8)} title="Thu nhỏ (-)"><Icon name="minus" /></button>
         <button class="lb-pct" onClick={() => reset(fit)} title="Vừa màn hình (0)">{Math.round(s() * 100)}%</button>
         <button onClick={() => zoomAt(1.25)} title="Phóng to (+)"><Icon name="plus" /></button>

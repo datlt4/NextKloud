@@ -69,7 +69,12 @@ pub async fn serve_web(web_dir: PathBuf, uri: Uri) -> Response {
     // Thư mục hoặc file không tồn tại (route SPA) -> index.html.
     let mut file = web_dir.join(&rel);
     let is_dir = tokio::fs::metadata(&file).await.map(|m| m.is_dir()).unwrap_or(false);
-    if rel.as_os_str().is_empty() || is_dir || !tokio::fs::try_exists(&file).await.unwrap_or(false) {
+    let missing = !tokio::fs::try_exists(&file).await.unwrap_or(false);
+    // file build (assets/*.js...) không còn (bản mới đã thay tên): 404 để app biết mà tải lại, đừng trả index.html
+    if missing && rel.starts_with("assets") {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if rel.as_os_str().is_empty() || is_dir || missing {
         file = web_dir.join("index.html");
     }
     match tokio::fs::read(&file).await {
@@ -236,6 +241,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
+        // file build cũ không còn -> 404 (không trả index.html)
+        let res = app
+            .clone()
+            .oneshot(Request::builder().uri("/assets/ImageView-old.js").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
         // API vẫn ưu tiên
         let res = app
             .oneshot(Request::builder().uri("/api/health").body(Body::empty()).unwrap())

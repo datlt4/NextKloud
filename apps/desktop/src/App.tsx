@@ -9,15 +9,30 @@ import Settings, { type SettingsTab } from "./Settings";
 import { Avatar } from "./avatar";
 import MarkdownView from "./viewers/MarkdownView";
 import { viewerKind, hasThumb, type VKind } from "./viewers/kinds";
-const TextView = lazy(() => import("./viewers/TextView"));
-const ImageView = lazy(() => import("./viewers/ImageView"));
-const VideoView = lazy(() => import("./viewers/VideoView"));
-const PdfView = lazy(() => import("./viewers/PdfView"));
-const ZipView = lazy(() => import("./viewers/ZipView"));
-const EpubView = lazy(() => import("./viewers/EpubView"));
-const DrawioView = lazy(() => import("./viewers/DrawioView"));
-const ExcalidrawView = lazy(() => import("./viewers/ExcalidrawView"));
-const OfficeView = lazy(() => import("./viewers/OfficeView"));
+/** Server vừa cài bản mới thì file code cũ của trang đang mở không còn: tải lại trang (1 lần/phút) thay vì treo "Đang mở…". */
+function reloadOnStale<T>(p: Promise<T>): Promise<T> {
+  return p.catch((e) => {
+    let last = 0;
+    try {
+      last = +(sessionStorage.getItem("nk-stale-reload") ?? 0);
+      if (Date.now() - last > 60_000) {
+        sessionStorage.setItem("nk-stale-reload", String(Date.now()));
+        location.reload();
+        return new Promise<T>(() => {});
+      }
+    } catch {}
+    throw e;
+  });
+}
+const TextView = lazy(() => reloadOnStale(import("./viewers/TextView")));
+const ImageView = lazy(() => reloadOnStale(import("./viewers/ImageView")));
+const VideoView = lazy(() => reloadOnStale(import("./viewers/VideoView")));
+const PdfView = lazy(() => reloadOnStale(import("./viewers/PdfView")));
+const ZipView = lazy(() => reloadOnStale(import("./viewers/ZipView")));
+const EpubView = lazy(() => reloadOnStale(import("./viewers/EpubView")));
+const DrawioView = lazy(() => reloadOnStale(import("./viewers/DrawioView")));
+const ExcalidrawView = lazy(() => reloadOnStale(import("./viewers/ExcalidrawView")));
+const OfficeView = lazy(() => reloadOnStale(import("./viewers/OfficeView")));
 
 /** Thumbnail server cho tile grid; lỗi thì ẩn, giữ icon mặc định. */
 function ThumbImg(props: { path: string; name: string }) {

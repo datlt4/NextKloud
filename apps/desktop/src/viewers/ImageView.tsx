@@ -55,7 +55,14 @@ export default function ImageView(props: { files: ImgItem[]; index: number }) {
         <button class="icon-btn lb-nav" onClick={(e) => { e.stopPropagation(); next(); }} title="Ảnh tiếp"><Icon name="next" size={22} /></button>
       </Show>
       <Show when={zoom()}>
-        <Portal><Lightbox src={api.streamUrl(cur().path)} alt={cur().name} onClose={() => setZoom(false)} /></Portal>
+        <Portal><Lightbox
+          src={api.streamUrl(cur().path)}
+          alt={cur().name}
+          onClose={() => setZoom(false)}
+          onPrev={n() > 1 ? prev : undefined}
+          onNext={n() > 1 ? next : undefined}
+          label={n() > 1 ? `${i() + 1}/${n()}` : undefined}
+        /></Portal>
       </Show>
     </div>
   );
