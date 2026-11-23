@@ -107,6 +107,30 @@ export interface DeckPreview {
   stacks: { id: number; title: string; count: number; merge_into: string | null; is_done: boolean }[];
   cards: { id: number; title: string; stack_id: number; big: boolean; done: boolean; parent: number | null }[];
 }
+export type TaskView = "overdue" | "today" | "week" | "all" | "done";
+export interface TaskItem {
+  id: string;
+  board_id: string;
+  board_title: string;
+  column_id: string;
+  column_title: string;
+  parent_id: string | null;
+  title: string;
+  due_at: number | null;
+  done_at: number | null;
+  labels: string[];
+}
+export interface Habit {
+  id: string;
+  title: string;
+  schedule: string;
+  archived: boolean;
+  created_at: number;
+  streak: number;
+  total: number;
+  done_today: boolean;
+  days: string[];
+}
 export interface VaultOutline {
   root: string;
   files: { path: string; headings: [number, string][] }[];
@@ -404,6 +428,25 @@ export const api = {
   },
   async deckApply(board_id: number, parents: Record<number, number | null>, skip_stacks: number[]) {
     return (await req("/api/kanban/import/deck", { method: "POST", headers: JSON_H, body: JSON.stringify({ board_id, parents, skip_stacks }) })).json() as Promise<{ board: string; cards: number; subtasks: number }>;
+  },
+  // --- task + habit tracker ---
+  async tasks(view: TaskView) {
+    return (await req(`/api/tasks?view=${view}`)).json() as Promise<TaskItem[]>;
+  },
+  async habits() {
+    return (await req("/api/habits")).json() as Promise<Habit[]>;
+  },
+  async createHabit(title: string) {
+    return (await req("/api/habits", { method: "POST", headers: JSON_H, body: JSON.stringify({ title }) })).json() as Promise<Habit>;
+  },
+  async updateHabit(id: string, b: { title?: string; archived?: boolean }) {
+    return (await req(`/api/habits/${id}`, { method: "PATCH", headers: JSON_H, body: JSON.stringify(b) })).json() as Promise<Habit>;
+  },
+  async deleteHabit(id: string) {
+    await req(`/api/habits/${id}`, { method: "DELETE" });
+  },
+  async habitCheck(id: string, day: string, done: boolean) {
+    return (await req(`/api/habits/${id}/check`, { method: "POST", headers: JSON_H, body: JSON.stringify({ day, done }) })).json() as Promise<Habit>;
   },
   // --- Secret Vault ---
   async secretStatus() {

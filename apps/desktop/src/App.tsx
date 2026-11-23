@@ -46,6 +46,7 @@ function ThumbImg(props: { path: string; name: string }) {
 import { MoveDialog, NameDialog, TrashPage, errText, joinPath } from "./fileops";
 import { NotesPage } from "./annot";
 import { KanbanPage } from "./kanban";
+import { TrackerPage } from "./tracker";
 import { SecretGate, SecretSettings } from "./secret";
 
 type SortKey = "name" | "size" | "modified";
@@ -96,7 +97,7 @@ export default function App() {
   const [userMenuUp, setUserMenuUp] = createSignal(false);
   const [mSearch, setMSearch] = createSignal(false);
   const [showLook, setShowLook] = createSignal(false);
-  const [page, setPage] = createSignal<"files" | "settings" | "trash" | "notes" | "kanban" | "secret" | "secret-trash">("files");
+  const [page, setPage] = createSignal<"files" | "settings" | "trash" | "notes" | "kanban" | "tasks" | "secret" | "secret-trash">("files");
   const [secretSet, setSecretSet] = createSignal(false);
   const [vaultLeft, setVaultLeft] = createSignal(0);
   const inSecret = () => isSecret(prefix()) || page() === "secret-trash";
@@ -295,12 +296,12 @@ export default function App() {
   const go = async (h: string) => {
     routing = true;
     try {
-      const m = /^#\/(f|o|notes|trash|settings|kanban|secret)(?:\/(.*))?$/.exec(h);
+      const m = /^#\/(f|o|notes|trash|tasks|settings|kanban|secret)(?:\/(.*))?$/.exec(h);
       const rest = m?.[2] ? decodeURIComponent(m[2]) : "";
       if (m?.[1] === "secret") await openSecret();
       else if (m?.[1] === "f") await load(rest);
       else if (m?.[1] === "o" && rest) await openAt(rest, "");
-      else if (m?.[1] === "notes" || m?.[1] === "trash") setPage(m[1]);
+      else if (m?.[1] === "notes" || m?.[1] === "trash" || m?.[1] === "tasks") setPage(m[1]);
       else if (m?.[1] === "kanban") {
         setBoardId(rest || null);
         setPage("kanban");
@@ -1098,6 +1099,9 @@ export default function App() {
                 <button class="nav" classList={{ active: page() === "kanban" }} onClick={() => { setPage("kanban"); setSideOpen(false); }}>
                   <Icon name="kanban" /> Deck
                 </button>
+                <button class="nav" classList={{ active: page() === "tasks" }} onClick={() => { setPage("tasks"); setSideOpen(false); }}>
+                  <Icon name="check" /> Theo dõi
+                </button>
                 <button class="nav" classList={{ active: page() === "notes" }} onClick={() => { setPage("notes"); setSideOpen(false); }}>
                   <Icon name="note" /> Ghi chú
                 </button>
@@ -1158,6 +1162,15 @@ export default function App() {
               </Show>
               <Show when={page() === "notes"}>
                 <NotesPage onOpen={openAt} onError={setErr} />
+              </Show>
+              <Show when={page() === "tasks"}>
+                <Show when={err()}>
+                  <div class="err banner">
+                    <span>{err()}</span>
+                    <button class="icon-btn sm" onClick={() => setErr("")}><Icon name="close" size={14} /></button>
+                  </div>
+                </Show>
+                <TrackerPage onOpenBoard={(id) => { setBoardId(id); setPage("kanban"); }} onError={setErr} />
               </Show>
               <Show when={page() === "trash"}>
                 <Show when={err()}>
