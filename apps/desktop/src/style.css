@@ -723,6 +723,9 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
   /* màn bé: ẩn logo cho gọn, giữ avatar để vào cài đặt; nút tìm kiếm dạt sang phải (vẫn giữ nút menu mở sidebar) */
   .hdr-brand { display: none; }
   .search-fab { margin-left: auto; }
+  /* màn bé: breadcrumbs xuống hàng 2 hiện full đường dẫn; hàng 1 giữ nút tải lên/tạo thư mục/chế độ xem */
+  .toolbar { flex-wrap: wrap; }
+  .crumbs { flex: 1 1 100%; order: 10; }
   .viewer { padding: 4px 10px 32px; }
   /* màn nhỏ: nút đọc co giãn, chữ nhỏ lại, không chừa lề phải thừa */
   .md-bar { gap: 8px; }
