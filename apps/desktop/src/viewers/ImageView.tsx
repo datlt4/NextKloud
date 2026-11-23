@@ -1,4 +1,4 @@
-import { Show, createEffect, createSignal, onCleanup } from "solid-js";
+import { Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import { Portal } from "solid-js/web";
 import Lightbox from "./Lightbox";
 import { api } from "../api";
@@ -23,6 +23,11 @@ export default function ImageView(props: { files: ImgItem[]; index: number }) {
 
   const onKey = (e: KeyboardEvent) => {
     if (zoom()) return;
+    if ((e.ctrlKey || e.metaKey) && ["+", "=", "-"].includes(e.key)) {
+      e.preventDefault();
+      setZoom(true);
+      return;
+    }
     if (e.key === "ArrowLeft") prev();
     if (e.key === "ArrowRight") next();
   };
@@ -30,6 +35,32 @@ export default function ImageView(props: { files: ImgItem[]; index: number }) {
     setErr("");
     window.addEventListener("keydown", onKey);
     onCleanup(() => window.removeEventListener("keydown", onKey));
+  });
+
+  // 2 ngón chạm bất kỳ đâu / Ctrl(⌘)+lăn chuột: vào chế độ phóng to thay vì zoom cả trang
+  onMount(() => {
+    const free = (t: EventTarget | null) => !(t as HTMLElement | null)?.closest?.("button,input,select,textarea,a");
+    const ts = (e: TouchEvent) => {
+      if (!zoom() && e.touches.length === 2 && free(e.target)) {
+        e.preventDefault();
+        setZoom(true);
+      }
+    };
+    const wh = (e: WheelEvent) => {
+      if (!zoom() && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        setZoom(true);
+      }
+    };
+    const gs = (e: Event) => e.preventDefault(); // Safari: chặn zoom trang
+    document.addEventListener("touchstart", ts, { passive: false });
+    document.addEventListener("wheel", wh, { passive: false });
+    document.addEventListener("gesturestart", gs);
+    onCleanup(() => {
+      document.removeEventListener("touchstart", ts);
+      document.removeEventListener("wheel", wh);
+      document.removeEventListener("gesturestart", gs);
+    });
   });
 
   return (

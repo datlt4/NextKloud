@@ -400,7 +400,7 @@ fn w64(v: u64, o: &mut Vec<u8>) {
     o.extend_from_slice(&v.to_le_bytes());
 }
 /// Percent-encode tên file zip (tiếng Việt/khoảng trắng).
-fn pct(s: &str) -> String {
+pub(crate) fn pct(s: &str) -> String {
     s.bytes()
         .map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
         .collect()
@@ -421,7 +421,10 @@ async fn zip_stream(
     // send chờ (không try_send): channel đầy thì producer dừng theo, không mất chunk
     macro_rules! emit {
         ($b:expr) => {
-            let _ = tx.send(Ok($b)).await;
+            // client đã huỷ tải -> dừng, khỏi đọc tiếp cả thư mục từ S3
+            if tx.send(Ok($b)).await.is_err() {
+                return Ok(());
+            }
         };
     }
     let mut central: Vec<u8> = Vec::new();

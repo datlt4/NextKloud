@@ -1986,6 +1986,7 @@ const zh: Dict = {
   "f.etaHMS": "{h}小时{m}分",
   "f.etaMS": "{m}分{s}秒",
   "f.etaS": "{s}秒",
+  "f.saving": "保存中…",
   "f.trashUndo": "撤销",
   "f.undoFail": "无法撤销",
   "f.foldersN": "{n} 个文件夹",

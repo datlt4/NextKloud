@@ -630,8 +630,8 @@ export const api = {
     return (await req(fileUrl(path))).blob();
   },
   /** Upload đang dở của chính mình (để resume): cùng vùng, path và size. */
-  async uploadActive(path: string, size: number, owner?: string) {
-    const q = new URLSearchParams({ path, size: String(size), ...(owner ? { owner } : {}) });
+  async uploadActive(path: string, size: number, mtime: number, owner?: string) {
+    const q = new URLSearchParams({ path, size: String(size), mtime: String(mtime), ...(owner ? { owner } : {}) });
     const r = await req(`/api/files/uploads/active?${q}`);
     return r.json() as Promise<{ id: string; received: number; size: number } | null>;
   },
@@ -642,8 +642,10 @@ export const api = {
     const rel = isSecret(path) ? sRel(path) : path;
     let id = "";
     let off = 0;
+    // chỉ resume File thật (có mtime): cùng path+size+mtime mới coi là cùng nội dung
+    const mtime = data instanceof File ? Math.floor(data.lastModified / 1000) : undefined;
     try {
-      const a = isSecret(path) ? null : await this.uploadActive(rel, data.size, owner);
+      const a = isSecret(path) || mtime === undefined ? null : await this.uploadActive(rel, data.size, mtime, owner);
       if (a && a.received > 0 && a.received < data.size) {
         id = a.id;
         off = a.received;
@@ -659,7 +661,7 @@ export const api = {
         body: JSON.stringify({
           path: rel,
           size: data.size,
-          mtime: data instanceof File ? Math.floor(data.lastModified / 1000) : undefined,
+          mtime,
           ...(owner ? { owner } : {}),
         }),
       });

@@ -329,8 +329,6 @@ pub async fn init_upload(
         return Err(AppError::BadRequest("file too large (max 100GiB)".into()));
     }
     let row = load_user(&s.db, user.id).await?;
-    let q = Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64);
-    q.can_add(b.size).map_err(|e| AppError::Conflict(format!("quota exceeded: {e}")))?;
     ops::upload_path(&b.path)?; // validate early, chặn ghi vào .nextkloud (trừ file cài đặt client)
     let oid = crate::shares::resolve(&s.db, user.id, b.owner, &b.path, true).await?;
     // quota tính cho chủ vùng (chủ file khi upload vào thư mục được chia sẻ)
@@ -348,14 +346,16 @@ pub async fn init_upload(
     }
     sqlx::query("DELETE FROM uploads WHERE user_id = $1 AND created_at < $2").bind(user.id).bind(now() - 7 * 86_400).execute(&s.db).await?;
     let pc = clean_path(&b.path)?;
-    // còn dở cùng file (path+size) và file .part còn nguyên -> trả id cũ để chạy tiếp
+    // còn dở cùng file (path+size+mtime) và file .part còn nguyên -> trả id cũ để chạy tiếp.
+    // Không có mtime (Blob, saveText) thì không resume: khác nội dung cùng size sẽ bị ghép lẫn.
     let resume: Option<(String, i64)> = sqlx::query_as(
-        "SELECT id, received FROM uploads WHERE user_id = $1 AND owner = $2 AND path = $3 AND size = $4 ORDER BY created_at DESC LIMIT 1",
+        "SELECT id, received FROM uploads WHERE user_id = $1 AND owner = $2 AND path = $3 AND size = $4 AND mtime = $5 ORDER BY created_at DESC LIMIT 1",
     )
     .bind(user.id)
     .bind(oid)
     .bind(&pc)
     .bind(b.size as i64)
+    .bind(b.mtime)
     .fetch_optional(&s.db)
     .await?;
     if let Some((id, received)) = resume {
@@ -400,13 +400,15 @@ pub async fn upload_active(
     let oid = crate::shares::resolve(&s.db, user.id, owner, path, true).await?;
     let pc = clean_path(path)?;
     let size: i64 = q.get("size").and_then(|v| v.parse().ok()).unwrap_or(-1);
+    let mtime: Option<i64> = q.get("mtime").and_then(|v| v.parse().ok());
     let row: Option<(String, i64, i64)> = sqlx::query_as(
-        "SELECT id, received, size FROM uploads WHERE user_id = $1 AND owner = $2 AND path = $3 AND ($4 < 0 OR size = $4) ORDER BY created_at DESC LIMIT 1",
+        "SELECT id, received, size FROM uploads WHERE user_id = $1 AND owner = $2 AND path = $3 AND ($4 < 0 OR size = $4) AND mtime = $5 ORDER BY created_at DESC LIMIT 1",
     )
     .bind(user.id)
     .bind(oid)
     .bind(&pc)
     .bind(size)
+    .bind(mtime)
     .fetch_optional(&s.db)
     .await?;
     match row {
@@ -552,7 +554,7 @@ mod tests {
         let auth = AuthUser { id: u, admin: false };
         let data = vec![7u8; 100];
         // init -> gửi nửa đầu
-        let id = super::init_upload(State(s.clone()), auth.clone(), axum::Json(InitBody { path: "r.bin".into(), size: 100, mtime: None, owner: None }))
+        let id = super::init_upload(State(s.clone()), auth.clone(), axum::Json(InitBody { path: "r.bin".into(), size: 100, mtime: Some(1000), owner: None }))
             .await
             .unwrap()
             .0
@@ -568,6 +570,11 @@ mod tests {
         let mut q = HashMap::new();
         q.insert("path".to_string(), "r.bin".to_string());
         q.insert("size".to_string(), "100".to_string());
+        q.insert("mtime".to_string(), "999".to_string());
+        // cùng path+size nhưng khác mtime (file khác): không được ghép vào upload dở
+        let a = upload_active(State(s.clone()), auth.clone(), Query(q.clone())).await.unwrap();
+        assert!(a.0.is_null());
+        q.insert("mtime".to_string(), "1000".to_string());
         let a = upload_active(State(s.clone()), auth.clone(), Query(q)).await.unwrap();
         assert_eq!(a.0["id"], id);
         // gửi tiếp từ received -> xong

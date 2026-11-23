@@ -39,16 +39,14 @@ export default function Lightbox(props: { src: string; alt?: string; onClose: ()
   const move = (e: PointerEvent) => {
     const p = pts.get(e.pointerId);
     if (!p) return;
-    if (pts.size === 2) {
-      const [a, b] = [...pts.entries()];
-      const other = a[0] === e.pointerId ? b[1] : a[1];
-      const d0 = Math.hypot(p.x - other.x, p.y - other.y);
-      const d1 = Math.hypot(e.clientX - other.x, e.clientY - other.y);
-      if (d0 > 0) zoomAt(d1 / d0, (e.clientX + other.x) / 2, (e.clientY + other.y) / 2);
-    } else {
-      setX(x() + e.clientX - p.x);
-      setY(y() + e.clientY - p.y);
+    if (pts.size >= 2) {
+      // chụm 2 ngón: xử lý ở touchmove (bắt cả cử chỉ bắt đầu trước khi mở hộp này)
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      moved = true;
+      return;
     }
+    setX(x() + e.clientX - p.x);
+    setY(y() + e.clientY - p.y);
     if (Math.hypot(e.clientX - p.x, e.clientY - p.y) > 2) moved = true;
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
   };
@@ -57,7 +55,18 @@ export default function Lightbox(props: { src: string; alt?: string; onClose: ()
     // bấm (không kéo) ra ngoài ảnh thì đóng
     if (!moved && pts.size === 0 && e.target === box) props.onClose();
   };
+  let pd = 0; // khoảng cách 2 ngón lần trước
+  const tmove = (e: TouchEvent) => {
+    if (e.touches.length !== 2) return void (pd = 0);
+    e.preventDefault();
+    const [a, b] = [e.touches[0], e.touches[1]];
+    const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    if (pd > 0) zoomAt(d / pd, (a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2);
+    pd = d;
+  };
+  const tend = () => (pd = 0);
   const key = (e: KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && ["+", "=", "-", "0"].includes(e.key)) e.preventDefault(); // không zoom cả trang
     if (e.key === "Escape") props.onClose();
     else if (e.key === "ArrowLeft" && props.onPrev) props.onPrev();
     else if (e.key === "ArrowRight" && props.onNext) props.onNext();
@@ -73,7 +82,13 @@ export default function Lightbox(props: { src: string; alt?: string; onClose: ()
       zoomAt(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), e.clientX, e.clientY);
     };
     box.addEventListener("wheel", wheel, { passive: false });
+    document.addEventListener("touchmove", tmove, { passive: false });
+    document.addEventListener("touchend", tend);
+    document.addEventListener("touchstart", tend);
     onCleanup(() => {
+      document.removeEventListener("touchmove", tmove);
+      document.removeEventListener("touchend", tend);
+      document.removeEventListener("touchstart", tend);
       document.removeEventListener("keydown", key);
       box.removeEventListener("wheel", wheel);
     });

@@ -402,12 +402,29 @@ async fn public_share(db: &PgPool, token: &str, pw: &str) -> Result<ShareRow, Ap
         return Err(AppError::NotFound("link đã hết hạn".into()));
     }
     if let Some(h) = &r.pass_hash {
-        if pw.is_empty() || !crate::auth::verify_password(pw, h) {
+        if pw.is_empty() {
             return Err(AppError::Auth("sai mật khẩu link".into()));
         }
+        // chống dò mật khẩu: sai 5 lần thì khoá link 5 phút (cũng đỡ tốn CPU hash)
+        let now = chrono::Utc::now().timestamp();
+        let locked = PW_FAILS.lock().unwrap().get(token).is_some_and(|&(n, at)| n >= 5 && now - at < 300);
+        if locked {
+            return Err(AppError::Forbidden("sai mật khẩu quá nhiều lần, thử lại sau 5 phút".into()));
+        }
+        if !crate::auth::verify_password(pw, h) {
+            let mut m = PW_FAILS.lock().unwrap();
+            m.retain(|_, &mut (_, at)| now - at < 300);
+            let e = m.entry(token.to_string()).or_insert((0, now));
+            *e = (e.0 + 1, now);
+            return Err(AppError::Auth("sai mật khẩu link".into()));
+        }
+        PW_FAILS.lock().unwrap().remove(token);
     }
     Ok(r)
 }
+
+/// token link -> (số lần sai mật khẩu, lần sai gần nhất)
+static PW_FAILS: std::sync::LazyLock<std::sync::Mutex<HashMap<String, (u32, i64)>>> = std::sync::LazyLock::new(Default::default);
 
 #[derive(Serialize)]
 pub struct LinkMeta {
@@ -525,7 +542,7 @@ pub async fn link_file(
         .header(header::CONTENT_TYPE, crate::routes::content_type(&full))
         .header(header::CONTENT_LENGTH, end - start)
         .header(header::ACCEPT_RANGES, "bytes")
-        .header(header::CONTENT_DISPOSITION, format!("attachment; filename*=UTF-8''{name}"));
+        .header(header::CONTENT_DISPOSITION, format!("attachment; filename*=UTF-8''{}", crate::zip::pct(&name)));
     if status == StatusCode::PARTIAL_CONTENT {
         res = res.header(header::CONTENT_RANGE, format!("bytes {start}-{}/{size}", end - 1));
     }

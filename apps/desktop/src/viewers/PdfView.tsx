@@ -103,12 +103,17 @@ function PdfPage(props: { doc: pdfjs.PDFDocumentProxy; n: number; scale: number;
       text?.cancel();
       setRatio(vp.height / vp.width);
       setWid(vp.width);
-      canvas.width = Math.floor(vp.width * dpr);
-      canvas.height = Math.floor(vp.height * dpr);
-      const t = p.render({ canvas, viewport: vp, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined, recordImages: tone !== "normal" } as any);
+      // vẽ + đổi màu trên canvas ẩn rồi mới chép sang: không loé trang trắng trước khi đổi màu
+      const off = document.createElement("canvas");
+      off.width = Math.floor(vp.width * dpr);
+      off.height = Math.floor(vp.height * dpr);
+      const t = p.render({ canvas: off, viewport: vp, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined, recordImages: tone !== "normal" } as any);
       job = t;
       await t.promise;
-      if (tone !== "normal") recolor(canvas, tone, (t as any).imageCoordinates ?? (p as any).imageCoordinates ?? null);
+      if (tone !== "normal") recolor(off, tone, (t as any).imageCoordinates ?? (p as any).imageCoordinates ?? null);
+      canvas.width = off.width;
+      canvas.height = off.height;
+      canvas.getContext("2d")?.drawImage(off, 0, 0);
       // lớp chữ (chọn / copy)
       textBox.replaceChildren();
       box.style.setProperty("--total-scale-factor", String(sc));
@@ -193,10 +198,19 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
     if (scrolling()) scrollToPage(page());
   };
 
+  // Màn cảm ứng: cuộn xuống thì ẩn thanh công cụ, chạm 1 cái (không vuốt) để hiện/ẩn.
+  const touchUi = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+  const [barHidden, setBarHidden] = createSignal(false);
+  let lastTop = 0;
+
   // Cuộn liên tục: trang hiện tại = trang đầu tiên còn thấy dưới thanh công cụ.
   const onScroll = () => {
-    if (!scrolling()) return;
     const sc = document.fullscreenElement === host ? host : scroller; // toàn màn hình thì chính host cuộn
+    if (touchUi && sc) {
+      if (sc.scrollTop > lastTop + 12) setBarHidden(true);
+      lastTop = sc.scrollTop;
+    }
+    if (!scrolling()) return;
     const top = (sc?.getBoundingClientRect().top ?? 0) + 120;
     let cur = 1;
     for (const el of Array.from(host.querySelectorAll<HTMLElement>(".pdf-row > .pdf-pg:first-child"))) {
@@ -262,12 +276,100 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
   };
   const onFs = () => !cancelled && setFs(!!document.fullscreenElement);
   const zoom = (d: number) => setScale((s) => Math.min(3, Math.max(0.4, +(s + d).toFixed(1))));
+
+  // Chụm 2 ngón / Ctrl(⌘)+lăn chuột: xem trước bằng CSS scale, thả tay mới render lại ở zoom mới.
+  let gf = 1; // hệ số đang xem trước
+  let gp = { x: 0, y: 0 }; // điểm giữ đứng yên (toạ độ màn hình)
+  let commitT = 0;
+  const pagesEl = () => Array.from(host.querySelectorAll<HTMLElement>(":scope > .pdf-list, :scope > .pdf-row"));
+  const preview = (f: number, cx: number, cy: number) => {
+    gf = Math.min(3 / scale(), Math.max(0.4 / scale(), f));
+    gp = { x: cx, y: cy };
+    for (const el of pagesEl()) {
+      const r = el.getBoundingClientRect();
+      el.style.transformOrigin = `${cx - r.left}px ${cy - r.top}px`;
+      el.style.transform = `scale(${gf})`;
+    }
+  };
+  const commit = () => {
+    clearTimeout(commitT);
+    if (gf === 1) return;
+    const sc = document.fullscreenElement === host ? host : scroller;
+    const r = sc?.getBoundingClientRect();
+    const k = gf;
+    gf = 1;
+    for (const el of pagesEl()) el.style.transform = "";
+    setScale(+(scale() * k).toFixed(2));
+    // giữ điểm dưới ngón tay/con trỏ đứng yên sau khi các trang đổi kích thước
+    if (sc && r) requestAnimationFrame(() => {
+      sc.scrollTop = (sc.scrollTop + gp.y - r.top) * k - (gp.y - r.top);
+      sc.scrollLeft = (sc.scrollLeft + gp.x - r.left) * k - (gp.x - r.left);
+    });
+  };
+  onMount(() => {
+    let d0 = 0;
+    const dist = (e: TouchEvent) => Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+    const ts = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        d0 = dist(e) / gf;
+      }
+    };
+    const tm = (e: TouchEvent) => {
+      if (e.touches.length !== 2 || !d0) return;
+      e.preventDefault();
+      preview(dist(e) / d0, (e.touches[0].clientX + e.touches[1].clientX) / 2, (e.touches[0].clientY + e.touches[1].clientY) / 2);
+    };
+    let tap: { x: number; y: number; t: number } | null = null;
+    const te = (e: TouchEvent) => {
+      if (e.touches.length < 2 && d0) {
+        d0 = 0;
+        commit();
+        tap = null;
+      }
+      const c = e.changedTouches[0];
+      if (tap && e.touches.length === 0 && c && Date.now() - tap.t < 300 && Math.hypot(c.clientX - tap.x, c.clientY - tap.y) < 10) {
+        const el = e.target as HTMLElement;
+        if (!el.closest(".pdf-bar, button, input, select, a") && !window.getSelection()?.toString()) setBarHidden((h) => !h);
+      }
+      tap = null;
+    };
+    const ts1 = (e: TouchEvent) => {
+      tap = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() } : null;
+    };
+    host.addEventListener("touchstart", ts1, { passive: true });
+    const wh = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      preview(gf * Math.exp(-e.deltaY * 0.004), e.clientX, e.clientY);
+      clearTimeout(commitT);
+      commitT = window.setTimeout(commit, 250);
+    };
+    const key = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || !["+", "=", "-", "0"].includes(e.key)) return;
+      e.preventDefault();
+      if (e.key === "0") setScale(1.4);
+      else zoom(e.key === "-" ? -0.2 : 0.2);
+    };
+    const gs = (e: Event) => e.preventDefault(); // Safari: chặn zoom trang
+    host.addEventListener("touchstart", ts, { passive: false });
+    host.addEventListener("touchmove", tm, { passive: false });
+    host.addEventListener("touchend", te);
+    host.addEventListener("touchcancel", te);
+    host.addEventListener("wheel", wh, { passive: false });
+    host.addEventListener("gesturestart", gs);
+    document.addEventListener("keydown", key);
+    onCleanup(() => {
+      clearTimeout(commitT);
+      document.removeEventListener("keydown", key);
+    });
+  });
   const onErr = (m: string) => !cancelled && setErr(m);
 
   return (
     <ReaderLayout r={reader} toc={toc()} current={toc().filter((t) => +t.anchor.slice(1) <= page()).pop()?.anchor ?? ""} onJump={jump} anchorOf={() => here()}>
     <div class="pdf-wrap" ref={host}>
-      <div class="pdf-bar">
+      <div class="pdf-bar" classList={{ hide: barHidden() }}>
         <button class="icon-btn" onClick={() => go(-1)} disabled={page() <= 1} title={t("vw.prevPage")}><Icon name="back" /></button>
         <span class="pdf-num muted sm">
           <input

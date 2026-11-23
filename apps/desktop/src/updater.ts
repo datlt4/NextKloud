@@ -28,16 +28,18 @@ export async function checkUpdate(silent = false): Promise<UpdateInfo | null> {
     }
     const ver = u.version;
     let downloaded = 0;
+    let total = 0;
     const inf: UpdateInfo = {
       version: ver,
       body: u.body,
       apply: async (onProgress) => {
         await u.downloadAndInstall((e) => {
-          if (e.event === "Started") onProgress(0);
-          else if (e.event === "Progress") {
+          if (e.event === "Started") {
+            total = (e.data as { contentLength?: number }).contentLength ?? 0;
+            onProgress(0);
+          } else if (e.event === "Progress") {
             const c = (e.data as { chunkLength: number }).chunkLength;
             downloaded += c;
-            const total = (u as unknown as { contentLength?: number }).contentLength ?? 0;
             onProgress(total > 0 ? Math.round((downloaded / total) * 100) : -1);
           } else if (e.event === "Finished") onProgress(100);
         });

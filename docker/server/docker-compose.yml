@@ -35,6 +35,8 @@ services:
       - ONLYOFFICE_HEADERS=${ONLYOFFICE_HEADERS:-}
       # Secret Vault: trộn vào PIN, không nằm trong DB/bản sao lưu. Tự sao lưu riêng giá trị này.
       - SECRET_PEPPER=${SECRET_PEPPER:-}
+      # Giờ địa phương cho "hôm nay" của Habit/Task (mặc định container là UTC).
+      - TZ=${TZ:-Asia/Ho_Chi_Minh}
       - ALLOWED_ORIGINS=*
       # Không có TRUSTED_DOMAINS — cố tình bỏ giống yêu cầu (khác Nextcloud).
     extra_hosts:
