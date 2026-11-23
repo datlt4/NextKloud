@@ -1,7 +1,7 @@
 # NextKloud — Handoff (chi tiết)
 
 Tài liệu bàn giao cho agent kế tiếp (review hoặc tiếp quản). Đọc hết file này trước khi sửa code.
-Cập nhật: 2026-11-20 · version 0.1.6 · commit nền `147e850` (màn admin) + tài liệu này.
+Cập nhật: 2026-11-23 · version 0.1.14 · việc còn lại tổng hợp ở mục 9.0.
 
 > Repo **public**. Không ghi secret, mật khẩu, nội dung file hay nội dung card Kanban của người dùng vào repo (kể cả trong tài liệu này).
 
@@ -48,10 +48,10 @@ NextKloud là bản thay thế Nextcloud **không dùng PHP**: Tauri v2 + Rust (
 4. **Không commit secret.** `.env` chỉ có trên mini PC. Không đổi mật khẩu admin thật của người dùng.
 5. **Không nói suy đoán như sự thật.** Giá trị nào kiểm chứng được (version, path, config) thì kiểm tra trước, bằng SSH hoặc đọc file.
 6. **Thao tác không đảo ngược** (xoá dữ liệu trên server, purge bucket) phải hỏi trước, kiểm tra đúng đích (UUID đủ 36 ký tự) rồi mới chạy.
-7. **Release:** `release.yml` chỉ tạo release khi version trong `apps/desktop/package.json` khác với tag đã có.
-   - Bump bằng `scripts/set-version.sh X.Y.Z`. Script cập nhật package.json, tauri.conf.json, và các Cargo.toml của desktop, backend, migrate.
-   - Người dùng muốn **bump major** khi ra bản lớn.
-   - Các commit `80aeed5`, `147e850` chưa bump (vẫn 0.1.6) nên chưa có installer mới; Docker image thì đã build.
+7. **Version luôn tự tăng (yêu cầu người dùng 23/11):** mỗi lần commit lên `main` đều bump patch trong cùng commit: chạy `scripts/set-version.sh patch` trước `git commit` (script tự +1 số cuối và cập nhật package.json, tauri.conf.json, các Cargo.toml + Cargo.lock).
+   - `release.yml` chỉ tạo release khi version trong `apps/desktop/package.json` khác tag đã có, nên bump mỗi commit = mỗi push đều ra installer mới; version hiện ở chân sidebar (server) khớp với code đang chạy.
+   - Bản lớn: `scripts/set-version.sh X.Y.0` (người dùng muốn **bump major** khi ra bản lớn).
+   - Gộp nhiều thay đổi vào 1 push khi sửa liên tục: push dày làm CI huỷ build lẫn nhau và Docker Hub trả `429 Too Many Requests` (gặp 23/11). Theo dõi deploy bằng `last_updated` của tag `latest` trên Docker Hub thay vì gọi GitHub API (giới hạn 60 lần/giờ khi không đăng nhập).
 
 ## 3. Hạ tầng, deploy, test
 
@@ -318,7 +318,24 @@ git_repos(id, user_id → users CASCADE, url, branch, folder, ssh_key, ssh_pub, 
   - Apple ID miễn phí chỉ cho 3 app tự ký: đã **tắt** (không xoá) job Kellyfin iOS và gỡ app Kellyfin để lấy slot. Ký qua SSH lỗi `errSecInternalComponent` (keychain khoá): phải chạy qua launchd (`launchctl kickstart gui/$UID/com.datlt4.nextkloud-resign`).
 - **Hồ sơ & Cài đặt:** `Settings.tsx` có các tab Hồ sơ (ảnh đại diện, tên hiển thị, dung lượng), Mật khẩu, Giao diện, và cho admin: Người dùng, Hệ thống (thống kê + nút dựng lại chỉ mục). Menu user mới; header và danh sách user hiện ảnh đại diện.
 
+- **22–23/11 (0.1.7 → 0.1.14):**
+  - **Deck (Kanban)** `kanban.rs`, `deck.rs`, `kanban.tsx`: board/cột/card, subtask 1 cấp, kéo thả, cột xong và **cột huỷ** (`is_cancel`, cột Delete) chỉ tải N card mới nhất; subtask của task trong cột huỷ hiện ✕ gạch ngang; ô chọn task cha có tìm kiếm (`GET /api/boards/:id/parents`); file đính kèm card (`cards.attachments`, nhập từ share Deck); xem trước link trong mô tả (`linkpreview.rs`, bảng `link_previews`); nhập từ Nextcloud Deck (`scripts/deck_export.py` → `/data/import/deck.json`, chủ dữ liệu hoặc admin được nhập; đã nhập board Personal deck:3, board deck:1 chưa nhập).
+  - **Secret Vault** `secret.rs`, `secret.tsx` (thiết kế `SECRET_VAULT.md`): PIN 6 số + mã khôi phục, AES-256-GCM khối 64KB, tên mã hoá, tự khoá 10 phút, thùng rác riêng, xem/thumbnail/Office chỉ xem; chuyển/sao chép vào và ra khỏi vault (`/api/secret/import|export|copy`). `SECRET_PEPPER` nằm trong `.env` mini PC.
+  - **File:** sao chép (`/api/copy`), tải lên cả thư mục (kéo thả + nút chọn thư mục), bảng tải lên 3 file song song + tốc độ/ETA + chỉ liệt kê file lỗi để thử lại.
+  - **Viewer:** PDF chọn/copy chữ (text layer), màu đọc Vàng cam/Nền đen (chừa ảnh), 4 chế độ trang, nhảy trang chính xác; ảnh markdown qua thumbnail 1920px; xem ảnh phóng to có ‹ › ; OnlyOffice qua proxy `/oo` (`ooproxy.rs`); URL giữ vị trí khi F5 (`#/f`, `#/o`, `#/secret`, `#/kanban`); server trả 404 cho file build cũ, app tự tải lại 1 lần khi lỗi tải chunk.
+
 ## 9. Backlog chi tiết
+
+### 9.0 Việc còn lại (tổng hợp 23/11, ưu tiên từ trên xuống)
+
+1. **Chia sẻ** (người dùng chốt làm ngay sau Kanban): chia sẻ file/thư mục giữa user (quyền xem/sửa) + link công khai có mật khẩu và hạn, như Google Drive. File trong Bí mật không chia sẻ được.
+2. **Task tracker** (danh sách việc theo hạn, lấy từ card có `due_at`) và **Habit tracker** (lưới ngày, streak) — chi tiết ở 9.4.
+3. **Upload/download lớn** (9.2): resume sau rớt mạng/F5 (trạng thái upload lưu Postgres), tạm dừng, tải thư mục thành zip stream, API upload hàng loạt file nhỏ, job nền có tiến độ cho move/rename thư mục rất lớn, merge khi đích trùng tên. **Hỏi người dùng trước:** bỏ qua file trùng (cùng tên + dung lượng) thay vì ghi đè.
+4. **Obsidian:** sửa + lưu ngược về file (cảnh báo khi vault mirror từ git), embed `![[note]]`, backlinks.
+5. **Lịch sử phiên bản** khi ghi đè; chuyển trash (854MB) và versions (1,7GB) từ Nextcloud.
+6. **Desktop sync 2 chiều / mobile / auto-update / thông báo** (9.6, 9.7).
+7. **Đa ngôn ngữ** vi/en/ja/zh (9.5).
+8. **Vận hành:** giới hạn đăng nhập sai; dọn staging và multipart S3 bỏ dở; CI chạy test DB + S3 (service container); kiểm tra định kỳ bản sao lưu đêm (`backup.sh`) còn chạy; Docker Hub login trong CI dễ dính 429 khi push dày.
 
 **Thứ tự đề xuất:** 9.1 → 9.2 → 9.3 → 9.4 → 9.5 → các mục còn lại. Sau mỗi mục: viết test, chạy test đầy đủ, test UI 2 khổ màn hình, commit, push, deploy, báo người dùng bằng tiếng Việt kèm số đo.
 
