@@ -76,6 +76,7 @@ export default function App() {
   const [sideOpen, setSideOpen] = createSignal(false);
   const [menuFor, setMenuFor] = createSignal<string | null>(null);
   const [menuUpFor, setMenuUpFor] = createSignal<string | null>(null);
+  const [menuLeftFor, setMenuLeftFor] = createSignal<string | null>(null);
   const [userMenu, setUserMenu] = createSignal(false);
   const [userMenuUp, setUserMenuUp] = createSignal(false);
   const [mSearch, setMSearch] = createSignal(false);
@@ -109,6 +110,8 @@ export default function App() {
   type UpJob = { file: File; rel: string; base: string };
   const [upStat, setUpStat] = createSignal<{ total: number; done: number; ok: number; fails: (UpJob & { err: string })[]; running: boolean } | null>(null);
   let upCancel = false;
+  const [upRate, setUpRate] = createSignal<{ speed: number; eta: number } | null>(null);
+  const fmtEta = (s: number) => (s >= 3600 ? `${Math.floor(s / 3600)} giờ ${Math.round((s % 3600) / 60)} phút` : s >= 60 ? `${Math.floor(s / 60)} phút ${Math.round(s % 60)} giây` : `${Math.max(1, Math.round(s))} giây`);
   let upCloseTimer: number | undefined;
   let fileInput!: HTMLInputElement;
   let dirInput!: HTMLInputElement;
@@ -777,21 +780,43 @@ export default function App() {
     upCancel = false;
     setUpStat({ total: jobs.length, done: 0, ok: 0, fails: [], running: true });
     clearTimeout(upCloseTimer);
-    for (const j of jobs) {
-      if (upCancel) break;
-      setUpload({ name: j.rel, pct: 0, left: 0 });
-      try {
-        await api.upload(joinPath(j.base, j.rel), j.file, (done) => setUpload({ name: j.rel, pct: Math.round((done / Math.max(j.file.size, 1)) * 100), left: 0 }));
-        setUpStat((s) => s && { ...s, ok: s.ok + 1 });
-      } catch (e) {
-        if (String((e as Error)?.message).includes("unauthorized")) {
-          fail(e, "Upload lỗi");
-          break;
+    // 3 file song song (lô ảnh nhỏ nhanh hơn nhiều); tiến độ + tốc độ tính theo byte cả lô
+    const bytes = jobs.reduce((a, j) => a + j.file.size, 0);
+    const t0 = Date.now();
+    const partial = new Map<UpJob, number>();
+    let doneBytes = 0;
+    let next = 0;
+    const tick = () => {
+      const cur = doneBytes + [...partial.values()].reduce((a, b) => a + b, 0);
+      const speed = cur / Math.max((Date.now() - t0) / 1000, 0.5);
+      setUpload({ name: [...partial.keys()].map((j) => j.rel).join(" · "), pct: bytes ? Math.round((cur / bytes) * 100) : 100, left: 0 });
+      setUpRate({ speed, eta: speed > 0 ? (bytes - cur) / speed : 0 });
+    };
+    const worker = async () => {
+      while (!upCancel && next < jobs.length) {
+        const j = jobs[next++];
+        partial.set(j, 0);
+        tick();
+        try {
+          await api.upload(joinPath(j.base, j.rel), j.file, (d) => {
+            partial.set(j, d);
+            tick();
+          });
+          setUpStat((s) => s && { ...s, ok: s.ok + 1 });
+        } catch (e) {
+          if (String((e as Error)?.message).includes("unauthorized")) {
+            upCancel = true;
+            fail(e, "Upload lỗi");
+          } else setUpStat((s) => s && { ...s, fails: [...s.fails, { ...j, err: errText(e) }] });
         }
-        setUpStat((s) => s && { ...s, fails: [...s.fails, { ...j, err: errText(e) }] });
+        partial.delete(j);
+        doneBytes += j.file.size;
+        setUpStat((s) => s && { ...s, done: s.done + 1 });
+        tick();
       }
-      setUpStat((s) => s && { ...s, done: s.done + 1 });
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, jobs.length) }, worker));
+    setUpRate(null);
     setUpload(null);
     setUpStat((s) => s && { ...s, running: false });
     // xong hết, không lỗi: tự đóng sau vài giây
@@ -859,12 +884,16 @@ export default function App() {
         const n = p.f.path;
         if (menuFor() === n) { setMenuFor(null); setMenuUpFor(null); return; }
         setMenuUpFor(flipIfNeeded(e.currentTarget as HTMLElement) ? n : null);
+        // ô sát mép trái: menu canh trái nút, không tràn ra ngoài khung
+        const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        const left = (e.currentTarget as HTMLElement).closest(".panel")?.getBoundingClientRect().left ?? 0;
+        setMenuLeftFor(r.right - 210 < left ? n : null);
         setMenuFor(n);
       }}>
         <Icon name="more" />
       </button>
       <Show when={menuFor() === p.f.path}>
-        <div class="menu" classList={{ up: menuUpFor() === p.f.path }}>
+        <div class="menu" classList={{ up: menuUpFor() === p.f.path, left: menuLeftFor() === p.f.path }}>
           <Show when={!p.f.is_dir}>
             <button onClick={() => { closeMenu(); download(p.f.path, p.f.name); }}>
               <Icon name="download" /> Tải xuống
@@ -1431,6 +1460,9 @@ export default function App() {
                     <b>{u().running ? `Còn lại ${u().total - u().done}` : upCancel ? "Đã dừng" : "Xong"} · Đã xử lý {u().done}/{u().total}</b>
                     <div class="sm">
                       <span class="up-ok">Đã tải lên {u().ok}</span> · <span classList={{ "up-bad": u().fails.length > 0 }}>Lỗi {u().fails.length}</span>
+                      <Show when={u().running && upRate()}>
+                        {(r) => <> · {fmtSize(r().speed)}/s · còn ~{fmtEta(r().eta)}</>}
+                      </Show>
                     </div>
                   </div>
                   <Show when={u().running} fallback={

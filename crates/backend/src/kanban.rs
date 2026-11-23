@@ -36,6 +36,8 @@ pub struct Column {
     pub title: String,
     pub position: f64,
     pub is_done: bool,
+    /// Cột huỷ: card cũ thu gọn như cột xong, subtask của task trong cột hiện là đã huỷ.
+    pub is_cancel: bool,
     /// Tổng số card (cột xong có thể chỉ trả về một phần).
     pub total: i64,
 }
@@ -57,6 +59,8 @@ pub struct Card {
     pub attachments: Vec<String>,
     /// Tên task cha (task cha có thể chưa tải, vd nằm sâu trong cột Xong).
     pub parent_title: Option<String>,
+    /// Task cha đang nằm trong cột huỷ.
+    pub parent_cancelled: Option<bool>,
     /// Số subtask / số subtask đã xong.
     pub sub_total: i64,
     pub sub_done: i64,
@@ -64,6 +68,7 @@ pub struct Card {
 
 const CARD_COLS: &str = "c.id, c.column_id, c.parent_id, c.title, c.description, c.position, c.labels, c.color, c.due_at, c.done_at, c.created_at, c.updated_at, c.attachments,
     (SELECT p.title FROM cards p WHERE p.id = c.parent_id) AS parent_title,
+    (SELECT k.is_cancel FROM cards p JOIN board_columns k ON k.id = p.column_id WHERE p.id = c.parent_id) AS parent_cancelled,
     (SELECT COUNT(*) FROM cards s WHERE s.parent_id = c.id AND NOT s.archived) AS sub_total,
     (SELECT COUNT(*) FROM cards s WHERE s.parent_id = c.id AND NOT s.archived AND s.done_at IS NOT NULL) AS sub_done";
 
@@ -188,17 +193,17 @@ pub async fn get_board(State(s): State<AppState>, user: AuthUser, Path(id): Path
     own_board(&s.db, user.id, id).await?;
     let board = sqlx::query_as("SELECT id, title, labels, archived, position, created_at FROM boards WHERE id = $1").bind(id).fetch_one(&s.db).await?;
     let columns = sqlx::query_as(
-        "SELECT k.id, k.title, k.position, k.is_done, (SELECT COUNT(*) FROM cards c WHERE c.column_id = k.id AND NOT c.archived) AS total
+        "SELECT k.id, k.title, k.position, k.is_done, k.is_cancel, (SELECT COUNT(*) FROM cards c WHERE c.column_id = k.id AND NOT c.archived) AS total
          FROM board_columns k WHERE k.board_id = $1 ORDER BY k.position",
     )
     .bind(id)
     .fetch_all(&s.db)
     .await?;
-    // Cột thường: mọi card. Cột xong: N card xong gần nhất mỗi cột.
+    // Cột thường: mọi card. Cột xong / huỷ: N card gần nhất mỗi cột.
     let cards = sqlx::query_as(&format!(
         "SELECT {CARD_COLS} FROM cards c JOIN board_columns k ON k.id = c.column_id
-         WHERE c.board_id = $1 AND NOT c.archived AND (NOT k.is_done OR c.id IN (
-             SELECT x.id FROM cards x WHERE x.column_id = k.id AND NOT x.archived ORDER BY x.done_at DESC NULLS LAST, x.position LIMIT $2))
+         WHERE c.board_id = $1 AND NOT c.archived AND (NOT (k.is_done OR k.is_cancel) OR c.id IN (
+             SELECT x.id FROM cards x WHERE x.column_id = k.id AND NOT x.archived ORDER BY x.done_at DESC NULLS LAST, x.updated_at DESC, x.position LIMIT $2))
          ORDER BY c.position"
     ))
     .bind(id)
@@ -219,7 +224,7 @@ pub async fn column_cards(State(s): State<AppState>, user: AuthUser, Path(id): P
     own_column(&s.db, user.id, id).await?;
     Ok(Json(
         sqlx::query_as(&format!(
-            "SELECT {CARD_COLS} FROM cards c WHERE c.column_id = $1 AND NOT c.archived ORDER BY c.done_at DESC NULLS LAST, c.position OFFSET $2 LIMIT $3"
+            "SELECT {CARD_COLS} FROM cards c WHERE c.column_id = $1 AND NOT c.archived ORDER BY c.done_at DESC NULLS LAST, c.updated_at DESC, c.position OFFSET $2 LIMIT $3"
         ))
         .bind(id)
         .bind(q.offset.unwrap_or(0).max(0))
@@ -243,7 +248,7 @@ pub async fn create_column(State(s): State<AppState>, user: AuthUser, Path(board
     let c = sqlx::query_as(
         "INSERT INTO board_columns (id, board_id, title, position, is_done)
          VALUES ($1, $2, $3, (SELECT COALESCE(MAX(position), 0) + 1 FROM board_columns WHERE board_id = $2), $4)
-         RETURNING id, title, position, is_done, 0::bigint AS total",
+         RETURNING id, title, position, is_done, is_cancel, 0::bigint AS total",
     )
     .bind(Uuid::new_v4())
     .bind(board)
@@ -259,17 +264,19 @@ pub struct ColumnPatch {
     pub title: Option<String>,
     pub position: Option<f64>,
     pub is_done: Option<bool>,
+    pub is_cancel: Option<bool>,
 }
 
 pub async fn update_column(State(s): State<AppState>, user: AuthUser, Path(id): Path<Uuid>, Json(b): Json<ColumnPatch>) -> Result<StatusCode, AppError> {
     own_column(&s.db, user.id, id).await?;
     let title = b.title.as_deref().map(check_title).transpose()?;
     let mut tx = s.db.begin().await?;
-    sqlx::query("UPDATE board_columns SET title = COALESCE($2, title), position = COALESCE($3, position), is_done = COALESCE($4, is_done) WHERE id = $1")
+    sqlx::query("UPDATE board_columns SET title = COALESCE($2, title), position = COALESCE($3, position), is_done = COALESCE($4, is_done), is_cancel = COALESCE($5, is_cancel) WHERE id = $1")
         .bind(id)
         .bind(title)
         .bind(b.position.filter(|p| p.is_finite()))
         .bind(b.is_done)
+        .bind(b.is_cancel)
         .execute(&mut *tx)
         .await?;
     // Đổi kiểu cột thì đồng bộ done_at của card trong cột.
@@ -416,6 +423,35 @@ pub async fn delete_card(State(s): State<AppState>, user: AuthUser, Path(id): Pa
 }
 
 /// Subtask của 1 card (kể cả đã xong nằm trong phần thu gọn).
+#[derive(Deserialize)]
+pub struct ParentQuery {
+    #[serde(default)]
+    pub q: String,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct ParentHit {
+    pub id: Uuid,
+    pub title: String,
+    pub done: bool,
+}
+
+/// Task có thể làm task cha (chưa là subtask), lọc theo tên — kể cả task chưa tải (sâu trong cột xong).
+pub async fn parent_search(State(s): State<AppState>, user: AuthUser, Path(id): Path<Uuid>, Query(q): Query<ParentQuery>) -> Result<Json<Vec<ParentHit>>, AppError> {
+    own_board(&s.db, user.id, id).await?;
+    Ok(Json(
+        sqlx::query_as(
+            "SELECT id, title, done_at IS NOT NULL AS done FROM cards
+             WHERE board_id = $1 AND parent_id IS NULL AND NOT archived AND title ILIKE $2
+             ORDER BY (done_at IS NOT NULL), updated_at DESC LIMIT 50",
+        )
+        .bind(id)
+        .bind(format!("%{}%", crate::index::like_escape(q.q.trim())))
+        .fetch_all(&s.db)
+        .await?,
+    ))
+}
+
 pub async fn subtasks(State(s): State<AppState>, user: AuthUser, Path(id): Path<Uuid>) -> Result<Json<Vec<Card>>, AppError> {
     card(&s.db, user.id, id).await?;
     Ok(Json(

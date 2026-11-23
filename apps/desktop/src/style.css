@@ -914,3 +914,32 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 .pdf-pg .textLayer br::selection { background: transparent; }
 .pdf-pg .textLayer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: 0; cursor: default; user-select: none; }
 .pdf-pg .textLayer.selecting .endOfContent { top: 0; }
+/* menu ⋯ của ô sát mép trái: canh trái */
+.menu.left { right: auto; left: 0; }
+/* Deck: menu cột, cột huỷ, card/subtask đã huỷ */
+.kb-colmenu .menu { min-width: 200px; }
+.kb-colmenu .menu button { height: 34px; font-size: 13.5px; }
+.kb-col.cancel { background: color-mix(in srgb, #dc2626 5%, transparent); }
+.kb-cancel-ic, .kb-x { color: #dc2626; }
+.kb-x { margin-right: 4px; vertical-align: -2px; }
+.kb-card.cancel { opacity: .6; }
+.kb-card.cancel .kb-title { text-decoration: line-through; font-style: italic; color: var(--muted); }
+.kb-subrow.cancel { opacity: .6; }
+.kb-subrow.cancel .link { text-decoration: line-through; font-style: italic; color: var(--muted); pointer-events: auto; }
+.kb-x-box { width: 16px; height: 16px; display: inline-grid; place-items: center; border-radius: 4px; background: color-mix(in srgb, #dc2626 18%, transparent); color: #dc2626; flex-shrink: 0; }
+/* ô chọn task cha có tìm kiếm */
+.kb-pick { position: relative; display: grid; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.kb-pick input { height: 36px; padding: 0 8px; border-radius: 9px; border: 1px solid var(--line); background: var(--input); color: var(--text); font: inherit; font-weight: 400; font-size: 14px; }
+.kb-pick-list { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 5; max-height: 280px; overflow-y: auto; padding: 4px; border-radius: 10px; border: 1px solid var(--line); background: var(--elev); box-shadow: var(--shadow-lg); display: grid; }
+.kb-pick-list button { text-align: left; padding: 7px 8px; border-radius: 7px; font-size: 13.5px; font-weight: 400; color: var(--text); }
+.kb-pick-list button:hover { background: var(--hover); }
+.kb-pick-list button.on { background: var(--accent-soft); color: var(--accent-text); }
+.kb-pick-list button.done { color: var(--muted); }
+/* xem trước link */
+.kb-links { display: grid; gap: 6px; }
+.kb-link { display: flex; align-items: center; gap: 10px; padding: 6px; border-radius: 10px; border: 1px solid var(--line); background: var(--hover); color: inherit; text-decoration: none; min-width: 0; }
+.kb-link:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.kb-link img, .kb-link-ph { width: 56px; height: 40px; border-radius: 6px; object-fit: cover; flex-shrink: 0; }
+.kb-link-ph { display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-text); font-weight: 700; }
+.kb-link-txt { display: grid; min-width: 0; }
+.kb-link-txt b { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

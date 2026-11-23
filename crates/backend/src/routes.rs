@@ -144,6 +144,8 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/boards", get(crate::kanban::list_boards).post(crate::kanban::create_board))
         .route("/api/boards/:id", get(crate::kanban::get_board).patch(crate::kanban::update_board).delete(crate::kanban::delete_board))
         .route("/api/boards/:id/columns", post(crate::kanban::create_column))
+        .route("/api/boards/:id/parents", get(crate::kanban::parent_search))
+        .route("/api/linkpreview", get(crate::linkpreview::get))
         .route("/api/columns/:id", axum::routing::patch(crate::kanban::update_column).delete(crate::kanban::delete_column))
         .route("/api/columns/:id/cards", get(crate::kanban::column_cards))
         .route("/api/cards", post(crate::kanban::create_card))

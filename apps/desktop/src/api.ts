@@ -76,6 +76,7 @@ export interface KColumn {
   title: string;
   position: number;
   is_done: boolean;
+  is_cancel: boolean;
   total: number;
 }
 export interface KCard {
@@ -93,6 +94,7 @@ export interface KCard {
   updated_at: number;
   attachments: string[];
   parent_title: string | null;
+  parent_cancelled: boolean | null;
   sub_total: number;
   sub_done: number;
 }
@@ -372,7 +374,7 @@ export const api = {
   async createColumn(board: string, title: string, is_done = false) {
     return (await req(`/api/boards/${board}/columns`, { method: "POST", headers: JSON_H, body: JSON.stringify({ title, is_done }) })).json() as Promise<KColumn>;
   },
-  async updateColumn(id: string, b: { title?: string; position?: number; is_done?: boolean }) {
+  async updateColumn(id: string, b: { title?: string; position?: number; is_done?: boolean; is_cancel?: boolean }) {
     await req(`/api/columns/${id}`, { method: "PATCH", headers: JSON_H, body: JSON.stringify(b) });
   },
   async deleteColumn(id: string) {
@@ -386,6 +388,13 @@ export const api = {
   },
   async deleteCard(id: string) {
     await req(`/api/cards/${id}`, { method: "DELETE" });
+  },
+  /** Task có thể làm task cha (tìm cả task chưa tải). */
+  async parentSearch(board: string, q: string) {
+    return (await req(`/api/boards/${board}/parents?q=${encodeURIComponent(q)}`)).json() as Promise<{ id: string; title: string; done: boolean }[]>;
+  },
+  async linkPreview(url: string) {
+    return (await req(`/api/linkpreview?url=${encodeURIComponent(url)}`)).json() as Promise<{ url: string; title: string | null; image: string | null; site: string | null }>;
   },
   async subtasks(id: string) {
     return (await req(`/api/cards/${id}/subtasks`)).json() as Promise<KCard[]>;

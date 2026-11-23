@@ -106,11 +106,19 @@ function BoardView(props: { board: KBoard; onOpenFile: (path: string) => void; o
   const byId = createMemo(() => new Map(cards().map((c) => [c.id, c])));
   const colCards = (c: KColumn) => {
     const l = cards().filter((k) => k.column_id === c.id && (!hideSub() || !k.parent_id));
-    return c.is_done ? l.sort((a, b) => (b.done_at ?? 0) - (a.done_at ?? 0)) : l.sort((a, b) => a.position - b.position);
+    if (c.is_done) return l.sort((a, b) => (b.done_at ?? 0) - (a.done_at ?? 0));
+    return c.is_cancel ? l.sort((a, b) => b.updated_at - a.updated_at) : l.sort((a, b) => a.position - b.position);
   };
   const loadedIn = (c: KColumn) => cards().filter((k) => k.column_id === c.id).length;
   const labelColor = (t: string) => props.board.labels.find((l) => l.title === t)?.color ?? "#8b8f98";
-  const firstOpen = () => cols().find((c) => !c.is_done);
+  const firstOpen = () => cols().find((c) => !c.is_done && !c.is_cancel);
+  const cancelCol = (id: string) => !!cols().find((c) => c.id === id)?.is_cancel;
+  /** Card đã huỷ: nằm trong cột huỷ, hoặc task cha nằm trong cột huỷ. */
+  const cancelled = (k: KCard) => cancelCol(k.column_id) || (k.parent_id ? (byId().get(k.parent_id) ? cancelCol(byId().get(k.parent_id)!.column_id) : !!k.parent_cancelled) : false);
+  const [colMenuFor, setColMenuFor] = createSignal<string | null>(null);
+  const closeColMenu = (e: MouseEvent) => !(e.target as Element).closest?.(".kb-colmenu") && setColMenuFor(null);
+  document.addEventListener("click", closeColMenu);
+  onCleanup(() => document.removeEventListener("click", closeColMenu));
   const firstDone = () => cols().find((c) => c.is_done);
 
   /** Cập nhật 1 card ở local + tổng số của cột khi đổi cột. */
@@ -149,7 +157,9 @@ function BoardView(props: { board: KBoard; onOpenFile: (path: string) => void; o
         if (!t) return;
         await api.updateColumn(c.id, { title: t });
       } else if (act === "done") {
-        await api.updateColumn(c.id, { is_done: !c.is_done });
+        await api.updateColumn(c.id, { is_done: !c.is_done, ...(c.is_done ? {} : { is_cancel: false }) });
+      } else if (act === "cancel") {
+        await api.updateColumn(c.id, { is_cancel: !c.is_cancel, ...(c.is_cancel ? {} : { is_done: false }) });
       } else if (act === "left" || act === "right") {
         const l = cols();
         const i = l.findIndex((x) => x.id === c.id);
@@ -299,22 +309,34 @@ function BoardView(props: { board: KBoard; onOpenFile: (path: string) => void; o
           <For each={cols()}>
             {(c) => {
               const list = () => colCards(c);
-              const hidden = () => (c.is_done ? c.total - loadedIn(c) : 0);
+              const hidden = () => (c.is_done || c.is_cancel ? c.total - loadedIn(c) : 0);
+              const act = (a: string) => {
+                setColMenuFor(null);
+                colMenu(c, a);
+              };
               return (
-                <section class="kb-col" classList={{ done: c.is_done, over: drop()?.col === c.id }}>
+                <section class="kb-col" classList={{ done: c.is_done, cancel: c.is_cancel, over: drop()?.col === c.id }}>
                   <header class="kb-col-head">
                     <Show when={c.is_done}><Icon name="check" size={15} class="ic kb-done-ic" /></Show>
+                    <Show when={c.is_cancel}><Icon name="close" size={15} class="ic kb-cancel-ic" /></Show>
                     <b title={c.title}>{c.title}</b>
                     <span class="kb-count">{c.total}</span>
                     <span class="grow" />
-                    <select class="kb-menu" value="" onChange={(e) => { const v = e.currentTarget.value; e.currentTarget.value = ""; colMenu(c, v); }} title="Tuỳ chọn cột">
-                      <option value="">⋯</option>
-                      <option value="rename">Đổi tên</option>
-                      <option value="done">{c.is_done ? "Bỏ đánh dấu cột xong" : "Đánh dấu là cột xong"}</option>
-                      <option value="left">← Dời trái</option>
-                      <option value="right">Dời phải →</option>
-                      <option value="delete">Xoá cột</option>
-                    </select>
+                    <div class="kb-colmenu menu-wrap">
+                      <button class="icon-btn sm" title="Tuỳ chọn cột" onClick={() => setColMenuFor(colMenuFor() === c.id ? null : c.id)}><Icon name="more" size={16} /></button>
+                      <Show when={colMenuFor() === c.id}>
+                        <div class="menu">
+                          <button onClick={() => act("rename")}><Icon name="edit" size={15} /> Đổi tên</button>
+                          <button onClick={() => act("done")}><Icon name="check" size={15} /> {c.is_done ? "Bỏ cột xong" : "Đặt làm cột xong"}</button>
+                          <button onClick={() => act("cancel")}><Icon name="close" size={15} /> {c.is_cancel ? "Bỏ cột huỷ" : "Đặt làm cột huỷ"}</button>
+                          <div class="menu-sep" />
+                          <button onClick={() => act("left")}><Icon name="back" size={15} /> Dời sang trái</button>
+                          <button onClick={() => act("right")}><Icon name="next" size={15} /> Dời sang phải</button>
+                          <div class="menu-sep" />
+                          <button class="danger" onClick={() => act("delete")}><Icon name="trash" size={15} /> Xoá cột</button>
+                        </div>
+                      </Show>
+                    </div>
                   </header>
                   <div class="kb-col-body" data-col={c.id}>
                     <For each={list()}>
@@ -324,6 +346,7 @@ function BoardView(props: { board: KBoard; onOpenFile: (path: string) => void; o
                           <CardItem
                             card={k}
                             parent={k.parent_id ? byId().get(k.parent_id) : undefined}
+                            cancelled={cancelled(k)}
                             labelColor={labelColor}
                             dragging={dragId() === k.id}
                             onDown={(e, el) => startDrag(e, k, el)}
@@ -334,7 +357,7 @@ function BoardView(props: { board: KBoard; onOpenFile: (path: string) => void; o
                     </For>
                     <Show when={drop()?.col === c.id && drop()!.index >= list().filter((k) => k.id !== dragId()).length}><div class="kb-drop" /></Show>
                     <Show when={hidden() > 0 && !hideSub()}>
-                      <button class="kb-more" onClick={() => more(c)}>Đã xong cũ hơn ({hidden()}) — tải thêm</button>
+                      <button class="kb-more" onClick={() => more(c)}>{c.is_done ? "Đã xong cũ hơn" : "Cũ hơn"} ({hidden()}) — tải thêm</button>
                     </Show>
                   </div>
                   <Show when={!c.is_done}>
@@ -383,6 +406,7 @@ function BoardView(props: { board: KBoard; onOpenFile: (path: string) => void; o
             }
             firstOpen={firstOpen()}
             firstDone={firstDone()}
+            cancelled={cancelCol(k.column_id)}
             onOpenFile={props.onOpenFile}
             onError={props.onError}
           />
@@ -392,20 +416,20 @@ function BoardView(props: { board: KBoard; onOpenFile: (path: string) => void; o
   );
 }
 
-function CardItem(props: { card: KCard; parent?: KCard; labelColor: (t: string) => string; dragging: boolean; onDown: (e: PointerEvent, el: HTMLElement) => void; onOpen: () => void }) {
+function CardItem(props: { card: KCard; parent?: KCard; cancelled?: boolean; labelColor: (t: string) => string; dragging: boolean; onDown: (e: PointerEvent, el: HTMLElement) => void; onOpen: () => void }) {
   const k = () => props.card;
   const cl = () => checklist(k().description);
   const overdue = () => !k().done_at && k().due_at != null && k().due_at! < today0();
   let el!: HTMLDivElement;
   return (
-    <div class="kb-card" ref={el} data-id={k().id} classList={{ dragging: props.dragging, done: !!k().done_at }} style={k().color ? { "border-left-color": k().color! } : undefined} onPointerDown={(e) => props.onDown(e, el)} onClick={props.onOpen}>
+    <div class="kb-card" ref={el} data-id={k().id} classList={{ dragging: props.dragging, done: !!k().done_at, cancel: !!props.cancelled }} style={k().color ? { "border-left-color": k().color! } : undefined} onPointerDown={(e) => props.onDown(e, el)} onClick={props.onOpen}>
       <Show when={k().labels.length}>
         <div class="kb-labels">
           <For each={k().labels}>{(l) => <span class="kb-label" style={{ background: props.labelColor(l) }} title={l}>{l}</span>}</For>
         </div>
       </Show>
       <Show when={props.parent?.title ?? k().parent_title}>{(t) => <div class="kb-parent" title="Task cha"><Icon name="sub" size={12} /> {t()}</div>}</Show>
-      <div class="kb-title">{k().title}</div>
+      <div class="kb-title"><Show when={props.cancelled}><Icon name="close" size={13} class="ic kb-x" /></Show>{k().title}</div>
       <Show when={k().due_at || k().sub_total || cl()[1] || k().description || k().attachments.length}>
         <div class="kb-meta">
           <Show when={k().due_at}><span classList={{ "kb-due": true, late: overdue() }}><Icon name="calendar" size={12} /> {fmtDay(k().due_at!)}</span></Show>
@@ -437,6 +461,8 @@ function CardDrawer(props: {
   onDelete: () => void;
   firstOpen?: KColumn;
   firstDone?: KColumn;
+  /** Card đang nằm trong cột huỷ -> subtask hiện là đã huỷ. */
+  cancelled: boolean;
   onOpenFile: (path: string) => void;
   onError: (m: string) => void;
 }) {
@@ -467,7 +493,12 @@ function CardDrawer(props: {
   };
   const [editDesc, setEditDesc] = createSignal(false);
   const [subs, { mutate: setSubs, refetch: refetchSubs }] = createResource(() => k().id, (id) => api.subtasks(id), { initialValue: [] });
-  const parents = () => props.cards.filter((c) => !c.parent_id && c.id !== k().id).sort((a, b) => a.title.localeCompare(b.title));
+  // ô chọn task cha có tìm kiếm (hỏi server: gồm cả task chưa tải, vd sâu trong cột xong)
+  const [pq, setPq] = createSignal("");
+  const [pickOpen, setPickOpen] = createSignal(false);
+  const [hits] = createResource(() => (pickOpen() ? pq() : null), (q) => api.parentSearch(props.board.id, q).catch(() => []), { initialValue: [] });
+  const parentTitle = () => (k().parent_id ? props.cards.find((c) => c.id === k().parent_id)?.title ?? k().parent_title ?? "…" : "");
+  const urls = createMemo(() => [...new Set(k().description.match(/https?:\/\/[^\s<>()\[\]"']+/g) ?? [])].map((u) => u.replace(/[.,;:!?]+$/, "")).slice(0, 6));
   const html = createMemo(() => (marked.parse(k().description || "") as string).replace(/<input (checked="" )?disabled="" type="checkbox">/g, (_m, on) => `<input ${on ? "checked " : ""}type="checkbox">`));
   // Bấm checkbox trong mô tả -> đổi đúng dòng thứ n "[ ]" <-> "[x]".
   const toggleCheck = (n: number) => {
@@ -499,6 +530,8 @@ function CardDrawer(props: {
       props.onPut({ ...k(), sub_total: k().sub_total + 1 });
       refetchSubs();
     });
+  /** Subtask đã huỷ: task cha (card này) ở cột huỷ, hoặc chính subtask ở cột huỷ. */
+  const subX = (s: KCard) => props.cancelled || !!props.cols.find((c) => c.id === s.column_id)?.is_cancel;
   const onKey = (e: KeyboardEvent) => e.key === "Escape" && !(e.target as HTMLElement).closest("textarea, input") && props.onClose();
   document.addEventListener("keydown", onKey);
   onCleanup(() => document.removeEventListener("keydown", onKey));
@@ -507,8 +540,8 @@ function CardDrawer(props: {
     <div class="kb-drawer-bg" onClick={props.onClose}>
       <aside class="kb-drawer glass" onClick={(e) => e.stopPropagation()}>
         <div class="kb-dr-head">
-          <Show when={k().parent_id ? props.cards.find((c) => c.id === k().parent_id) : undefined}>
-            {(p) => <button class="kb-parent link" onClick={() => props.onOpen(p().id)}><Icon name="sub" size={13} /> {p().title}</button>}
+          <Show when={k().parent_id}>
+            {(pid) => <button class="kb-parent link" onClick={() => props.onOpen(pid())}><Icon name="sub" size={13} /> {parentTitle()}</button>}
           </Show>
           <span class="grow" />
           <button class="icon-btn" onClick={props.onClose} title="Đóng"><Icon name="close" /></button>
@@ -530,13 +563,29 @@ function CardDrawer(props: {
             />
           </label>
           <Show when={!k().sub_total}>
-            <label class="wide">
+            <div class="wide kb-pick">
               <span>Task cha</span>
-              <select value={k().parent_id ?? ""} onChange={(e) => props.onPatch({ parent_id: e.currentTarget.value || null })}>
-                <option value="">— Không —</option>
-                <For each={parents()}>{(c) => <option value={c.id}>{c.title}</option>}</For>
-              </select>
-            </label>
+              <input
+                value={pickOpen() ? pq() : parentTitle()}
+                placeholder="— Không — (gõ để tìm)"
+                onFocus={(e) => { setPq(""); setPickOpen(true); e.currentTarget.select(); }}
+                onInput={(e) => setPq(e.currentTarget.value)}
+                onBlur={() => setTimeout(() => setPickOpen(false), 150)}
+                onKeyDown={(e) => e.key === "Escape" && e.currentTarget.blur()}
+              />
+              <Show when={pickOpen()}>
+                <div class="kb-pick-list">
+                  <button onMouseDown={(e) => { e.preventDefault(); props.onPatch({ parent_id: null }); setPickOpen(false); }}>— Không có task cha —</button>
+                  <For each={hits().filter((h) => h.id !== k().id)} fallback={<p class="muted xs pad">{hits.loading ? "Đang tìm…" : "Không thấy"}</p>}>
+                    {(h) => (
+                      <button classList={{ on: h.id === k().parent_id, done: h.done }} onMouseDown={(e) => { e.preventDefault(); props.onPatch({ parent_id: h.id }); setPickOpen(false); }}>
+                        {h.title}
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </div>
           </Show>
         </div>
         <Show when={props.board.labels.length}>
@@ -572,6 +621,11 @@ function CardDrawer(props: {
         >
           <textarea class="kb-desc-edit" value={k().description} placeholder="Markdown, checklist: - [ ] việc cần làm" ref={(el) => queueMicrotask(() => el.focus())} onBlur={(e) => e.currentTarget.value !== k().description && props.onPatch({ description: e.currentTarget.value })} />
         </Show>
+        <Show when={urls().length && !editDesc()}>
+          <div class="kb-links">
+            <For each={urls()}>{(u) => <LinkCard url={u} />}</For>
+          </div>
+        </Show>
         <div class="kb-sec">
           <b>Đính kèm {k().attachments.length || ""}</b>
           <span class="grow" />
@@ -606,8 +660,10 @@ function CardDrawer(props: {
           <div class="kb-subs">
             <For each={subs()}>
               {(s) => (
-                <div class="kb-subrow" classList={{ done: !!s.done_at }}>
-                  <input type="checkbox" checked={!!s.done_at} onChange={(e) => setSubDone(s, e.currentTarget.checked)} />
+                <div class="kb-subrow" classList={{ done: !!s.done_at && !subX(s), cancel: subX(s) }}>
+                  <Show when={!subX(s)} fallback={<span class="kb-x-box" title="Đã huỷ (task cha nằm trong cột huỷ)"><Icon name="close" size={13} /></span>}>
+                    <input type="checkbox" checked={!!s.done_at} onChange={(e) => setSubDone(s, e.currentTarget.checked)} />
+                  </Show>
                   <button class="link" onClick={() => props.onOpen(s.id)}>{s.title}</button>
                   <span class="muted xs">{props.cols.find((c) => c.id === s.column_id)?.title}</span>
                 </div>
@@ -632,6 +688,30 @@ function CardDrawer(props: {
         </div>
       </aside>
     </div>
+  );
+}
+
+/** Xem trước link (ảnh, tiêu đề, tên trang) như Google Keep. */
+function LinkCard(props: { url: string }) {
+  const [p] = createResource(() => props.url, (u) => api.linkPreview(u).catch(() => null));
+  const host = () => {
+    try {
+      return new URL(props.url).host.replace(/^www\./, "");
+    } catch {
+      return props.url;
+    }
+  };
+  const [imgOk, setImgOk] = createSignal(true);
+  return (
+    <a class="kb-link" href={props.url} target="_blank" rel="noopener noreferrer">
+      <Show when={p()?.image && imgOk()} fallback={<span class="kb-link-ph">{(p()?.site ?? host()).slice(0, 1).toUpperCase()}</span>}>
+        <img src={p()!.image!} alt="" loading="lazy" referrerpolicy="no-referrer" onError={() => setImgOk(false)} />
+      </Show>
+      <span class="kb-link-txt">
+        <b>{p.loading ? "Đang tải…" : p()?.title ?? props.url}</b>
+        <span class="muted xs">{p()?.site ?? host()}</span>
+      </span>
+    </a>
   );
 }
 

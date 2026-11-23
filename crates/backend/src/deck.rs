@@ -251,12 +251,13 @@ pub async fn import(db: &PgPool, user: Uuid, b: &DBoard, a: &Apply) -> Result<Ap
     for (i, st) in b.stacks.iter().enumerate().filter(|(_, st)| !skip.contains(&st.id) && merge_target(b, st).is_none()) {
         let id = Uuid::new_v4();
         let done = is(st, "done");
-        sqlx::query("INSERT INTO board_columns (id, board_id, title, position, is_done) VALUES ($1, $2, $3, $4, $5)")
+        sqlx::query("INSERT INTO board_columns (id, board_id, title, position, is_done, is_cancel) VALUES ($1, $2, $3, $4, $5, $6)")
             .bind(id)
             .bind(board)
             .bind(&st.title)
             .bind(i as f64)
             .bind(done)
+            .bind(is(st, "delete") || is(st, "deleted"))
             .execute(&mut *tx)
             .await?;
         col_of.insert(st.id, (id, done));

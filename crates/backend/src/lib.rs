@@ -7,6 +7,7 @@ pub mod fulltext;
 pub mod git;
 pub mod index;
 pub mod kanban;
+pub mod linkpreview;
 pub mod notes;
 pub mod office;
 pub mod ooproxy;
