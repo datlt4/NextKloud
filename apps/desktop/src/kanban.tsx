@@ -1,11 +1,12 @@
 import { marked } from "marked";
 import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup } from "solid-js";
 import { api, type DeckPreview, type KBoard, type KCard, type KCardPatch, type KColumn } from "./api";
+import { fmtNum, loc, t } from "./i18n";
 import { errText } from "./fileops";
 import { Icon, kindOf } from "./icons";
 
 const DONE_LIMIT = 10;
-const fmtDay = (s: number) => new Date(s * 1000).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "2-digit" });
+const fmtDay = (s: number) => new Date(s * 1000).toLocaleDateString(loc(), { day: "2-digit", month: "2-digit", year: "2-digit" });
 const today0 = () => {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
@@ -37,9 +38,9 @@ export function KanbanPage(props: { boardId: string | null; onBoard: (id: string
     }
   };
   const newBoard = () => {
-    const t = prompt("Tên board mới")?.trim();
-    if (t) run(async () => {
-      const b = await api.createBoard(t);
+    const nb = prompt(t("kb.boardPrompt"))?.trim();
+    if (nb) run(async () => {
+      const b = await api.createBoard(nb);
       await refetch();
       props.onBoard(b.id);
     });
@@ -54,13 +55,13 @@ export function KanbanPage(props: { boardId: string | null; onBoard: (id: string
           </For>
           <Show when={archived().length}>
             <select class="kb-arch" value="" onChange={(e) => e.currentTarget.value && props.onBoard(e.currentTarget.value)}>
-              <option value="">Lưu trữ ({archived().length})</option>
+              <option value="">{t("kb.archivedBoards", { n: fmtNum(archived().length) })}</option>
               <For each={archived()}>{(b) => <option value={b.id}>{b.title}</option>}</For>
             </select>
           </Show>
-          <button class="btn ghost sm" onClick={newBoard}><Icon name="plus" size={15} /> Board</button>
+          <button class="btn ghost sm" onClick={newBoard}><Icon name="plus" size={15} /> {t("kb.newBoard")}</button>
           <Show when={canImport()}>
-            <button class="btn ghost sm" onClick={() => setImporting(true)}>Nhập từ Nextcloud</button>
+            <button class="btn ghost sm" onClick={() => setImporting(true)}>{t("kb.importDeck")}</button>
           </Show>
         </div>
       </div>
@@ -68,7 +69,7 @@ export function KanbanPage(props: { boardId: string | null; onBoard: (id: string
         {(b) => <BoardView board={b} onOpenFile={props.onOpenFile} onError={props.onError} onChanged={refetch} onDeleted={() => { refetch(); props.onBoard(null); }} />}
       </Show>
       <Show when={!boards.loading && !boards().length}>
-        <div class="empty"><Icon name="kanban" size={48} /><p>Chưa có board. Bấm “+ Board” để tạo.</p></div>
+        <div class="empty"><Icon name="kanban" size={48} /><p>{t("kb.emptyBoard")}</p></div>
       </Show>
       <Show when={importing()}>
         <DeckImport onClose={() => setImporting(false)} onError={props.onError} onDone={async (id) => { setImporting(false); await refetch(); props.onBoard(id); }} />
@@ -153,9 +154,9 @@ function BoardView(props: { board: KBoard; onOpenFile: (path: string) => void; o
   const colMenu = (c: KColumn, act: string) =>
     run(async () => {
       if (act === "rename") {
-        const t = prompt("Tên cột", c.title)?.trim();
-        if (!t) return;
-        await api.updateColumn(c.id, { title: t });
+        const cb = prompt(t("kb.colPrompt"), c.title)?.trim();
+        if (!cb) return;
+        await api.updateColumn(c.id, { title: cb });
       } else if (act === "done") {
         await api.updateColumn(c.id, { is_done: !c.is_done, ...(c.is_done ? {} : { is_cancel: false }) });
       } else if (act === "cancel") {
@@ -168,7 +169,7 @@ function BoardView(props: { board: KBoard; onOpenFile: (path: string) => void; o
         await api.updateColumn(c.id, { position: l[j].position });
         await api.updateColumn(l[j].id, { position: c.position });
       } else if (act === "delete") {
-        if (!confirm(`Xoá cột "${c.title}" cùng ${c.total} card trong đó?`)) return;
+        if (!confirm(t("kb.delColAsk", { title: c.title, n: c.total }))) return;
         await api.deleteColumn(c.id);
       }
       await load();
@@ -177,16 +178,16 @@ function BoardView(props: { board: KBoard; onOpenFile: (path: string) => void; o
     run(async () => {
       const b = props.board;
       if (act === "rename") {
-        const t = prompt("Tên board", b.title)?.trim();
-        if (t) await api.updateBoard(b.id, { title: t });
+        const bb = prompt(t("kb.boardPrompt"), b.title)?.trim();
+        if (bb) await api.updateBoard(b.id, { title: bb });
       } else if (act === "archive") await api.updateBoard(b.id, { archived: !b.archived });
       else if (act === "delete") {
-        if (!confirm(`Xoá hẳn board "${b.title}" và toàn bộ card?`)) return;
+        if (!confirm(t("kb.delBoardAsk", { name: b.title }))) return;
         await api.deleteBoard(b.id);
         return props.onDeleted();
       } else if (act === "column") {
-        const t = prompt("Tên cột mới")?.trim();
-        if (t) await api.createColumn(b.id, t);
+        const nc = prompt(t("kb.colPrompt"))?.trim();
+        if (nc) await api.createColumn(b.id, nc);
         await load();
       }
       props.onChanged();
@@ -294,17 +295,17 @@ function BoardView(props: { board: KBoard; onOpenFile: (path: string) => void; o
   return (
     <>
       <div class="kb-sub">
-        <label class="kb-toggle"><input type="checkbox" checked={hideSub()} onChange={(e) => { setHideSub(e.currentTarget.checked); localStorage.setItem("nk-kb-hidesub", e.currentTarget.checked ? "1" : "0"); }} /> Ẩn subtask</label>
+        <label class="kb-toggle"><input type="checkbox" checked={hideSub()} onChange={(e) => { setHideSub(e.currentTarget.checked); localStorage.setItem("nk-kb-hidesub", e.currentTarget.checked ? "1" : "0"); }} /> {t("kb.hideSub")}</label>
         <span class="grow" />
         <select class="kb-menu" value="" onChange={(e) => { const v = e.currentTarget.value; e.currentTarget.value = ""; boardMenu(v); }}>
-          <option value="">Board ▾</option>
-          <option value="column">+ Thêm cột</option>
-          <option value="rename">Đổi tên board</option>
-          <option value="archive">{props.board.archived ? "Bỏ lưu trữ" : "Lưu trữ board"}</option>
-          <option value="delete">Xoá board</option>
+          <option value="">{t("kb.boardMenu")} ▾</option>
+          <option value="column">+ {t("kb.addColumn")}</option>
+          <option value="rename">{t("kb.renameBoard")}</option>
+          <option value="archive">{props.board.archived ? t("kb.unarchiveBoard") : t("kb.archiveBoard")}</option>
+          <option value="delete">{t("kb.delBoard")}</option>
         </select>
       </div>
-      <Show when={!loading()} fallback={<p class="muted pad">Đang tải…</p>}>
+      <Show when={!loading()} fallback={<p class="muted pad">{t("c.loading")}</p>}>
         <div class="kb-board" ref={boardEl}>
           <For each={cols()}>
             {(c) => {
@@ -323,17 +324,17 @@ function BoardView(props: { board: KBoard; onOpenFile: (path: string) => void; o
                     <span class="kb-count">{c.total}</span>
                     <span class="grow" />
                     <div class="kb-colmenu menu-wrap">
-                      <button class="icon-btn sm" title="Tuỳ chọn cột" onClick={() => setColMenuFor(colMenuFor() === c.id ? null : c.id)}><Icon name="more" size={16} /></button>
+                      <button class="icon-btn sm" title={t("kb.colMenu")} onClick={() => setColMenuFor(colMenuFor() === c.id ? null : c.id)}><Icon name="more" size={16} /></button>
                       <Show when={colMenuFor() === c.id}>
                         <div class="menu">
-                          <button onClick={() => act("rename")}><Icon name="edit" size={15} /> Đổi tên</button>
-                          <button onClick={() => act("done")}><Icon name="check" size={15} /> {c.is_done ? "Bỏ cột xong" : "Đặt làm cột xong"}</button>
-                          <button onClick={() => act("cancel")}><Icon name="close" size={15} /> {c.is_cancel ? "Bỏ cột huỷ" : "Đặt làm cột huỷ"}</button>
+                          <button onClick={() => act("rename")}><Icon name="edit" size={15} /> {t("c.rename")}</button>
+                          <button onClick={() => act("done")}><Icon name="check" size={15} /> {c.is_done ? t("kb.unsetDone") : t("kb.setDone")}</button>
+                          <button onClick={() => act("cancel")}><Icon name="close" size={15} /> {c.is_cancel ? t("kb.unsetCancel") : t("kb.setCancel")}</button>
                           <div class="menu-sep" />
-                          <button onClick={() => act("left")}><Icon name="back" size={15} /> Dời sang trái</button>
-                          <button onClick={() => act("right")}><Icon name="next" size={15} /> Dời sang phải</button>
+                          <button onClick={() => act("left")}><Icon name="back" size={15} /> {t("kb.moveLeft")}</button>
+                          <button onClick={() => act("right")}><Icon name="next" size={15} /> {t("kb.moveRight")}</button>
                           <div class="menu-sep" />
-                          <button class="danger" onClick={() => act("delete")}><Icon name="trash" size={15} /> Xoá cột</button>
+                          <button class="danger" onClick={() => act("delete")}><Icon name="trash" size={15} /> {t("kb.delCol")}</button>
                         </div>
                       </Show>
                     </div>
@@ -357,14 +358,14 @@ function BoardView(props: { board: KBoard; onOpenFile: (path: string) => void; o
                     </For>
                     <Show when={drop()?.col === c.id && drop()!.index >= list().filter((k) => k.id !== dragId()).length}><div class="kb-drop" /></Show>
                     <Show when={hidden() > 0 && !hideSub()}>
-                      <button class="kb-more" onClick={() => more(c)}>{c.is_done ? "Đã xong cũ hơn" : "Cũ hơn"} ({hidden()}) — tải thêm</button>
+                      <button class="kb-more" onClick={() => more(c)}>{c.is_done ? t("kb.olderDone") : t("kb.older")} ({fmtNum(hidden())}) — {t("kb.loadMore")}</button>
                     </Show>
                   </div>
                   <Show when={!c.is_done}>
-                    <Show when={adding() === c.id} fallback={<button class="kb-add" onClick={() => setAdding(c.id)}><Icon name="plus" size={15} /> Thêm card</button>}>
+                    <Show when={adding() === c.id} fallback={<button class="kb-add" onClick={() => setAdding(c.id)}><Icon name="plus" size={15} /> {t("kb.addCard")}</button>}>
                       <textarea
                         class="kb-new"
-                        placeholder="Tên card, Enter để thêm"
+                        placeholder={t("kb.cardPh")}
                         ref={(el) => queueMicrotask(() => el.focus())}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" && !e.shiftKey) {
@@ -428,20 +429,20 @@ function CardItem(props: { card: KCard; parent?: KCard; cancelled?: boolean; lab
           <For each={k().labels}>{(l) => <span class="kb-label" style={{ background: props.labelColor(l) }} title={l}>{l}</span>}</For>
         </div>
       </Show>
-      <Show when={props.parent?.title ?? k().parent_title}>{(t) => <div class="kb-parent" title="Task cha"><Icon name="sub" size={12} /> {t()}</div>}</Show>
+      <Show when={props.parent?.title ?? k().parent_title}>{(t) => <div class="kb-parent" title={t("kb.parentTip")}><Icon name="sub" size={12} /> {t()}</div>}</Show>
       <div class="kb-title"><Show when={props.cancelled}><Icon name="close" size={13} class="ic kb-x" /></Show>{k().title}</div>
       <Show when={k().due_at || k().sub_total || cl()[1] || k().description || k().attachments.length}>
         <div class="kb-meta">
           <Show when={k().due_at}><span classList={{ "kb-due": true, late: overdue() }}><Icon name="calendar" size={12} /> {fmtDay(k().due_at!)}</span></Show>
           <Show when={k().sub_total}>
-            <span class="kb-prog" title="Subtask đã xong">
+            <span class="kb-prog" title={t("kb.subDoneTip")}>
               <Icon name="check" size={12} /> {k().sub_done}/{k().sub_total}
               <i style={{ width: `${(k().sub_done / k().sub_total) * 100}%` }} />
             </span>
           </Show>
-          <Show when={cl()[1]}><span title="Checklist trong mô tả">☑ {cl()[0]}/{cl()[1]}</span></Show>
+          <Show when={cl()[1]}><span title={t("kb.checklistTip")}>☑ {fmtNum(cl()[0])}/{fmtNum(cl()[1])}</span></Show>
           <Show when={k().description.trim() && !cl()[1]}><Icon name="text" size={12} class="ic muted" /></Show>
-          <Show when={k().attachments.length}><span title="File đính kèm"><Icon name="clip" size={12} /> {k().attachments.length}</span></Show>
+          <Show when={k().attachments.length}><span title={t("kb.atchTip")}><Icon name="clip" size={12} /> {fmtNum(k().attachments.length)}</span></Show>
         </div>
       </Show>
     </div>
@@ -516,7 +517,7 @@ function CardDrawer(props: {
   const setSubDone = (s: KCard, done: boolean) =>
     run(async () => {
       const col = done ? props.firstDone : props.firstOpen;
-      if (!col) return props.onError(done ? "Board chưa có cột xong" : "Board chưa có cột thường");
+      if (!col) return props.onError(done ? t("kb.noDoneCol") : t("kb.noOpenCol"));
       const u = await api.updateCard(s.id, { column_id: col.id });
       setSubs((l) => l.map((x) => (x.id === s.id ? u : x)));
       props.onPut(u);
@@ -544,18 +545,18 @@ function CardDrawer(props: {
             {(pid) => <button class="kb-parent link" onClick={() => props.onOpen(pid())}><Icon name="sub" size={13} /> {parentTitle()}</button>}
           </Show>
           <span class="grow" />
-          <button class="icon-btn" onClick={props.onClose} title="Đóng"><Icon name="close" /></button>
+          <button class="icon-btn" onClick={props.onClose} title={t("c.close")}><Icon name="close" /></button>
         </div>
         <textarea class="kb-dr-title" value={k().title} rows={1} onChange={(e) => e.currentTarget.value.trim() && props.onPatch({ title: e.currentTarget.value.trim() })} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), e.currentTarget.blur())} />
         <div class="kb-fields">
           <label>
-            <span>Cột</span>
+            <span>{t("kb.column")}</span>
             <select value={k().column_id} onChange={(e) => props.onPatch({ column_id: e.currentTarget.value })}>
               <For each={props.cols}>{(c) => <option value={c.id}>{c.title}</option>}</For>
             </select>
           </label>
           <label>
-            <span>Hạn</span>
+            <span>{t("kb.due")}</span>
             <input
               type="date"
               value={k().due_at ? new Date(k().due_at! * 1000).toISOString().slice(0, 10) : ""}
@@ -564,10 +565,10 @@ function CardDrawer(props: {
           </label>
           <Show when={!k().sub_total}>
             <div class="wide kb-pick">
-              <span>Task cha</span>
+              <span>{t("kb.parent")}</span>
               <input
                 value={pickOpen() ? pq() : parentTitle()}
-                placeholder="— Không — (gõ để tìm)"
+                placeholder={t("kb.noParentPh")}
                 onFocus={(e) => { setPq(""); setPickOpen(true); e.currentTarget.select(); }}
                 onInput={(e) => setPq(e.currentTarget.value)}
                 onBlur={() => setTimeout(() => setPickOpen(false), 150)}
@@ -575,8 +576,8 @@ function CardDrawer(props: {
               />
               <Show when={pickOpen()}>
                 <div class="kb-pick-list">
-                  <button onMouseDown={(e) => { e.preventDefault(); props.onPatch({ parent_id: null }); setPickOpen(false); }}>— Không có task cha —</button>
-                  <For each={hits().filter((h) => h.id !== k().id)} fallback={<p class="muted xs pad">{hits.loading ? "Đang tìm…" : "Không thấy"}</p>}>
+                  <button onMouseDown={(e) => { e.preventDefault(); props.onPatch({ parent_id: null }); setPickOpen(false); }}>{t("kb.noParentBtn")}</button>
+                  <For each={hits().filter((h) => h.id !== k().id)} fallback={<p class="muted xs pad">{hits.loading ? t("c.loading") : t("kb.noHit")}</p>}>
                     {(h) => (
                       <button classList={{ on: h.id === k().parent_id, done: h.done }} onMouseDown={(e) => { e.preventDefault(); props.onPatch({ parent_id: h.id }); setPickOpen(false); }}>
                         {h.title}
@@ -602,13 +603,13 @@ function CardDrawer(props: {
             </For>
           </div>
         </Show>
-        <div class="kb-sec"><b>Mô tả</b><button class="btn ghost sm" onClick={() => setEditDesc(!editDesc())}>{editDesc() ? "Xem" : "Sửa"}</button></div>
+        <div class="kb-sec"><b>{t("kb.desc")}</b><button class="btn ghost sm" onClick={() => setEditDesc(!editDesc())}>{editDesc() ? t("kb.viewBtn") : t("kb.editBtn")}</button></div>
         <Show
           when={editDesc()}
           fallback={
             <div
               class="kb-desc md-body"
-              innerHTML={html() || '<p class="muted">Chưa có mô tả.</p>'}
+              innerHTML={html() || `<p class="muted">${t("kb.noDesc")}</p>`}
               onClick={(e) => {
                 const t = e.target as HTMLElement;
                 if (t instanceof HTMLInputElement && t.type === "checkbox") {
@@ -619,7 +620,7 @@ function CardDrawer(props: {
             />
           }
         >
-          <textarea class="kb-desc-edit" value={k().description} placeholder="Markdown, checklist: - [ ] việc cần làm" ref={(el) => queueMicrotask(() => el.focus())} onBlur={(e) => e.currentTarget.value !== k().description && props.onPatch({ description: e.currentTarget.value })} />
+          <textarea class="kb-desc-edit" value={k().description} placeholder={t("kb.editDescPh")} ref={(el) => queueMicrotask(() => el.focus())} onBlur={(e) => e.currentTarget.value !== k().description && props.onPatch({ description: e.currentTarget.value })} />
         </Show>
         <Show when={urls().length && !editDesc()}>
           <div class="kb-links">
@@ -627,9 +628,9 @@ function CardDrawer(props: {
           </div>
         </Show>
         <div class="kb-sec">
-          <b>Đính kèm {k().attachments.length || ""}</b>
+          <b>{t("kb.atchTitle", { n: fmtNum(k().attachments.length) })}</b>
           <span class="grow" />
-          <button class="btn ghost sm" disabled={attaching()} onClick={() => attachInput.click()}><Icon name="clip" size={14} /> {attaching() ? "Đang tải…" : "Thêm file"}</button>
+          <button class="btn ghost sm" disabled={attaching()} onClick={() => attachInput.click()}><Icon name="clip" size={14} /> {attaching() ? t("kb.uploading") : t("kb.addFile")}</button>
           <input ref={attachInput} type="file" multiple hidden onChange={(e) => attach(e.currentTarget.files)} />
         </div>
         <Show when={k().attachments.length}>
@@ -646,7 +647,7 @@ function CardDrawer(props: {
                       </Show>
                       <span class="kb-att-name">{name}</span>
                     </button>
-                    <button class="icon-btn sm" title="Bỏ đính kèm (file vẫn giữ)" onClick={() => props.onPatch({ attachments: k().attachments.filter((x) => x !== p) })}>
+                    <button class="icon-btn sm" title={t("kb.unattach")} onClick={() => props.onPatch({ attachments: k().attachments.filter((x) => x !== p) })}>
                       <Icon name="close" size={13} />
                     </button>
                   </div>
@@ -656,12 +657,12 @@ function CardDrawer(props: {
           </div>
         </Show>
         <Show when={!k().parent_id}>
-          <div class="kb-sec"><b>Subtask {k().sub_total ? `${k().sub_done}/${k().sub_total}` : ""}</b></div>
+          <div class="kb-sec"><b>{t("kb.subtasks")} {k().sub_total ? `${fmtNum(k().sub_done)}/${fmtNum(k().sub_total)}` : ""}</b></div>
           <div class="kb-subs">
             <For each={subs()}>
               {(s) => (
                 <div class="kb-subrow" classList={{ done: !!s.done_at && !subX(s), cancel: subX(s) }}>
-                  <Show when={!subX(s)} fallback={<span class="kb-x-box" title="Đã huỷ (task cha nằm trong cột huỷ)"><Icon name="close" size={13} /></span>}>
+                  <Show when={!subX(s)} fallback={<span class="kb-x-box" title={t("kb.cancelledTip")}><Icon name="close" size={13} /></span>}>
                     <input type="checkbox" checked={!!s.done_at} onChange={(e) => setSubDone(s, e.currentTarget.checked)} />
                   </Show>
                   <button class="link" onClick={() => props.onOpen(s.id)}>{s.title}</button>
@@ -671,7 +672,7 @@ function CardDrawer(props: {
             </For>
             <input
               class="kb-subnew"
-              placeholder="+ Thêm subtask, Enter"
+              placeholder={t("kb.subPh")}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && e.currentTarget.value.trim()) {
                   addSub(e.currentTarget.value.trim());
@@ -682,9 +683,9 @@ function CardDrawer(props: {
           </div>
         </Show>
         <div class="kb-dr-foot">
-          <span class="muted xs">Tạo {fmtDay(k().created_at)}{k().done_at ? ` · Xong ${fmtDay(k().done_at!)}` : ""}</span>
+          <span class="muted xs">{t("kb.createdAt", { d: fmtDay(k().created_at) })}{k().done_at ? ` · ${t("tk.doneAt", { d: fmtDay(k().done_at!) })}` : ""}</span>
           <span class="grow" />
-          <button class="btn ghost sm danger" onClick={() => confirm("Xoá card này?") && props.onDelete()}><Icon name="trash" size={14} /> Xoá</button>
+          <button class="btn ghost sm danger" onClick={() => confirm(t("kb.delCardAsk")) && props.onDelete()}><Icon name="trash" size={14} /> {t("c.delete")}</button>
         </div>
       </aside>
     </div>
@@ -708,7 +709,7 @@ function LinkCard(props: { url: string }) {
         <img src={p()!.image!} alt="" loading="lazy" referrerpolicy="no-referrer" onError={() => setImgOk(false)} />
       </Show>
       <span class="kb-link-txt">
-        <b>{p.loading ? "Đang tải…" : p()?.title ?? props.url}</b>
+        <b>{p.loading ? t("c.loading") : p()?.title ?? props.url}</b>
         <span class="muted xs">{p()?.site ?? host()}</span>
       </span>
     </a>
@@ -745,7 +746,7 @@ function DeckImport(props: { onClose: () => void; onDone: (boardId: string) => v
     setBusy(true);
     try {
       const r = await api.deckApply(b.id, parents(), [...skip()]);
-      alert(`Đã nhập ${r.cards} card (${r.subtasks} subtask).`);
+      alert(t("kb.importedOk", { c: r.cards, s: r.subtasks }));
       props.onDone(r.board);
     } catch (e) {
       props.onError(errText(e));
@@ -758,7 +759,7 @@ function DeckImport(props: { onClose: () => void; onDone: (boardId: string) => v
       <span class="dk-t" title={p.c.title}>{p.c.title}</span>
       <span class="muted xs">{stackOf(p.c.stack_id)?.title}</span>
       <select value={parents()[p.c.id] ?? ""} onChange={(e) => setP(p.c.id, e.currentTarget.value)}>
-        <option value="">— không có cha —</option>
+        <option value="">{t("kb.noParentOpt")}</option>
         <For each={bigs()}>{(b) => <option value={b.id}>{b.title}</option>}</For>
       </select>
     </div>
@@ -767,15 +768,15 @@ function DeckImport(props: { onClose: () => void; onDone: (boardId: string) => v
     <div class="modal-bg" onClick={props.onClose}>
       <div class="modal glass dk" onClick={(e) => e.stopPropagation()}>
         <div class="modal-head">
-          <h3>Nhập từ Nextcloud Deck</h3>
+          <h3>{t("kb.impTitle")}</h3>
           <button class="icon-btn" onClick={props.onClose}><Icon name="close" /></button>
         </div>
-        <Show when={!data.loading} fallback={<p class="muted">Đang đọc…</p>}>
+        <Show when={!data.loading} fallback={<p class="muted">{t("c.loading")}</p>}>
           <div class="chips">
             <For each={data()}>
               {(b) => (
                 <button classList={{ on: sel() === b.id }} onClick={() => setSel(b.id)}>
-                  {b.title} #{b.id}{b.archived ? " (lưu trữ)" : ""} · {b.cards.length}{b.imported ? " ✓ đã nhập" : ""}
+                  {b.title} #{b.id}{b.archived ? t("kb.archTag") : ""} · {fmtNum(b.cards.length)}{b.imported ? t("kb.importedTag") : ""}
                 </button>
               )}
             </For>
@@ -783,7 +784,7 @@ function DeckImport(props: { onClose: () => void; onDone: (boardId: string) => v
           <Show when={board()}>
             {(b) => (
               <>
-                <p class="muted sm">Cột "Subtask" được gộp vào "To do"; card con gắn vào task lớn (cột Bigtask) theo tên. Sửa task cha ở từng dòng nếu sai. Card đã xong vẫn hiện ở cột Done (gọn {DONE_LIMIT} card mới nhất).</p>
+                <p class="muted sm">{t("kb.impHelp", { n: DONE_LIMIT })}</p>
                 <div class="dk-stacks">
                   <For each={b().stacks}>
                     {(s) => (
@@ -805,15 +806,15 @@ function DeckImport(props: { onClose: () => void; onDone: (boardId: string) => v
                   </For>
                   <Show when={orphans().length}>
                     <details class="dk-group" open>
-                      <summary><b>Chưa có task cha</b> <span class="muted xs">{orphans().length}</span></summary>
+                      <summary><b>{t("kb.orphans")}</b> <span class="muted xs">{fmtNum(orphans().length)}</span></summary>
                       <For each={orphans()}>{(c) => <Row c={c} />}</For>
                     </details>
                   </Show>
                 </div>
                 <div class="modal-foot">
-                  <span class="muted sm">{b().cards.filter((c) => !skip().has(c.stack_id)).length} card sẽ được nhập</span>
+                  <span class="muted sm">{t("kb.willImport", { n: fmtNum(b().cards.filter((c) => !skip().has(c.stack_id)).length) })}</span>
                   <span class="grow" />
-                  <button class="btn primary" disabled={busy() || b().imported} onClick={apply}>{b().imported ? "Đã nhập" : busy() ? "Đang nhập…" : "Nhập board này"}</button>
+                  <button class="btn primary" disabled={busy() || b().imported} onClick={apply}>{b().imported ? t("kb.imported") : busy() ? t("kb.importing") : t("kb.doImport")}</button>
                 </div>
               </>
             )}

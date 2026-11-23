@@ -1,5 +1,6 @@
 import { For, Show, createResource, createSignal, onCleanup, onMount } from "solid-js";
 import { api } from "./api";
+import { fmtNum, t } from "./i18n";
 import { errText } from "./fileops";
 import { Icon } from "./icons";
 
@@ -32,12 +33,12 @@ function PinPad(props: { title: string; hint?: string; busy?: boolean; error?: s
       <div class="pin-dots" classList={{ shake: !!props.error }}>
         <For each={[0, 1, 2, 3, 4, 5]}>{(i) => <i classList={{ on: pin().length > i }} />}</For>
       </div>
-      <p class="err pin-err">{props.busy ? "Đang kiểm tra…" : props.error ?? ""}</p>
+      <p class="err pin-err">{props.busy ? t("sc.checking") : props.error ?? ""}</p>
       <div class="pin-keys">
         <For each={["1", "2", "3", "4", "5", "6", "7", "8", "9"]}>{(d) => <button onClick={() => push(d)}>{d}</button>}</For>
         <span />
         <button onClick={() => push("0")}>0</button>
-        <button onClick={back} title="Xoá"><Icon name="back" /></button>
+        <button onClick={back} title={t("c.delete")}><Icon name="back" /></button>
       </div>
     </div>
   );
@@ -49,17 +50,17 @@ function RecoveryShow(props: { code: string; onDone: () => void }) {
   const [copied, setCopied] = createSignal(false);
   return (
     <div class="pin">
-      <h3>Mã khôi phục</h3>
-      <p class="muted sm">Dùng khi quên PIN. Chỉ hiện <b>một lần</b>. Lưu vào trình quản lý mật khẩu hoặc giấy. Mất cả PIN lẫn mã này thì <b>không ai mở được</b> dữ liệu, kể cả admin.</p>
+      <h3>{t("sc.recTitle")}</h3>
+      <p class="muted sm" innerHTML={t("sc.recDesc")} />
       <code class="rec-code">{props.code}</code>
       <button class="btn ghost" onClick={async () => {
         try {
           await navigator.clipboard.writeText(props.code);
           setCopied(true);
         } catch {}
-      }}>{copied() ? "Đã chép ✓" : "Chép mã"}</button>
-      <label class="rec-ok"><input type="checkbox" checked={saved()} onChange={(e) => setSaved(e.currentTarget.checked)} /> Tôi đã lưu mã khôi phục</label>
-      <button class="btn primary block" disabled={!saved()} onClick={props.onDone}>Tiếp tục</button>
+      }}>{copied() ? t("sc.copiedCode") : t("sc.copyCode")}</button>
+      <label class="rec-ok"><input type="checkbox" checked={saved()} onChange={(e) => setSaved(e.currentTarget.checked)} /> {t("sc.savedRec")}</label>
+      <button class="btn primary block" disabled={!saved()} onClick={props.onDone}>{t("sc.continue")}</button>
     </div>
   );
 }
@@ -91,9 +92,9 @@ export function SecretGate(props: { onUnlocked: () => void }) {
     <div class="secret-gate">
       <div class="gate-box glass">
         <div class="gate-ic"><Icon name="lock" size={30} /></div>
-        <Show when={!st.loading} fallback={<p class="muted">Đang tải…</p>}>
+        <Show when={!st.loading} fallback={<p class="muted">{t("c.loading")}</p>}>
           <Show when={(st()?.wait ?? 0) > 0}>
-            <p class="err">Sai quá nhiều lần, thử lại sau {Math.ceil(st()!.wait / 60)} phút.</p>
+            <p class="err">{t("sc.lockedOut", { m: Math.ceil(st()!.wait / 60) })}</p>
           </Show>
           {(() => {
             const x = s();
@@ -101,19 +102,19 @@ export function SecretGate(props: { onUnlocked: () => void }) {
               case "pin":
                 return (
                   <>
-                    <PinPad title="Nhập PIN khu Bí mật" busy={busy()} error={err()} onDone={(pin) => run(async () => {
+                    <PinPad title={t("sc.enterPin")} busy={busy()} error={err()} onDone={(pin) => run(async () => {
                       await api.secretUnlock({ pin });
                       props.onUnlocked();
                     }).then(() => refetch())} />
-                    <button class="btn link" onClick={() => { setErr(""); setStep({ k: "rec" }); }}>Quên PIN? Dùng mã khôi phục</button>
+                    <button class="btn link" onClick={() => { setErr(""); setStep({ k: "rec" }); }}>{t("sc.forgotPin")}</button>
                   </>
                 );
               case "new1":
-                return <PinPad title="Tạo khu Bí mật" hint="Đặt PIN 6 số. File trong khu này được mã hoá, tự khoá sau 10 phút không dùng." error={err()} onDone={(p) => { setErr(""); setStep({ k: "new2", first: p }); }} />;
+                return <PinPad title={t("sc.setupTitle")} hint={t("sc.setupHint")} error={err()} onDone={(p) => { setErr(""); setStep({ k: "new2", first: p }); }} />;
               case "new2":
-                return <PinPad title="Nhập lại PIN" busy={busy()} error={err()} onDone={(p) => {
+                return <PinPad title={t("sc.rePin")} busy={busy()} error={err()} onDone={(p) => {
                   if (p !== x.first) {
-                    setErr("PIN không khớp, đặt lại");
+                    setErr(t("sc.mismatch"));
                     setStep({ k: "new1" });
                     return;
                   }
@@ -133,19 +134,19 @@ export function SecretGate(props: { onUnlocked: () => void }) {
                       setStep({ k: "reset1" });
                     });
                   }}>
-                    <h3>Mở bằng mã khôi phục</h3>
+                    <h3>{t("sc.unlockRec")}</h3>
                     <input class="rec-in" value={code()} onInput={(e) => setCode(e.currentTarget.value)} placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" autocomplete="off" />
-                    <p class="err pin-err">{busy() ? "Đang kiểm tra…" : err()}</p>
-                    <button class="btn primary block" disabled={busy() || code().replace(/[^a-z0-9]/gi, "").length < 24}>Mở khoá</button>
-                    <button type="button" class="btn link" onClick={() => { setErr(""); setStep({ k: "pin" }); }}>Quay lại nhập PIN</button>
+                    <p class="err pin-err">{busy() ? t("sc.checking") : err()}</p>
+                    <button class="btn primary block" disabled={busy() || code().replace(/[^a-z0-9]/gi, "").length < 24}>{t("sc.unlock")}</button>
+                    <button type="button" class="btn link" onClick={() => { setErr(""); setStep({ k: "pin" }); }}>{t("sc.backPin")}</button>
                   </form>
                 );
               case "reset1":
-                return <PinPad title="Đặt PIN mới" error={err()} onDone={(p) => { setErr(""); setStep({ k: "reset2", first: p }); }} />;
+                return <PinPad title={t("sc.newPin")} error={err()} onDone={(p) => { setErr(""); setStep({ k: "reset2", first: p }); }} />;
               case "reset2":
-                return <PinPad title="Nhập lại PIN mới" busy={busy()} error={err()} onDone={(p) => {
+                return <PinPad title={t("sc.reNewPin")} busy={busy()} error={err()} onDone={(p) => {
                   if (p !== x.first) {
-                    setErr("PIN không khớp, đặt lại");
+                    setErr(t("sc.mismatch"));
                     setStep({ k: "reset1" });
                     return;
                   }
@@ -193,47 +194,47 @@ export function SecretSettings(props: { onClose: () => void; onDestroyed: () => 
     <div class="modal-bg" onClick={() => !busy() && props.onClose()}>
       <div class="modal glass form secret-set" onClick={(e) => e.stopPropagation()}>
         <div class="modal-head">
-          <h3><Icon name="lock" /> Cài đặt Bí mật</h3>
+          <h3><Icon name="lock" /> {t("f.secretSettings")}</h3>
           <button type="button" class="icon-btn" onClick={props.onClose}><Icon name="close" /></button>
         </div>
         <Show when={msg()}><p class="ok-msg">{msg()}</p></Show>
         <Show when={err()}><p class="err">{err()}</p></Show>
 
-        <label>Đổi PIN</label>
+        <label>{t("sc.changePin")}</label>
         <div class="two">
-          {pinIn(oldPin, setOldPin, "PIN hiện tại")}
-          {pinIn(newPin, setNewPin, "PIN mới")}
+          {pinIn(oldPin, setOldPin, t("sc.curPin"))}
+          {pinIn(newPin, setNewPin, t("sc.newPin2"))}
         </div>
         <button class="btn ghost" disabled={busy() || !six(oldPin()) || !six(newPin())} onClick={() => run(async () => {
           await api.secretChangePin(oldPin(), newPin());
           setOldPin("");
           setNewPin("");
-          setMsg("Đã đổi PIN");
-        })}>Đổi PIN</button>
+          setMsg(t("sc.pinChanged"));
+        })}>{t("sc.changePin")}</button>
 
-        <label>Mã khôi phục mới (mã cũ hết hiệu lực)</label>
+        <label>{t("sc.newRecTitle")}</label>
         <Show when={code()} fallback={
           <div class="two">
-            {pinIn(pin2, setPin2, "PIN")}
+            {pinIn(pin2, setPin2, t("sc.curPin"))}
             <button class="btn ghost" disabled={busy() || !six(pin2())} onClick={() => run(async () => {
               setCode(await api.secretNewRecovery(pin2()));
               setPin2("");
-            })}>Tạo mã mới</button>
+            })}>{t("sc.makeRec")}</button>
           </div>
         }>
           <code class="rec-code">{code()}</code>
-          <p class="muted sm">Lưu mã này ngay, đóng hộp thoại là không xem lại được.</p>
+          <p class="muted sm">{t("sc.saveRecWarn")}</p>
         </Show>
 
-        <label class="danger-txt">Xoá khu Bí mật (xoá vĩnh viễn mọi file trong đó)</label>
+        <label class="danger-txt">{t("sc.delVault")}</label>
         <div class="two">
-          {pinIn(delPin, setDelPin, "PIN")}
-          <input placeholder='Gõ "XOA" để xác nhận' value={confirmTxt()} onInput={(e) => setConfirmTxt(e.currentTarget.value)} />
+          {pinIn(delPin, setDelPin, t("sc.curPin"))}
+          <input placeholder={t("sc.typeXoa")} value={confirmTxt()} onInput={(e) => setConfirmTxt(e.currentTarget.value)} />
         </div>
         <button class="btn danger" disabled={busy() || !six(delPin()) || confirmTxt().trim().toUpperCase() !== "XOA"} onClick={() => run(async () => {
           await api.secretDestroy(delPin());
           props.onDestroyed();
-        })}>Xoá vĩnh viễn</button>
+        })}>{t("c.delForever")}</button>
       </div>
     </div>
   );

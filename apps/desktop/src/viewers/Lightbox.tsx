@@ -1,5 +1,6 @@
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { Icon } from "../icons";
+import { t } from "../i18n";
 
 /** Xem ảnh toàn màn hình: lăn chuột / nút / chụm 2 ngón để zoom, kéo để di chuyển, Esc hoặc bấm nền để đóng. */
 export default function Lightbox(props: { src: string; alt?: string; onClose: () => void; onPrev?: () => void; onNext?: () => void; label?: string }) {
@@ -90,18 +91,18 @@ export default function Lightbox(props: { src: string; alt?: string; onClose: ()
       />
       <div class="lb-bar">
         <Show when={props.onPrev}>
-          <button onClick={() => props.onPrev!()} title="Ảnh trước (←)"><Icon name="back" /></button>
+          <button onClick={() => props.onPrev!()} title={t("vw.lbPrev")}><Icon name="back" /></button>
         </Show>
         <Show when={props.label}><span class="lb-label">{props.label}</span></Show>
         <Show when={props.onNext}>
-          <button onClick={() => props.onNext!()} title="Ảnh tiếp (→)"><Icon name="next" /></button>
+          <button onClick={() => props.onNext!()} title={t("vw.lbNext")}><Icon name="next" /></button>
           <span class="lb-sep" />
         </Show>
-        <button onClick={() => zoomAt(0.8)} title="Thu nhỏ (-)"><Icon name="minus" /></button>
-        <button class="lb-pct" onClick={() => reset(fit)} title="Vừa màn hình (0)">{Math.round(s() * 100)}%</button>
-        <button onClick={() => zoomAt(1.25)} title="Phóng to (+)"><Icon name="plus" /></button>
-        <button onClick={() => reset(1)} title="Kích thước thật">1:1</button>
-        <button onClick={props.onClose} title="Đóng (Esc)"><Icon name="close" /></button>
+        <button onClick={() => zoomAt(0.8)} title={t("vw.lbZout")}><Icon name="minus" /></button>
+        <button class="lb-pct" onClick={() => reset(fit)} title={t("vw.lbFit")}>{Math.round(s() * 100)}%</button>
+        <button onClick={() => zoomAt(1.25)} title={t("vw.lbZin")}><Icon name="plus" /></button>
+        <button onClick={() => reset(1)} title={t("vw.lbReal")}>1:1</button>
+        <button onClick={props.onClose} title={t("vw.lbClose")}><Icon name="close" /></button>
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import { For, Show, createResource, createSignal } from "solid-js";
 import { api } from "../api";
 import { Icon } from "../icons";
+import { fmtNum, t } from "../i18n";
 
 /** Duyệt zip: liệt kê central directory (Range, không tải cả file) + tải 1 file con. */
 export default function ZipView(props: { path: string }) {
@@ -24,11 +25,11 @@ export default function ZipView(props: { path: string }) {
 
   return (
     <div class="zip-wrap">
-      <Show when={entries.error}><p class="err">Không đọc được zip: {String((entries.error as any)?.message ?? entries.error)}</p></Show>
+      <Show when={entries.error}><p class="err">{t("vw.zipErr", { e: String((entries.error as any)?.message ?? entries.error) })}</p></Show>
       <Show when={entries()}>
         {(z) => (
           <>
-            <p class="muted sm">{z().total.toLocaleString("vi-VN")} mục{z().truncated ? ` (hiện ${z().entries.length} đầu)` : ""} · bấm để tải file con</p>
+            <p class="muted sm">{t("vw.zipTotal", { n: fmtNum(z().total) })}{z().truncated ? t("vw.zipShowing", { n: fmtNum(z().entries.length) }) : ""} · bấm để tải file con</p>
             <ul class="files">
               <For each={z().entries}>
                 {(e) => (
@@ -37,7 +38,7 @@ export default function ZipView(props: { path: string }) {
                     <a href="#" title={e.name} onClick={(ev) => { ev.preventDefault(); if (!e.is_dir) save(e.name); }}>{e.name}</a>
                     {e.is_dir ? "" : <span class="size">{(e.size / 1024).toFixed(1)} KB</span>}
                     <Show when={!e.is_dir}>
-                      <button class="icon-btn sm" title="Tải file này" onClick={() => save(e.name)} disabled={busy() === e.name}>
+                      <button class="icon-btn sm" title={t("vw.zipDl")} onClick={() => save(e.name)} disabled={busy() === e.name}>
                         <Icon name="download" size={14} />
                       </button>
                     </Show>
@@ -48,7 +49,7 @@ export default function ZipView(props: { path: string }) {
           </>
         )}
       </Show>
-      <Show when={entries.loading && !entries()}><p class="muted">Đang đọc zip…</p></Show>
+      <Show when={entries.loading && !entries()}><p class="muted">{t("vw.zipLoading")}</p></Show>
     </div>
   );
 }

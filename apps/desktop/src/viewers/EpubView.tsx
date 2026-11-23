@@ -1,6 +1,7 @@
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { api, isSecret } from "../api";
 import { Icon } from "../icons";
+import { t } from "../i18n";
 
 // epubjs không có type đầy đủ cho cách dùng này.
 /** Đọc epub (sách điện tử): lật trang, giữ vị trí. */
@@ -45,10 +46,10 @@ export default function EpubView(props: { path: string }) {
   return (
     <div class="epub-wrap">
       <div class="pdf-bar">
-        <button class="icon-btn" onClick={() => rendition?.prev()} title="Trang trước"><Icon name="back" /></button>
-        <button class="icon-btn" onClick={() => rendition?.next()} title="Trang tiếp"><Icon name="next" /></button>
+        <button class="icon-btn" onClick={() => rendition?.prev()} title={t("vw.epubPrev")}><Icon name="back" /></button>
+        <button class="icon-btn" onClick={() => rendition?.next()} title={t("vw.epubNext")}><Icon name="next" /></button>
         <span class="grow" />
-        <span class="muted sm">{loc() ? "đang đọc…" : props.path.split("/").pop()}</span>
+        <span class="muted sm">{t("vw.epubReading")}</span>
       </div>
       <Show when={err()}><p class="err">{err()}</p></Show>
       <div class="epub-book" ref={host!} />

@@ -2,22 +2,20 @@ import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid
 import * as pdfjs from "pdfjs-dist";
 import PdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?worker";
 import { api } from "../api";
+import { fmtNum, t } from "../i18n";
 import { Icon } from "../icons";
 import { ReaderLayout, STATE_UI, type TocItem, createReader, topState } from "../annot";
 
 pdfjs.GlobalWorkerOptions.workerPort = new PdfWorker();
 
 type Layout = "single" | "scroll" | "spread" | "spread-scroll";
-const LAYOUTS: { id: Layout; label: string; title: string }[] = [
-  { id: "single", label: "1 trang", title: "Từng trang" },
-  { id: "scroll", label: "Liên tục", title: "Cuộn liên tục" },
-  { id: "spread", label: "2 trang", title: "2 trang cạnh nhau" },
-  { id: "spread-scroll", label: "2 trang liên tục", title: "2 trang cạnh nhau, cuộn liên tục" },
-];
+const LAYOUTS: Layout[] = ["single", "scroll", "spread", "spread-scroll"];
+const layoutLabel = (id: Layout) => t(`vw.pdfMode${id === "single" ? "Single" : id === "scroll" ? "Scroll" : id === "spread" ? "Spread" : "SpreadScroll"}`);
+const layoutTitle = (id: Layout) => t(`vw.pdfT${id === "single" ? "Single" : id === "scroll" ? "Scroll" : id === "spread" ? "Spread" : "SpreadScroll"}`);
 const savedLayout = (): Layout => {
   try {
     const v = localStorage.getItem("nk-pdf-layout") as Layout | null;
-    return v && LAYOUTS.some((l) => l.id === v) ? v : "scroll";
+    return v && (LAYOUTS as string[]).includes(v) ? v : "scroll";
   } catch {
     return "scroll";
   }
@@ -25,29 +23,30 @@ const savedLayout = (): Layout => {
 
 /** Màu đọc đỡ mỏi mắt: đổi nền + chữ theo độ sáng, giữ nguyên vùng ảnh. */
 type Tone = "normal" | "sepia" | "dark";
-const TONES: { id: Tone; label: string; bg?: [number, number, number]; fg?: [number, number, number] }[] = [
-  { id: "normal", label: "Màu gốc" },
-  { id: "sepia", label: "Vàng cam", bg: [245, 225, 186], fg: [52, 36, 20] },
-  { id: "dark", label: "Nền đen", bg: [20, 17, 15], fg: [236, 176, 108] },
+const TONES: { id: Tone; bg?: [number, number, number]; fg?: [number, number, number] }[] = [
+  { id: "normal" },
+  { id: "sepia", bg: [245, 225, 186], fg: [52, 36, 20] },
+  { id: "dark", bg: [20, 17, 15], fg: [236, 176, 108] },
 ];
+const toneLabel = (id: Tone) => t(`vw.tone${id === "normal" ? "Normal" : id === "sepia" ? "Sepia" : "Dark"}`);
 const savedTone = (): Tone => {
   try {
     const v = localStorage.getItem("nk-pdf-tone") as Tone | null;
-    return v && TONES.some((t) => t.id === v) ? v : "normal";
+    return v && TONES.some((x) => x.id === v) ? v : "normal";
   } catch {
     return "normal";
   }
 };
 
 const toneBg = (tone: Tone) => {
-  const bg = TONES.find((t) => t.id === tone)?.bg;
+  const bg = TONES.find((x) => x.id === tone)?.bg;
   return bg ? `rgb(${bg.join(",")})` : undefined;
 };
 
 /** Đổi màu canvas: sáng -> bg, tối -> fg (nội suy theo độ sáng); bỏ qua vùng ảnh (toạ độ chuẩn hoá từ pdf.js). */
 function recolor(canvas: HTMLCanvasElement, tone: Tone, imgs: ArrayLike<number> | null) {
-  const t = TONES.find((x) => x.id === tone);
-  if (!t?.bg || !t.fg) return;
+  const tx = TONES.find((x) => x.id === tone);
+  if (!tx?.bg || !tx.fg) return;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
   const W = canvas.width;
@@ -63,7 +62,7 @@ function recolor(canvas: HTMLCanvasElement, tone: Tone, imgs: ArrayLike<number> 
     for (let y = y0; y < y1; y++) mask.fill(1, y * W + x0, y * W + x1);
   }
   const lut = new Uint8Array(256 * 3);
-  for (let l = 0; l < 256; l++) for (let c = 0; c < 3; c++) lut[l * 3 + c] = Math.round(t.fg[c] + ((t.bg[c] - t.fg[c]) * l) / 255);
+  for (let l = 0; l < 256; l++) for (let c = 0; c < 3; c++) lut[l * 3 + c] = Math.round(tx.fg[c] + ((tx.bg[c] - tx.fg[c]) * l) / 255);
   const img = ctx.getImageData(0, 0, W, H);
   const d = img.data;
   for (let p = 0, k = 0; p < mask.length; p++, k += 4) {
@@ -269,14 +268,14 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
     <ReaderLayout r={reader} toc={toc()} current={toc().filter((t) => +t.anchor.slice(1) <= page()).pop()?.anchor ?? ""} onJump={jump} anchorOf={() => here()}>
     <div class="pdf-wrap" ref={host}>
       <div class="pdf-bar">
-        <button class="icon-btn" onClick={() => go(-1)} disabled={page() <= 1} title="Trang trước"><Icon name="back" /></button>
+        <button class="icon-btn" onClick={() => go(-1)} disabled={page() <= 1} title={t("vw.prevPage")}><Icon name="back" /></button>
         <span class="pdf-num muted sm">
           <input
             type="number"
             min="1"
             max={pages() || 1}
             value={page()}
-            title="Nhập số trang rồi Enter"
+            title={t("vw.gotoPh")}
             onFocus={(e) => e.currentTarget.select()}
             onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
             onChange={(e) => {
@@ -287,26 +286,26 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
           />
           /{pages() || "…"}
         </span>
-        <button class="icon-btn" onClick={() => go(1)} disabled={(spread() && !scrolling() ? shown()[shown().length - 1] : page()) >= pages()} title="Trang tiếp"><Icon name="next" /></button>
-        <button class="icon-btn" classList={{ "bm-on": !!bm() }} onClick={() => reader.toggleBookmark(here(), `Trang ${page()}`)} title={bm() ? "Bỏ bookmark trang này" : "Bookmark trang này"}>
+        <button class="icon-btn" onClick={() => go(1)} disabled={(spread() && !scrolling() ? shown()[shown().length - 1] : page()) >= pages()} title={t("vw.nextPage")}><Icon name="next" /></button>
+        <button class="icon-btn" classList={{ "bm-on": !!bm() }} onClick={() => reader.toggleBookmark(here(), t("vw.pageOf", { p: page() }))} title={bm() ? t("vw.bmDel") : t("vw.bmAdd")}>
           <Icon name="bookmark" />
         </button>
-        <button class="icon-btn" onClick={() => reader.startNote(here(), "")} title="Ghi chú cho trang này"><Icon name="note" /></button>
+        <button class="icon-btn" onClick={() => reader.startNote(here(), "")} title={t("vw.notePage")}><Icon name="note" /></button>
         <Show when={st()}>
           {(s) => (
-            <button class={`mk mk-note st-${s()}`} onClick={() => reader.showNotes(pageAnns().find((a) => a.kind === "note")!.id)} title="Ghi chú của trang">
+            <button class={`mk mk-note st-${s()}`} onClick={() => reader.showNotes(pageAnns().find((a) => a.kind === "note")!.id)} title={t("nt.viewNotes")}>
               <Icon name={STATE_UI[s()].icon} size={12} />
             </button>
           )}
         </Show>
         <span class="grow" />
-        <select class="pdf-layout" value={tone()} onChange={(e) => setTone(e.currentTarget.value as Tone)} title="Màu đọc (đổi nền + chữ, giữ màu ảnh)">
-          <For each={TONES}>{(t) => <option value={t.id}>{t.label}</option>}</For>
+        <select class="pdf-layout" value={tone()} onChange={(e) => setTone(e.currentTarget.value as Tone)} title={t("vw.toneTip")}>
+          <For each={TONES}>{(o) => <option value={o.id}>{toneLabel(o.id)}</option>}</For>
         </select>
-        <select class="pdf-layout" value={layout()} onChange={(e) => setLayout(e.currentTarget.value as Layout)} title="Chế độ xem">
-          <For each={LAYOUTS}>{(l) => <option value={l.id} title={l.title}>{l.label}</option>}</For>
+        <select class="pdf-layout" value={layout()} onChange={(e) => setLayout(e.currentTarget.value as Layout)} title={t("vw.layoutTip")}>
+          <For each={LAYOUTS}>{(l) => <option value={l} title={layoutTitle(l)}>{layoutLabel(l)}</option>}</For>
         </select>
-        <button class="icon-btn" onClick={() => zoom(-0.2)} title="Thu nhỏ">−</button>
+        <button class="icon-btn" onClick={() => zoom(-0.2)} title={t("vw.zout")}>−</button>
         <span class="pdf-num muted sm">
           <input
             type="number"
@@ -314,7 +313,7 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
             max="300"
             step="10"
             value={Math.round(scale() * 100)}
-            title="Nhập % zoom rồi Enter"
+            title={t("vw.zoomPh")}
             onFocus={(e) => e.currentTarget.select()}
             onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
             onChange={(e) => {
@@ -325,8 +324,8 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
           />
           %
         </span>
-        <button class="icon-btn" onClick={() => zoom(0.2)} title="Phóng to">+</button>
-        <button class="icon-btn" onClick={toggleFs} title={fs() ? "Thoát toàn màn hình (Esc)" : "Xem toàn màn hình"}>
+        <button class="icon-btn" onClick={() => zoom(0.2)} title={t("vw.zin")}>+</button>
+        <button class="icon-btn" onClick={toggleFs} title={fs() ? t("vw.fsExit") : t("vw.fsEnter")}>
           <Icon name="expand" size={17} />
         </button>
       </div>

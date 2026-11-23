@@ -1,5 +1,6 @@
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { api } from "../api";
+import { loc, t } from "../i18n";
 
 /**
  * Sửa draw.io (.drawio) qua editor nhúng. Lưu ngược lại file trên NextKloud.
@@ -15,9 +16,9 @@ export default function DrawioView(props: { path: string }) {
   const send = (msg: any) => frame?.contentWindow?.postMessage(JSON.stringify(msg), "*");
 
   const persist = (xml: string) => {
-    setSaved("Đang lưu…");
+    setSaved(t("vw.drawSaving"));
     api.saveText(props.path, xml).then(
-      () => !dead && setSaved(`Đã lưu ${new Date().toLocaleTimeString("vi-VN")}`),
+      () => !dead && setSaved(t("vw.drawSaved", { t: new Date().toLocaleTimeString(loc()) })),
       (e: any) => !dead && setErr(String(e?.message ?? e)),
     );
   };

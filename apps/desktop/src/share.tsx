@@ -1,10 +1,10 @@
 import { For, Show, createResource, createSignal } from "solid-js";
 import { api, serverOrigin, type Entry, type LinkMeta, type ShareRow, type SharedItem } from "./api";
+import { fmtDate, fmtNum, t } from "./i18n";
 import { errText } from "./fileops";
 import { Icon } from "./icons";
 
-const fmtDay = (s: number) => new Date(s * 1000).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "2-digit" });
-const expText = (e: number | null) => (!e ? "vĩnh viễn" : e * 1000 < Date.now() ? `hết hạn ${fmtDay(e)}` : `tới ${fmtDay(e)}`);
+const expText = (e: number | null) => (!e ? t("sh.forever") : e * 1000 < Date.now() ? t("sh.expired", { d: fmtDate(e) }) : t("sh.until", { d: fmtDate(e) }));
 
 /** Dialog quản lý chia sẻ + link công khai cho 1 file/thư mục của mình. */
 export function ShareDialog(props: { path: string; onClose: () => void; onError: (m: string) => void }) {
@@ -36,58 +36,58 @@ export function ShareDialog(props: { path: string; onClose: () => void; onError:
     <div class="modal-bg" onClick={props.onClose}>
       <div class="modal glass" onClick={(e) => e.stopPropagation()}>
         <div class="modal-head">
-          <h3>Chia sẻ “{name()}”</h3>
+          <h3>{t("sh.dlgTitle", { name: name() })}</h3>
           <button class="icon-btn" onClick={props.onClose}><Icon name="close" /></button>
         </div>
-        <Show when={rows.loading}><p class="muted">Đang tải…</p></Show>
+        <Show when={rows.loading}><p class="muted">{t("c.loading")}</p></Show>
         <div class="sh-sec">
-          <b>Chia sẻ cho người dùng</b>
+          <b>{t("sh.toUser")}</b>
           <div class="sh-add">
-            <input value={user()} onInput={(e) => setUser(e.currentTarget.value)} placeholder="Tên đăng nhập" />
-            <select value={perm()} onChange={(e) => setPerm(e.currentTarget.value)} title="Quyền">
-              <option value="view">Được xem</option>
-              <option value="edit">Được sửa</option>
+            <input value={user()} onInput={(e) => setUser(e.currentTarget.value)} placeholder={t("u.username")} />
+            <select value={perm()} onChange={(e) => setPerm(e.currentTarget.value)} title={t("sh.perm")}>
+              <option value="view">{t("sh.canView")}</option>
+              <option value="edit">{t("sh.canEdit")}</option>
             </select>
-            <button class="btn primary sm" onClick={() => user().trim() && run(() => api.shareWith(props.path, user().trim(), perm()).then(() => setUser("")))}>Thêm</button>
+            <button class="btn primary sm" onClick={() => user().trim() && run(() => api.shareWith(props.path, user().trim(), perm()).then(() => setUser("")))}>{t("c.add")}</button>
           </div>
-          <For each={userShares()} fallback={<p class="muted xs">Chưa chia sẻ cho ai.</p>}>
+          <For each={userShares()} fallback={<p class="muted xs">{t("sh.noShares")}</p>}>
             {(r) => (
               <div class="sh-row">
                 <Icon name="user" size={15} class="ic muted" />
                 <span>{r.target}</span>
-                <span class="muted xs">{r.permission === "edit" ? "được sửa" : "được xem"} · {expText(r.expires_at)}</span>
+                <span class="muted xs">{r.permission === "edit" ? t("sh.canEdit") : t("sh.canView")} · {expText(r.expires_at)}</span>
                 <span class="grow" />
-                <button class="icon-btn sm danger" title="Thu hồi" onClick={() => confirm(`Thu hồi quyền của ${r.target}?`) && run(() => api.unshare(r.id))}><Icon name="trash" size={13} /></button>
+                <button class="icon-btn sm danger" title={t("sh.revoke")} onClick={() => confirm(t("sh.revokeAsk", { name: r.target ?? "" })) && run(() => api.unshare(r.id))}><Icon name="trash" size={13} /></button>
               </div>
             )}
           </For>
         </div>
         <div class="sh-sec">
-          <b>Link công khai (chỉ xem + tải)</b>
+          <b>{t("sh.pubTitle")}</b>
           <div class="sh-add">
-            <input type="password" value={pw()} onInput={(e) => setPw(e.currentTarget.value)} placeholder="Mật khẩu (tối thiểu 8 ký tự, trống = không)" autocomplete="new-password" />
-            <select value={days()} onChange={(e) => setDays(e.currentTarget.value)} title="Hạn dùng">
-              <option value="">Vĩnh viễn</option>
-              <option value="1">1 ngày</option>
-              <option value="7">7 ngày</option>
-              <option value="30">30 ngày</option>
+            <input type="password" value={pw()} onInput={(e) => setPw(e.currentTarget.value)} placeholder={t("sh.pwPh")} autocomplete="new-password" />
+            <select value={days()} onChange={(e) => setDays(e.currentTarget.value)} title={t("sh.expiry")}>
+              <option value="">{t("sh.forever")}</option>
+              <option value="1">{t("sh.d1")}</option>
+              <option value="7">{t("sh.d7")}</option>
+              <option value="30">{t("sh.d30")}</option>
             </select>
-            <button class="btn primary sm" onClick={() => run(() => api.createLink(props.path, pw(), days() ? +days() : null))}>Tạo link</button>
+            <button class="btn primary sm" onClick={() => run(() => api.createLink(props.path, pw(), days() ? +days() : null))}>{t("sh.makeLink")}</button>
           </div>
-          <For each={links()} fallback={<p class="muted xs">Chưa có link nào.</p>}>
+          <For each={links()} fallback={<p class="muted xs">{t("sh.noLinks")}</p>}>
             {(r) => (
               <div class="sh-row">
                 <Icon name="copy" size={15} class="ic muted" />
-                <input class="sh-link" readonly value={linkUrl(r.token!)} onFocus={(e) => e.currentTarget.select()} title="Bôi đen để chép tay nếu nút Chép không chạy" />
-                <span class="muted xs">{r.has_password ? "có MK" : "không MK"} · {expText(r.expires_at)}</span>
+                <input class="sh-link" readonly value={linkUrl(r.token!)} onFocus={(e) => e.currentTarget.select()} title={t("sh.copyHint")} />
+                <span class="muted xs">{r.has_password ? t("sh.hasPw") : t("sh.noPw")} · {expText(r.expires_at)}</span>
                 <span class="grow" />
-                <button class="btn ghost sm" onClick={() => copyLink(r.token!)}>Chép</button>
-                <button class="icon-btn sm danger" title="Xoá link" onClick={() => confirm("Xoá link này?") && run(() => api.unshare(r.id))}><Icon name="trash" size={13} /></button>
+                <button class="btn ghost sm" onClick={() => copyLink(r.token!)}>{t("c.copyBtn")}</button>
+                <button class="icon-btn sm danger" title={t("sh.delLink")} onClick={() => confirm(t("sh.delLinkAsk")) && run(() => api.unshare(r.id))}><Icon name="trash" size={13} /></button>
               </div>
             )}
           </For>
         </div>
-        <p class="muted xs">Thu hồi/xoá link có hiệu lực ngay. File trong Bí mật không chia sẻ được.</p>
+        <p class="muted xs">{t("sh.note")}</p>
       </div>
     </div>
   );
@@ -133,11 +133,11 @@ export function SharedPage(props: { onError: (m: string) => void }) {
     }
   };
   const saveCopy = (path: string) => {
-    const to = prompt("Lưu bản sao về đường dẫn (trong file của bạn)", path.split("/").pop() ?? "bản sao");
+    const to = prompt(t("sh.savePrompt"), path.split("/").pop() ?? "bản sao");
     if (to?.trim()) run(() => api.saveCopy(sel()!.owner_id, path, to.trim()));
   };
   const newFolder = () => {
-    const n = prompt("Tên thư mục mới")?.trim();
+    const n = prompt(t("f.newFolderPrompt"))?.trim();
     if (n) run(() => api.mkdir(`${abs()}/${n}`, sel()!.owner_id));
   };
   const up = (fs: FileList | null) => {
@@ -152,51 +152,51 @@ export function SharedPage(props: { onError: (m: string) => void }) {
   return (
     <div class="kanban">
       <div class="toolbar kb-bar">
-        <h2 class="tb-title"><Icon name="users" /> Được chia sẻ</h2>
+        <h2 class="tb-title"><Icon name="users" /> {t("nav.shared")}</h2>
         <div class="kb-boards">
-          <For each={list()} fallback={!list.loading && <span class="muted sm">Chưa ai chia sẻ gì với bạn.</span>}>
+          <For each={list()} fallback={!list.loading && <span class="muted sm">{t("sh.noShared")}</span>}>
             {(s) => (
-              <button class="chip" classList={{ on: sel()?.id === s.id }} onClick={() => pick(s)} title={`${s.owner_name} · ${s.permission === "edit" ? "được sửa" : "được xem"}`}>
+              <button class="chip" classList={{ on: sel()?.id === s.id }} onClick={() => pick(s)} title={`${s.owner_name} · ${s.permission === "edit" ? t("sh.canEdit") : t("sh.viewOnly")}`}>
                 {s.owner_name}/{s.path.split("/").pop()}
               </button>
             )}
           </For>
         </div>
       </div>
-      <Show when={sel()} fallback={<div class="empty"><Icon name="users" size={48} /><p>Chọn một mục bên trên để duyệt.</p></div>}>
+      <Show when={sel()} fallback={<div class="empty"><Icon name="users" size={48} /><p>{t("sh.pickOne")}</p></div>}>
         <div class="kb-sub">
           <Show when={crumbs().length} fallback={<b>{sel()!.path}</b>}>
             <button class="link" onClick={() => go(0)}>{sel()!.path.split("/").pop()}</button>
             <For each={crumbs()}>{(c, i) => <><span class="muted">/</span><button class="link" onClick={() => go(i() + 1)}>{c}</button></>}</For>
           </Show>
-          <span class="muted xs">chủ: {sel()!.owner_name} · {sel()!.permission === "edit" ? "được sửa" : "chỉ xem"}</span>
+          <span class="muted xs">{t("sh.ownerLine", { name: sel()!.owner_name, perm: sel()!.permission === "edit" ? t("sh.canEdit") : t("sh.viewOnly") })}</span>
           <span class="grow" />
           <Show when={canEdit()}>
-            <button class="btn ghost sm" onClick={newFolder}><Icon name="plus" size={15} /> Thư mục</button>
-            <button class="btn ghost sm" onClick={() => fileInput.click()}><Icon name="upload" size={15} /> Tải lên</button>
+            <button class="btn ghost sm" onClick={newFolder}><Icon name="plus" size={15} /> {t("sh.mkdir")}</button>
+            <button class="btn ghost sm" onClick={() => fileInput.click()}><Icon name="upload" size={15} /> {t("c.upload")}</button>
             <input ref={fileInput} type="file" multiple hidden onChange={(e) => { up(e.currentTarget.files); e.currentTarget.value = ""; }} />
           </Show>
-          <button class="btn ghost sm" onClick={() => saveCopy(abs())} title="Chép cả thư mục này về file của bạn"><Icon name="copy" size={15} /> Lưu bản sao</button>
+          <button class="btn ghost sm" onClick={() => saveCopy(abs())} title={t("sh.saveDirTip")}><Icon name="copy" size={15} /> {t("sh.saveCopy")}</button>
         </div>
-        <Show when={!page.loading} fallback={<p class="muted pad">Đang tải…</p>}>
+        <Show when={!page.loading} fallback={<p class="muted pad">{t("c.loading")}</p>}>
           <div class="sh-list">
-            <For each={page()?.entries ?? []} fallback={<p class="muted pad">Trống.</p>}>
+            <For each={page()?.entries ?? []} fallback={<p class="muted pad">{t("sh.emptyList")}</p>}>
               {(e) => (
                 <div class="tk-row">
                   <Icon name={e.is_dir ? "folder" : "file"} size={16} class="ic muted" />
                   <div class="tk-main">
                     <b>{relName(e.path)}</b>
-                    <span class="muted xs">{e.is_dir ? "thư mục" : `${e.size.toLocaleString("vi-VN")} B`}</span>
+                    <span class="muted xs">{e.is_dir ? t("f.dirLabel") : `${fmtNum(e.size)} B`}</span>
                   </div>
                   <Show when={e.is_dir}>
-                    <button class="btn ghost sm" onClick={() => setPrefix(prefix() ? `${prefix()}/${e.name}` : e.name)}>Mở</button>
+                    <button class="btn ghost sm" onClick={() => setPrefix(prefix() ? `${prefix()}/${e.name}` : e.name)}>{t("c.open")}</button>
                   </Show>
                   <Show when={!e.is_dir}>
-                    <button class="btn ghost sm" onClick={() => dl(e)}><Icon name="download" size={14} /> Tải</button>
-                    <button class="btn ghost sm" onClick={() => saveCopy(e.path)} title="Lưu về file của bạn"><Icon name="copy" size={14} /></button>
+                    <button class="btn ghost sm" onClick={() => dl(e)}><Icon name="download" size={14} /> {t("sh.dl")}</button>
+                    <button class="btn ghost sm" onClick={() => saveCopy(e.path)} title={t("sh.saveTip")}><Icon name="copy" size={14} /></button>
                   </Show>
                   <Show when={canEdit()}>
-                    <button class="icon-btn sm danger" title="Xoá (vào thùng rác của chủ file)" onClick={() => confirm(`Xoá "${e.name}"?`) && run(() => api.remove(e.path, sel()!.owner_id))}><Icon name="trash" size={13} /></button>
+                    <button class="icon-btn sm danger" title={t("sh.delTip")} onClick={() => confirm(t("sh.delAsk", { name: e.name })) && run(() => api.remove(e.path, sel()!.owner_id))}><Icon name="trash" size={13} /></button>
                   </Show>
                 </div>
               )}
@@ -240,24 +240,24 @@ export function PublicPage() {
   return (
     <div class="auth">
       <div class="auth-card glass pub">
-        <h2>NextKloud — file được chia sẻ</h2>
-        <Show when={!token()}><p class="err">Link không hợp lệ.</p></Show>
-        <Show when={token() && meta.loading}><p class="muted">Đang tải…</p></Show>
+        <h2>{t("sh.pubH2")}</h2>
+        <Show when={!token()}><p class="err">{t("sh.badLink")}</p></Show>
+        <Show when={token() && meta.loading}><p class="muted">{t("c.loading")}</p></Show>
         <Show when={token() && !meta.loading && gone()}><p class="err">{gone()}</p></Show>
         <Show when={token() && meta()}>
           {(md) => (
             <>
               <Show when={md().locked}>
-                <p class="muted">Link này cần mật khẩu.</p>
+                <p class="muted">{t("sh.needPw")}</p>
                 <div class="sh-add">
-                  <input type="password" value={pw()} onInput={(e) => setPw(e.currentTarget.value)} placeholder="Mật khẩu link" onKeyDown={(e) => e.key === "Enter" && setTried(pw())} />
-                  <button class="btn primary sm" onClick={() => setTried(pw())}>Mở</button>
+                  <input type="password" value={pw()} onInput={(e) => setPw(e.currentTarget.value)} placeholder={t("sh.pwLinkPh")} onKeyDown={(e) => e.key === "Enter" && setTried(pw())} />
+                  <button class="btn primary sm" onClick={() => setTried(pw())}>{t("c.open")}</button>
                 </div>
               </Show>
               <Show when={!md().locked && md().title}>
                 <h3>{md().title}</h3>
-                <Show when={md().is_dir} fallback={<a class="btn primary block" href={api.linkFileUrl(token(), "", tried() || undefined)} download={md().title}>Tải xuống</a>}>
-                  <Show when={prefix()}><button class="link" onClick={() => setPrefix(prefix().split("/").slice(0, -1).join("/"))}>← {prefix().split("/").slice(0, -1).pop() || "Gốc"}</button></Show>
+                <Show when={md().is_dir} fallback={<a class="btn primary block" href={api.linkFileUrl(token(), "", tried() || undefined)} download={md().title}>{t("c.download")}</a>}>
+                  <Show when={prefix()}><button class="link" onClick={() => setPrefix(prefix().split("/").slice(0, -1).join("/"))}>← {prefix().split("/").slice(0, -1).pop() || t("sh.rootDir")}</button></Show>
                   <For each={page()?.entries ?? []}>
                     {(e) => {
                       const rel = prefix() ? `${prefix()}/${e.name}` : e.name;
@@ -266,8 +266,8 @@ export function PublicPage() {
                           <Icon name={e.is_dir ? "folder" : "file"} size={15} class="ic muted" />
                           <span>{e.name}</span>
                           <span class="grow" />
-                          <Show when={e.is_dir} fallback={<a class="btn ghost sm" href={api.linkFileUrl(token(), rel, tried() || undefined)} download={e.name}>Tải</a>}>
-                            <button class="btn ghost sm" onClick={() => setPrefix(rel)}>Mở</button>
+                          <Show when={e.is_dir} fallback={<a class="btn ghost sm" href={api.linkFileUrl(token(), rel, tried() || undefined)} download={e.name}>{t("sh.dl")}</a>}>
+                            <button class="btn ghost sm" onClick={() => setPrefix(rel)}>{t("c.open")}</button>
                           </Show>
                         </div>
                       );

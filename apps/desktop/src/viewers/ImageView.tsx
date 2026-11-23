@@ -3,6 +3,7 @@ import { Portal } from "solid-js/web";
 import Lightbox from "./Lightbox";
 import { api } from "../api";
 import { Icon } from "../icons";
+import { t } from "../i18n";
 
 export interface ImgItem {
   path: string;
@@ -37,7 +38,7 @@ export default function ImageView(props: { files: ImgItem[]; index: number }) {
       e.stopPropagation();
     }}>
       <Show when={n() > 1}>
-        <button class="icon-btn lb-nav" onClick={(e) => { e.stopPropagation(); prev(); }} title="Ảnh trước"><Icon name="back" size={22} /></button>
+        <button class="icon-btn lb-nav" onClick={(e) => { e.stopPropagation(); prev(); }} title={t("vw.imgPrev")}><Icon name="back" size={22} /></button>
       </Show>
       <figure
         class="lb-main"
@@ -47,12 +48,12 @@ export default function ImageView(props: { files: ImgItem[]; index: number }) {
           if (Math.abs(dx) > 40) (dx > 0 ? prev() : next());
         }}
       >
-        <img src={api.streamUrl(cur().path)} alt={cur().name} draggable={false} title="Bấm để phóng to" style={{ cursor: "zoom-in" }} onClick={() => setZoom(true)} onError={() => setErr("Không tải được ảnh")} />
+        <img src={api.streamUrl(cur().path)} alt={cur().name} draggable={false} title={t("vw.imgZoom")} style={{ cursor: "zoom-in" }} onClick={() => setZoom(true)} onError={() => setErr(t("vw.imgErr"))} />
         <figcaption class="muted sm">{cur().name} · {i() + 1}/{n()}</figcaption>
         <Show when={err()}><p class="err">{err()}</p></Show>
       </figure>
       <Show when={n() > 1}>
-        <button class="icon-btn lb-nav" onClick={(e) => { e.stopPropagation(); next(); }} title="Ảnh tiếp"><Icon name="next" size={22} /></button>
+        <button class="icon-btn lb-nav" onClick={(e) => { e.stopPropagation(); next(); }} title={t("vw.imgNext")}><Icon name="next" size={22} /></button>
       </Show>
       <Show when={zoom()}>
         <Portal><Lightbox

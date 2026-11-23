@@ -1,5 +1,6 @@
 import { For, type JSX, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
 import { api, type Annotation, type NoteState, type VaultOutline } from "./api";
+import { fmtDateTime, fmtNum, t } from "./i18n";
 import { errText } from "./fileops";
 import { Icon } from "./icons";
 
@@ -10,10 +11,10 @@ export interface TocItem {
   level: number;
 }
 
-export const STATE_UI: Record<NoteState, { icon: string; label: string; next: NoteState }> = {
-  todo: { icon: "pause", label: "Chưa làm", next: "doing" },
-  doing: { icon: "play", label: "Đang làm", next: "done" },
-  done: { icon: "check", label: "Xong", next: "todo" },
+export const STATE_UI: Record<NoteState, { icon: string; next: NoteState }> = {
+  todo: { icon: "pause", next: "doing" },
+  doing: { icon: "play", next: "done" },
+  done: { icon: "check", next: "todo" },
 };
 
 /** Trạng thái chung của 1 trình đọc (md/pdf): danh sách annotation + sidebar. */
@@ -94,7 +95,7 @@ export function topState(list: Annotation[]): NoteState | null {
   return notes.length ? "done" : null;
 }
 
-const ago = (s: number) => new Date(s * 1000).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" });
+const ago = (s: number) => fmtDateTime(s);
 
 /**
  * Bố cục trình đọc: nội dung + sidebar (màn rộng: luôn hiện bên phải; mobile: ẩn, mở bằng nút nổi thành bottom sheet).
@@ -149,8 +150,8 @@ export function ReaderLayout(props: {
         <Show when={pop()}>
           {(p) => (
             <div class="sel-pop glass" style={{ left: `${p().x}px`, top: `${p().y}px` }} onMouseDown={(e) => e.preventDefault()}>
-              <button onClick={() => act(r.toggleBookmark)}><Icon name="bookmark" size={15} /> Bookmark</button>
-              <button onClick={() => act(r.startNote)}><Icon name="note" size={15} /> Ghi chú</button>
+              <button onClick={() => act(r.toggleBookmark)}><Icon name="bookmark" size={15} /> {t("nt.bm")}</button>
+              <button onClick={() => act(r.startNote)}><Icon name="note" size={15} /> {t("nt.note")}</button>
             </div>
           )}
         </Show>
@@ -160,11 +161,11 @@ export function ReaderLayout(props: {
       </Show>
       <aside class="reader-side" classList={{ open: r.sheet() }}>
         <div class="rs-tabs">
-          <button classList={{ on: r.tab() === "toc" }} onClick={() => r.setTab("toc")}><Icon name="toc" size={16} /> Mục lục</button>
+          <button classList={{ on: r.tab() === "toc" }} onClick={() => r.setTab("toc")}><Icon name="toc" size={16} /> {t("nt.toc")}</button>
           <button classList={{ on: r.tab() === "notes" }} onClick={() => r.setTab("notes")}>
-            <Icon name="note" size={16} /> Bookmark & ghi chú <Show when={count()}><span class="rs-count">{count()}</span></Show>
+            <Icon name="note" size={16} /> {t("nt.notesTab")} <Show when={count()}><span class="rs-count">{fmtNum(count())}</span></Show>
           </button>
-          <button class="icon-btn sm rs-close" onClick={() => r.setSheet(false)} title="Đóng"><Icon name="close" size={16} /></button>
+          <button class="icon-btn sm rs-close" onClick={() => r.setSheet(false)} title={t("c.close")}><Icon name="close" size={16} /></button>
         </div>
         <div class="rs-body">
           <Show when={r.tab() === "toc"}>
@@ -178,9 +179,9 @@ export function ReaderLayout(props: {
           </Show>
         </div>
       </aside>
-      <button class="reader-fab" onClick={() => r.setSheet(true)} title="Mục lục, bookmark, ghi chú">
+      <button class="reader-fab" onClick={() => r.setSheet(true)} title={t("nt.fab")}>
         <Icon name="toc" size={20} />
-        <Show when={count()}><span class="rs-count">{count()}</span></Show>
+        <Show when={count()}><span class="rs-count">{fmtNum(count())}</span></Show>
       </button>
     </div>
   );
@@ -238,7 +239,7 @@ function TreeToc(props: { nodes: TreeNode[] }) {
         }
       }}>
         <Show when={p.n.kids.length} fallback={<span class="tt-chev" />}>
-          <button class="tt-chev" classList={{ open: isOpen(p.n) }} onClick={() => toggle(p.n.key)} title={isOpen(p.n) ? "Thu gọn" : "Mở rộng"}>
+          <button class="tt-chev" classList={{ open: isOpen(p.n) }} onClick={() => toggle(p.n.key)} title={isOpen(p.n) ? t("nt.collapseAll") : t("nt.expandAll")}>
             <Icon name="chevron" size={12} />
           </button>
         </Show>
@@ -253,10 +254,10 @@ function TreeToc(props: { nodes: TreeNode[] }) {
     </div>
   );
   return (
-    <Show when={props.nodes.length} fallback={<p class="muted sm pad">Tài liệu không có mục lục.</p>}>
+    <Show when={props.nodes.length} fallback={<p class="muted sm pad">{t("nt.noToc")}</p>}>
       <div class="tt-bar">
-        <button onClick={() => all("all")} title="Mở rộng tất cả"><Icon name="chevron" size={12} class="ic rot90" /> Mở hết</button>
-        <button onClick={() => all("none")} title="Thu gọn tất cả"><Icon name="chevron" size={12} /> Thu gọn</button>
+        <button onClick={() => all("all")} title={t("nt.expandAll")}><Icon name="chevron" size={12} class="ic rot90" /> {t("nt.expandBtn")}</button>
+        <button onClick={() => all("none")} title={t("nt.collapseAll")}><Icon name="chevron" size={12} /> {t("nt.collapseBtn")}</button>
       </div>
       <nav class="tt">
         <For each={props.nodes}>{(n) => <Row n={n} />}</For>
@@ -336,29 +337,29 @@ function NotesTab(props: { r: Reader; toc: TocItem[]; onJump: (a: string) => voi
     <div class="notes-tab">
       <Show when={r.draft()}>{(d) => <Composer quote={d().quote} onCancel={() => r.setDraft(null)} onSave={r.saveDraft} />}</Show>
       <Show when={bookmarks().length}>
-        <div class="rs-section">Bookmark</div>
+        <div class="rs-section">{t("nt.bm")}</div>
         <For each={bookmarks()}>
           {(b) => (
             <div class="bm-row" onClick={() => props.onJump(b.anchor)}>
               <Icon name="bookmark" size={15} class="ic bm-ic" />
               <span class="bm-text">{b.quote || sectionOf(props.toc, b.anchor) || b.anchor}</span>
-              <button class="icon-btn sm" title="Bỏ bookmark" onClick={(e) => { e.stopPropagation(); r.remove(b.id); }}><Icon name="close" size={14} /></button>
+              <button class="icon-btn sm" title={t("nt.unbookmark")} onClick={(e) => { e.stopPropagation(); r.remove(b.id); }}><Icon name="close" size={14} /></button>
             </div>
           )}
         </For>
       </Show>
-      <div class="rs-section">Ghi chú</div>
+      <div class="rs-section">{t("nt.note")}</div>
       <div class="chips">
-        <button classList={{ on: filter() === "all" }} onClick={() => setFilter("all")}>Tất cả</button>
+        <button classList={{ on: filter() === "all" }} onClick={() => setFilter("all")}>{t("c.all")}</button>
         <For each={["todo", "doing", "done"] as NoteState[]}>
           {(s) => (
-            <button classList={{ on: filter() === s }} class={`st-${s}`} onClick={() => setFilter(s)}>
-              <Icon name={STATE_UI[s].icon} size={13} /> {n(s)}
+            <button classList={{ on: filter() === s }} class={`st-${s}`} onClick={() => setFilter(s)} title={t(`nt.${s}`)}>
+              <Icon name={STATE_UI[s].icon} size={13} /> {fmtNum(n(s))}
             </button>
           )}
         </For>
       </div>
-      <For each={notes()} fallback={<p class="muted sm pad">Chưa có ghi chú. Bôi đen một đoạn rồi bấm “Ghi chú”.</p>}>
+      <For each={notes()} fallback={<p class="muted sm pad">{t("nt.emptyNotes")}</p>}>
         {(a) => <NoteCard a={a} r={r} section={sectionOf(props.toc, a.anchor)} onJump={() => props.onJump(a.anchor)} />}
       </For>
     </div>
@@ -368,7 +369,7 @@ function NotesTab(props: { r: Reader; toc: TocItem[]; onJump: (a: string) => voi
 export function StateButton(props: { state: NoteState; onChange: (s: NoteState) => void }) {
   const ui = () => STATE_UI[props.state];
   return (
-    <button class={`st-btn st-${props.state}`} title={`${ui().label} (bấm để chuyển)`} onClick={(e) => { e.stopPropagation(); props.onChange(ui().next); }}>
+    <button class={`st-btn st-${props.state}`} title={t("nt.switchTip", { label: t(`nt.${props.state}`) })} onClick={(e) => { e.stopPropagation(); props.onChange(ui().next); }}>
       <Icon name={ui().icon} size={14} />
     </button>
   );
@@ -384,17 +385,17 @@ function NoteCard(props: { a: Annotation; r: Reader; section: string; onJump: ()
   // Viền nổi bật chỉ để chỉ chỗ, tự tắt sau 1.5s.
   createEffect(() => {
     if (!focused()) return;
-    const t = setTimeout(() => props.r.focus() === props.a.id && props.r.setFocus(null), 1500);
-    onCleanup(() => clearTimeout(t));
+    const timer = setTimeout(() => props.r.focus() === props.a.id && props.r.setFocus(null), 1500);
+    onCleanup(() => clearTimeout(timer));
   });
   return (
     <div class="note-card" classList={{ focus: focused(), [`st-${props.a.state}`]: true }} ref={(e) => { el = e; queueMicrotask(scrollIfFocused); }}>
       <div class="nc-head">
         <StateButton state={props.a.state} onChange={(s) => props.r.update(props.a.id, { state: s })} />
-        <button class="nc-where" onClick={props.onJump} title="Tới vị trí trong bài">{props.section || props.a.anchor}</button>
+        <button class="nc-where" onClick={props.onJump} title={t("nt.gotoIn")}>{props.section || props.a.anchor}</button>
         <span class="muted xs">{ago(props.a.updated_at)}</span>
-        <button class="icon-btn sm" title="Sửa" onClick={() => setEditing(!editing())}><Icon name="edit" size={14} /></button>
-        <button class="icon-btn sm" title="Xoá" onClick={() => confirm("Xoá ghi chú này?") && props.r.remove(props.a.id)}><Icon name="trash" size={14} /></button>
+        <button class="icon-btn sm" title={t("nt.editTip")} onClick={() => setEditing(!editing())}><Icon name="edit" size={14} /></button>
+        <button class="icon-btn sm" title={t("nt.delTip")} onClick={() => confirm(t("nt.delAsk")) && props.r.remove(props.a.id)}><Icon name="trash" size={14} /></button>
       </div>
       <Show when={props.a.quote}>
         <blockquote class="nc-quote" onClick={props.onJump}>{props.a.quote}</blockquote>
@@ -425,7 +426,7 @@ function Composer(props: { quote?: string; body?: string; onSave: (b: string) =>
       <textarea
         ref={ta}
         value={body()}
-        placeholder="Cần sửa gì ở đoạn này…"
+        placeholder={t("nt.notePh")}
         onInput={(e) => setBody(e.currentTarget.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) save();
@@ -433,16 +434,16 @@ function Composer(props: { quote?: string; body?: string; onSave: (b: string) =>
         }}
       />
       <div class="composer-act">
-        <span class="muted xs hide-xs">Ctrl+Enter để lưu</span>
+        <span class="muted xs hide-xs">{t("nt.ctrlEnter")}</span>
         <span class="grow" />
-        <button class="btn ghost sm" onClick={props.onCancel}>Huỷ</button>
-        <button class="btn primary sm" disabled={busy()} onClick={save}>Lưu</button>
+        <button class="btn ghost sm" onClick={props.onCancel}>{t("c.cancel")}</button>
+        <button class="btn primary sm" disabled={busy()} onClick={save}>{t("c.save")}</button>
       </div>
     </div>
   );
 }
 
-const whereLabel = (a: Annotation) => (a.anchor.startsWith("p") ? `Trang ${a.anchor.slice(1)}` : `Đoạn ${+a.anchor.slice(1) + 1}`);
+const whereLabel = (a: Annotation) => (a.anchor.startsWith("p") ? t("nt.pageN", { n: a.anchor.slice(1) }) : t("nt.blockN", { n: +a.anchor.slice(1) + 1 }));
 
 /** Trang "Ghi chú": mọi ghi chú của user, gom theo file, lọc theo trạng thái — danh sách việc cần sửa vault. */
 export function NotesPage(props: { onOpen: (path: string, mark: string) => void; onError: (m: string) => void }) {
@@ -476,7 +477,7 @@ export function NotesPage(props: { onOpen: (path: string, mark: string) => void;
       mutate((l) => l.map((x) => (x.id === a.id ? u : x)));
     });
   const remove = (a: Annotation) =>
-    confirm("Xoá ghi chú này?") &&
+    confirm(t("nt.delAsk")) &&
     run(async () => {
       await api.removeAnnotation(a.id);
       mutate((l) => l.filter((x) => x.id !== a.id));
@@ -484,24 +485,24 @@ export function NotesPage(props: { onOpen: (path: string, mark: string) => void;
   return (
     <div class="notes-page">
       <div class="toolbar np-bar">
-        <h2 class="tb-title"><Icon name="note" /> Ghi chú</h2>
+        <h2 class="tb-title"><Icon name="note" /> {t("nav.notes")}</h2>
         <div class="chips">
-          <button classList={{ on: filter() === "open" }} onClick={() => setFilter("open")}>Chưa xong {n("todo") + n("doing")}</button>
+          <button classList={{ on: filter() === "open" }} onClick={() => setFilter("open")}>{t("nt.openFilter", { n: fmtNum(n("todo") + n("doing")) })}</button>
           <For each={["todo", "doing", "done"] as NoteState[]}>
             {(s) => (
-              <button class={`st-${s}`} classList={{ on: filter() === s }} onClick={() => setFilter(s)} title={STATE_UI[s].label}>
-                <Icon name={STATE_UI[s].icon} size={13} /> {n(s)}
+              <button class={`st-${s}`} classList={{ on: filter() === s }} onClick={() => setFilter(s)} title={t(`nt.${s}`)}>
+                <Icon name={STATE_UI[s].icon} size={13} /> {fmtNum(n(s))}
               </button>
             )}
           </For>
-          <button classList={{ on: filter() === "all" }} onClick={() => setFilter("all")}>Tất cả {all().length}</button>
+          <button classList={{ on: filter() === "all" }} onClick={() => setFilter("all")}>{t("c.all")} {fmtNum(all().length)}</button>
         </div>
-        <input class="np-search" placeholder="Lọc theo file, đoạn trích, nội dung…" value={q()} onInput={(e) => setQ(e.currentTarget.value)} />
+        <input class="np-search" placeholder={t("nt.searchPh")} value={q()} onInput={(e) => setQ(e.currentTarget.value)} />
       </div>
       <div class="scroll np-list">
         <For each={groups()} fallback={
           <Show when={!all.loading}>
-            <div class="empty"><Icon name="note" size={48} /><p>{all().length ? "Không có ghi chú khớp bộ lọc" : "Chưa có ghi chú. Mở 1 file .md hoặc .pdf, bôi đen rồi bấm “Ghi chú”."}</p></div>
+            <div class="empty"><Icon name="note" size={48} /><p>{all().length ? t("nt.noMatch") : t("nt.noNotesHow")}</p></div>
           </Show>
         }>
           {(g) => (
@@ -517,9 +518,9 @@ export function NotesPage(props: { onOpen: (path: string, mark: string) => void;
                   <div class={`note-card st-${a.state}`}>
                     <div class="nc-head">
                       <StateButton state={a.state} onChange={(s) => setState(a, s)} />
-                      <button class="nc-where" onClick={() => props.onOpen(a.path, a.anchor)} title="Mở tới vị trí này">{whereLabel(a)} →</button>
+                      <button class="nc-where" onClick={() => props.onOpen(a.path, a.anchor)} title={t("nt.goto")}>{whereLabel(a)} →</button>
                       <span class="muted xs">{ago(a.updated_at)}</span>
-                      <button class="icon-btn sm" title="Xoá" onClick={() => remove(a)}><Icon name="trash" size={14} /></button>
+                      <button class="icon-btn sm" title={t("nt.delTip")} onClick={() => remove(a)}><Icon name="trash" size={14} /></button>
                     </div>
                     <Show when={a.quote}><blockquote class="nc-quote" onClick={() => props.onOpen(a.path, a.anchor)}>{a.quote}</blockquote></Show>
                     <Show when={a.body}><p class="nc-body">{a.body}</p></Show>

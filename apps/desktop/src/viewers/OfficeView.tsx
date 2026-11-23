@@ -1,6 +1,7 @@
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { api, serverOrigin } from "../api";
 import { Icon } from "../icons";
+import { t } from "../i18n";
 
 declare global {
   interface Window {
@@ -16,10 +17,10 @@ function loadDocsApi(): Promise<void> {
       const s = document.createElement("script");
       // DocumentServer đi qua proxy /oo của backend: cùng origin, https.
       s.src = `${serverOrigin()}/oo/web-apps/apps/api/documents/api.js`;
-      s.onload = () => (window.DocsAPI ? res() : rej(new Error("không tải được trình soạn thảo OnlyOffice")));
+      s.onload = () => (window.DocsAPI ? res() : rej(new Error(t("vw.officeLoad"))));
       s.onerror = () => {
         scriptPromise = null; // lần sau thử lại
-        rej(new Error("không kết nối được OnlyOffice (kiểm tra ONLYOFFICE_URL trên server)"));
+        rej(new Error(t("vw.officeConn")));
       };
       document.head.appendChild(s);
     });
@@ -65,7 +66,7 @@ export default function OfficeView(props: { path: string }) {
         width: "100%",
         height: "100%",
         events: {
-          onError: (e: any) => !dead && setErr(`OnlyOffice: ${e?.data ?? "lỗi không rõ"}`),
+          onError: (e: any) => !dead && setErr(`OnlyOffice: ${e?.data ?? t("vw.officeUnknown")}`),
         },
       });
     } catch (e: any) {
@@ -83,7 +84,7 @@ export default function OfficeView(props: { path: string }) {
   return (
     <div class="office-wrap" ref={wrap!}>
       <Show when={err()}><p class="err">{err()}</p></Show>
-      <button class="fs-btn" onClick={toggleFs} title={fs() ? "Thoát toàn màn hình (Esc)" : "Xem toàn màn hình"}>
+      <button class="fs-btn" onClick={toggleFs} title={fs() ? t("vw.fsExit") : t("vw.fsEnter")}>
         <Icon name="expand" size={17} />
       </button>
       <div class="office-box" ref={box!} />

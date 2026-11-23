@@ -1,6 +1,7 @@
 import { marked } from "marked";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import { api, hashText, speak, type Backlink, type VaultOutline } from "../api";
+import { fmtNum, t } from "../i18n";
 import { Portal } from "solid-js/web";
 import { Icon } from "../icons";
 import Lightbox from "./Lightbox";
@@ -341,7 +342,7 @@ function VoiceButton(props: { text: string; onPlay: () => void }) {
   return (
     <button
       class="voice-btn"
-      title="Nghe đoạn này"
+      title={t("vw.mdListen")}
       disabled={st() === "busy"}
       onClick={async (e) => {
         e.stopPropagation();
@@ -398,7 +399,7 @@ export default function MarkdownView(props: {
   };
   const saveEdit = async () => {
     if (draft() === props.text) return setEditing(false);
-    if (mirrored() && !confirm(`File nằm trong vault mirror từ git ("${mirrored()}") — sửa ở đây sẽ bị ghi đè khi sync. Vẫn lưu?`)) return;
+    if (mirrored() && !confirm(t("vw.mdMirrorAsk", { dir: mirrored() }))) return;
     setSaving(true);
     try {
       await api.saveText(props.path, draft());
@@ -687,25 +688,25 @@ export default function MarkdownView(props: {
     >
       <div class="md-bar">
         <button onClick={readAll} disabled={playingAll() || editing()}>
-          {playingAll() ? "Đang đọc…" : (<><Icon name="listen" size={15} /> Đọc cả bài</>)}
+          {playingAll() ? t("vw.mdReading") : (<><Icon name="listen" size={15} /> {t("vw.mdReadAll")}</>)}
         </button>
-        <button class="ghost" onClick={prefetchAll} disabled={!!prepping() || playingAll() || editing()} title="Tải trước audio của cả bài vào bộ nhớ đệm để nghe liền mạch, không phải chờ từng đoạn. Tắt/reload trang là mất, phải tải lại — chưa phải lưu offline lâu dài.">
-          {prepping() ? `Đang tải ${prepping()![0]}/${prepping()![1]}…` : prepped() ? "Đã tải xong ✓" : "Tải trước audio"}
+        <button class="ghost" onClick={prefetchAll} disabled={!!prepping() || playingAll() || editing()} title={t("vw.mdPrefetchTip")}>
+          {prepping() ? t("vw.mdPrefetching", { a: prepping()![0], b: prepping()![1] }) : prepped() ? t("vw.mdPrefetched") : t("vw.mdPrefetch")}
         </button>
         <Show when={!editing()} fallback={
           <>
-            <button class="primary" onClick={saveEdit} disabled={saving() || draft() === props.text}>{saving() ? "Đang lưu…" : "Lưu"}</button>
-            <button class="ghost" onClick={() => setEditing(false)} disabled={saving()}>Hủy</button>
+            <button class="primary" onClick={saveEdit} disabled={saving() || draft() === props.text}>{saving() ? t("vw.mdSaving") : t("vw.mdSave")}</button>
+            <button class="ghost" onClick={() => setEditing(false)} disabled={saving()}>{t("c.cancel")}</button>
           </>
         }>
-          <button class="ghost" onClick={enterEdit} title="Sửa file markdown này"><Icon name="edit" size={15} /> Sửa</button>
+          <button class="ghost" onClick={enterEdit} title={t("vw.mdEditTip")}><Icon name="edit" size={15} /> {t("vw.mdEdit")}</button>
         </Show>
       </div>
       <Show when={editing() && mirrored()}>
-        <p class="stale">⚠️ File nằm trong vault mirror từ git ("{mirrored()}") — bản sửa ở đây sẽ bị ghi đè khi sync.</p>
+        <p class="stale">{t("vw.mdMirrorWarn", { dir: mirrored() })}</p>
       </Show>
       <Show when={stale()}>
-        <p class="stale">⚠️ Bài đã sửa sau khi bấm đọc — âm thanh đã cũ, bấm "Đọc cả bài" lại để render mới.</p>
+        <p class="stale">{t("vw.mdStale")}</p>
       </Show>
       <Show when={editing()} fallback={
       <For each={list()}>
@@ -722,11 +723,11 @@ export default function MarkdownView(props: {
               <div class="md-content" innerHTML={b.html} />
               <div class="md-rail">
                 <Show when={bm()}>
-                  <button class="mk mk-bm" title="Bỏ bookmark" onClick={() => reader.toggleBookmark(`b${i()}`, "")}><Icon name="bookmark" size={14} /></button>
+                  <button class="mk mk-bm" title={t("vw.mdUnbookmark")} onClick={() => reader.toggleBookmark(`b${i()}`, "")}><Icon name="bookmark" size={14} /></button>
                 </Show>
                 <Show when={st()}>
                   {(s) => (
-                    <button class={`mk mk-note st-${s()}`} title="Xem ghi chú" onClick={() => reader.showNotes(anns().find((a) => a.kind === "note")!.id)}>
+                    <button class={`mk mk-note st-${s()}`} title={t("vw.mdViewNotes")} onClick={() => reader.showNotes(anns().find((a) => a.kind === "note")!.id)}>
                       <Icon name={STATE_UI[s()].icon} size={12} />
                       <Show when={anns().filter((a) => a.kind === "note").length > 1}>{anns().filter((a) => a.kind === "note").length}</Show>
                     </button>
@@ -734,9 +735,9 @@ export default function MarkdownView(props: {
                 </Show>
                 <span class="md-tools">
                 <Show when={!bm()}>
-                  <button title="Bookmark đoạn này" onClick={() => reader.toggleBookmark(`b${i()}`, quote())}><Icon name="bookmark" size={14} /></button>
+                  <button title={t("vw.mdBookmarkIt")} onClick={() => reader.toggleBookmark(`b${i()}`, quote())}><Icon name="bookmark" size={14} /></button>
                 </Show>
-                <button title="Ghi chú cho đoạn này" onClick={() => reader.startNote(`b${i()}`, quote())}><Icon name="note" size={14} /></button>
+                <button title={t("vw.mdAddNote")} onClick={() => reader.startNote(`b${i()}`, quote())}><Icon name="note" size={14} /></button>
                 </span>
               </div>
             </div>
@@ -748,7 +749,7 @@ export default function MarkdownView(props: {
       </Show>
       <Show when={!editing() && (links() ?? []).length}>
         <section class="md-links">
-          <b>Được nhắc tới ở {(links() ?? []).length} nơi</b>
+          <b>{t("vw.mdLinks", { n: fmtNum((links() ?? []).length) })}</b>
           <For each={links() ?? []}>
             {(l) => (
               <button class="md-linkref" onClick={() => props.onOpenLink?.("/" + l.path)} title={l.path}>
