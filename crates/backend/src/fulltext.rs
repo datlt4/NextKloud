@@ -88,7 +88,58 @@ pub async fn search(db: &PgPool, user: Uuid, q: &str, limit: i64) -> Result<Vec<
     .await
 }
 
-/// Bù chỉ mục nội dung cho file chữ chưa có (lần đầu nâng cấp, hoặc sau reindex). Trả về số file đã thêm.
+/// Escape cho regex Postgres.
+fn rx_esc(s: &str) -> String {
+    let mut o = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        if ".+*?()|[]{}^$\\".contains(c) {
+            o.push('\\');
+        }
+        o.push(c);
+    }
+    o
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct Backlink {
+    pub path: String,
+    pub name: String,
+    pub snippet: String,
+}
+
+/// File nào nhắc tới file này qua [[wikilink]] (theo stem, tên + đuôi, hoặc path đầy đủ).
+/// Khớp chính xác tới ký tự kết thúc ([#|].]) nên "task" không dính "tasks".
+pub async fn backlinks(db: &PgPool, user: Uuid, path: &str) -> Result<Vec<Backlink>, sqlx::Error> {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
+    // literal để lấy vị trí snippet
+    let lits = [format!("[[{stem}"), format!("[[{name}"), format!("[[{path}")];
+    // regex khớp chính xác: [[stem]] [[stem#h]] [[stem|alias]] (tương tự cho name/full path)
+    let pats = [
+        format!("\\[\\[{}([#|\\]])", rx_esc(stem)),
+        format!("\\[\\[{}([#|\\].])", rx_esc(name)),
+        format!("\\[\\[{}([#|\\]])", rx_esc(path)),
+    ];
+    sqlx::query_as(
+        "SELECT t.path, f.name,
+                substr(t.body, greatest(1, LEAST(COALESCE(NULLIF(strpos(t.body, $3), 0), 999999999),
+                                                     COALESCE(NULLIF(strpos(t.body, $4), 0), 999999999),
+                                                     COALESCE(NULLIF(strpos(t.body, $5), 0), 999999999)) - 60), 220) AS snippet
+         FROM file_text t JOIN files f ON f.user_id = t.user_id AND f.path = t.path
+         WHERE t.user_id = $1 AND t.path != $2 AND (t.body ~ $6 OR t.body ~ $7 OR t.body ~ $8)
+         ORDER BY f.modified DESC LIMIT 100",
+    )
+    .bind(user)
+    .bind(path)
+    .bind(&lits[0])
+    .bind(&lits[1])
+    .bind(&lits[2])
+    .bind(&pats[0])
+    .bind(&pats[1])
+    .bind(&pats[2])
+    .fetch_all(db)
+    .await
+}
 pub async fn backfill(db: &PgPool, store: &Store, user: Uuid) -> Result<usize, sqlx::Error> {
     let todo: Vec<(String, i64)> = sqlx::query_as(
         "SELECT f.path, f.size FROM files f
@@ -200,6 +251,31 @@ mod tests {
     fn md_headings() {
         let h = headings("---\ntitle: x\n# no\n---\n# A *b*\ntext\n```\n# not\n```\n## C ##\n#tag\n");
         assert_eq!(h, vec![(1, "A b".into()), (2, "C".into())]);
+    }
+
+    #[tokio::test]
+    async fn backlinks_exact_match() {
+        let Ok(url) = std::env::var("NK_TEST_DB") else { return };
+        let db = PgPool::connect(&url).await.unwrap();
+        sqlx::migrate!("./migrations").run(&db).await.unwrap();
+        let u = Uuid::new_v4();
+        sqlx::query("INSERT INTO users (id, username, pass_hash) VALUES ($1, $2, 'x')").bind(u).bind(u.to_string()).execute(&db).await.unwrap();
+        put(&db, u, "v/task.md", b"nho").await.unwrap();
+        put(&db, u, "v/khac.md", b"xem [[task]] va [[task#muc|ten]]").await.unwrap();
+        put(&db, u, "v/dup.md", b"xem [[tasks]] va [[taskx|y]]").await.unwrap();
+        for (p, n) in [("v/task.md", "task.md"), ("v/khac.md", "khac.md"), ("v/dup.md", "dup.md")] {
+            sqlx::query("INSERT INTO files (user_id, path, parent, name, is_dir, size, modified) VALUES ($1, $2, 'v', $3, FALSE, 10, 0)")
+                .bind(u)
+                .bind(p)
+                .bind(n)
+                .execute(&db)
+                .await
+                .unwrap();
+        }
+        let bl = backlinks(&db, u, "v/task.md").await.unwrap();
+        assert_eq!(bl.len(), 1);
+        assert_eq!(bl[0].path, "v/khac.md");
+        assert!(bl[0].snippet.contains("[[task]]"));
     }
 
     #[tokio::test]

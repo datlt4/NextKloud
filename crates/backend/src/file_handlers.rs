@@ -83,6 +83,15 @@ pub async fn vault_outline(
     Ok(Json(crate::fulltext::outline(&s.db, user.id, &clean_path(&q.path)?).await?))
 }
 
+/// File nào nhắc tới file này qua [[wikilink]].
+pub async fn vault_backlinks(
+    State(s): State<AppState>,
+    user: AuthUser,
+    Query(q): Query<PathQuery>,
+) -> Result<Json<Vec<crate::fulltext::Backlink>>, AppError> {
+    Ok(Json(crate::fulltext::backlinks(&s.db, user.id, &clean_path(&q.path)?).await?))
+}
+
 pub async fn search_files(
     State(s): State<AppState>,
     user: AuthUser,

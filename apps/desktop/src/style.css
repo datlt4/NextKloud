@@ -786,6 +786,18 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 .sh-list { padding: 0 12px 12px; }
 .auth-card.pub { min-width: min(560px, 92vw); }
 .auth-card.pub .sh-row span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* obsidian: sửa inline, embed, backlinks */
+.md-edit { width: 100%; min-height: 60vh; padding: 12px; border-radius: 10px; border: 1px solid var(--accent); background: var(--input); color: var(--text); font: 13.5px/1.7 ui-monospace, monospace; resize: vertical; }
+.md-embed { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 10px; padding: 8px 12px; margin: 8px 0; background: var(--surface); }
+.md-embed-head { font-size: 12.5px; font-weight: 700; color: var(--accent-text); margin-bottom: 4px; }
+.md-embed-body { font-size: 14px; }
+.md-embed-body img { max-width: 100%; }
+.md-links { margin: 18px 0 8px; padding-top: 10px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+.md-links > b { font-size: 13.5px; }
+.md-linkref { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; cursor: pointer; }
+.md-linkref:hover { border-color: var(--accent); }
+.md-linkref b { font-size: 13.5px; }
+.md-linkref span { overflow-wrap: anywhere; }
 .kb-bar { flex-wrap: wrap; }
 .kb-boards { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
 .chip { height: 30px; padding: 0 12px; border-radius: 15px; border: 1px solid var(--line); font-size: 13px; font-weight: 600; color: var(--muted); }

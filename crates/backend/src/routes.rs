@@ -116,6 +116,7 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/search", get(f::search_files))
         .route("/api/search/content", get(f::search_content))
         .route("/api/vault/outline", get(f::vault_outline))
+        .route("/api/vault/backlinks", get(f::vault_backlinks))
         .route("/api/mkdir", post(f::mkdir))
         .route("/api/dl", post(f::dl_token))
         .route("/api/annotations", get(crate::notes::list).post(crate::notes::create))

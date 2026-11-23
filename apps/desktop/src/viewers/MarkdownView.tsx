@@ -1,6 +1,6 @@
 import { marked } from "marked";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
-import { api, hashText, speak, type VaultOutline } from "../api";
+import { api, hashText, speak, type Backlink, type VaultOutline } from "../api";
 import { Portal } from "solid-js/web";
 import { Icon } from "../icons";
 import Lightbox from "./Lightbox";
@@ -229,10 +229,8 @@ function buildImgIndex(o: VaultOutline): ImgIndex {
   return { root: o.root, set, byName };
 }
 
-/** Ảnh Obsidian có thể ghi tương đối với file, với gốc vault, hoặc chỉ tên file.
- *  Trong vault: tra mục lục đã tải sẵn (0 request dò, hết loạt 404).
- *  Ngoài vault: dò mạng lần lượt như Obsidian (giữ hành vi cũ). */
-async function loadImg(mdPath: string, raw: string, idx?: ImgIndex | null): Promise<string> {
+/** Tra đường dẫn thật của target Obsidian (ảnh/embed/link): trong vault tra mục lục, ngoài vault dò mạng. */
+async function resolveTarget(mdPath: string, raw: string, idx?: ImgIndex | null): Promise<string | null> {
   const clean = raw.split("#")[0].split("?")[0] || raw;
   const dir = mdPath.includes("/") ? mdPath.slice(0, mdPath.lastIndexOf("/")) : "";
   const ups: string[] = [];
@@ -244,11 +242,11 @@ async function loadImg(mdPath: string, raw: string, idx?: ImgIndex | null): Prom
     // ref tuyệt đối từ gốc vault: /assets/x.png (Obsidian) -> <vaultRoot>/assets/x.png
     if (clean.startsWith("/")) {
       const rp = `${idx.root}/${clean.replace(/^\/+/, "")}`;
-      if (idx.set.has(rp)) return srcFor(rp);
+      if (idx.set.has(rp)) return rp;
     } else {
       for (let d = dir; ; d = d.includes("/") ? d.slice(0, d.lastIndexOf("/")) : "") {
         const p = joinRel(d, clean);
-        if (idx.set.has(p)) return srcFor(p);
+        if (idx.set.has(p)) return p;
         if (!d) break;
       }
     }
@@ -256,7 +254,7 @@ async function loadImg(mdPath: string, raw: string, idx?: ImgIndex | null): Prom
     const name = clean.split("/").pop()!;
     const hits = (idx.byName.get(name) ?? []).filter((p) => ups.some((u) => !u || p.startsWith(u + "/")));
     hits.sort((a, b) => a.length - b.length);
-    if (hits.length) return srcFor(hits[0]);
+    if (hits.length) return hits[0];
     // không có trong mục lục (có thể cache cũ) -> dò mạng như ngoài vault
   }
   const bases = [dir, ...imgBases.filter((b) => ups.includes(b)), ...ups];
@@ -266,10 +264,9 @@ async function loadImg(mdPath: string, raw: string, idx?: ImgIndex | null): Prom
     if (tried.has(p)) continue;
     tried.add(p);
     try {
-      await api.exists(p); // HEAD, không tải nội dung vào RAM
-      const url = api.streamUrl(p); // <img> stream trực tiếp bằng token
+      await api.exists(p);
       if (b !== dir && !imgBases.includes(b)) imgBases.unshift(b);
-      return url;
+      return p;
     } catch {
       /* thử chỗ khác */
     }
@@ -278,8 +275,64 @@ async function loadImg(mdPath: string, raw: string, idx?: ImgIndex | null): Prom
   const name = clean.split("/").pop()!;
   const hit = (await api.search(name)).filter((e) => !e.is_dir && e.name === name && ups.some((u) => !u || e.path.startsWith(u + "/")));
   hit.sort((a, b) => a.path.length - b.path.length);
-  if (!hit.length) throw new Error("404");
-  return srcFor(hit[0].path);
+  return hit.length ? hit[0].path : null;
+}
+
+/** Ảnh Obsidian có thể ghi tương đối với file, với gốc vault, hoặc chỉ tên file.
+ *  Trong vault: tra mục lục đã tải sẵn (0 request dò, hết loạt 404).
+ *  Ngoài vault: dò mạng lần lượt như Obsidian (giữ hành vi cũ). */
+async function loadImg(mdPath: string, raw: string, idx?: ImgIndex | null): Promise<string> {
+  const t = await resolveTarget(mdPath, raw, idx);
+  if (!t) throw new Error("404");
+  return srcFor(t);
+}
+
+/** Embed ![[note]]: nội dung note khác hiện inline (1 cấp, tối đa 40 dòng). */
+const embedHtmlCache = new Map<string, string>();
+const embedInflight = new Map<string, Promise<string | null>>();
+function embedTarget(raw: string): { file: string; head?: string } {
+  const [file, head] = raw.split("|")[0].split("#");
+  return { file: file.trim(), head: head?.trim() };
+}
+async function embedHtml(mdPath: string, raw: string, idx?: ImgIndex | null): Promise<string | null> {
+  const { file, head } = embedTarget(raw);
+  if (/\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i.test(file)) return null; // ảnh do loader ảnh xử lý
+  const key = `${dirOf2(mdPath)}${String.fromCharCode(0)}${raw}`;
+  const hit = embedHtmlCache.get(key);
+  if (hit !== undefined) return hit;
+  let p = embedInflight.get(key);
+  if (!p) {
+    p = (async () => {
+      const t = await resolveTarget(mdPath, file, idx);
+      if (!t || !/\.(md|markdown|txt)$/i.test(t)) return null;
+      let text: string;
+      try {
+        text = await api.readText(t);
+      } catch {
+        return null;
+      }
+      const lines = text.split("\n").filter((l) => l.trim()).slice(0, 40);
+      if (!lines.length) return null;
+      // ảnh tương đối trong note được nhúng: viết thành tuyệt đối từ gốc để loader ảnh dùng được
+      const base = t.includes("/") ? t.slice(0, t.lastIndexOf("/")) : "";
+      let html = linkifyWiki(marked.parse(lines.join("\n")) as string);
+      html = html.replace(/data-wsrc="([^"]+)"/g, (_m, s: string) => {
+        const d = decodeURIComponent(s);
+        return /^(https?:|blob:|data:|#)/.test(d) ? `data-wsrc="${s}"` : `data-wsrc="${encodeURIComponent(joinRel(base, d))}"`;
+      });
+      const title = head ? `${t.split("/").pop()} › ${head}` : t.split("/").pop() ?? t;
+      return `<div class="md-embed-head">◈ ${escapeHtml(title)}</div><div class="md-embed-body">${html}</div>`;
+    })().then((h) => {
+      embedInflight.delete(key);
+      if (h) embedHtmlCache.set(key, h);
+      return h;
+    });
+    embedInflight.set(key, p);
+  }
+  return p;
+}
+function dirOf2(p: string) {
+  return p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
 }
 
 function VoiceButton(props: { text: string; onPlay: () => void }) {
@@ -323,9 +376,47 @@ export default function MarkdownView(props: {
   onError?: (m: string) => void;
   /** Mở sẵn tại vị trí annotation ("b12"). */
   mark?: string;
+  /** Gọi sau khi lưu bản sửa (parent tải lại nội dung). */
+  onSaved?: () => void;
 }) {
   const list = createMemo(() => blocks(props.text));
   const [lb, setLb] = createSignal<{ src: string; alt: string } | null>(null);
+  // --- sửa inline: textarea + lưu ngược (cảnh báo khi nằm trong vault mirror từ git)
+  const [editing, setEditing] = createSignal(false);
+  const [draft, setDraft] = createSignal("");
+  const [saving, setSaving] = createSignal(false);
+  const [mirrored, setMirrored] = createSignal<string | null>(null);
+  let reposLoaded: Promise<void> | null = null;
+  const enterEdit = () => {
+    setDraft(props.text);
+    setMirrored(null);
+    setEditing(true);
+    reposLoaded ??= api.gitRepos().then((rs) => {
+      const hit = rs.find((r) => props.path === r.folder || props.path.startsWith(r.folder + "/"));
+      if (hit) setMirrored(hit.folder);
+    }).catch(() => {});
+  };
+  const saveEdit = async () => {
+    if (draft() === props.text) return setEditing(false);
+    if (mirrored() && !confirm(`File nằm trong vault mirror từ git ("${mirrored()}") — sửa ở đây sẽ bị ghi đè khi sync. Vẫn lưu?`)) return;
+    setSaving(true);
+    try {
+      await api.saveText(props.path, draft());
+      setEditing(false);
+      props.onSaved?.();
+    } catch (e) {
+      (props.onError ?? console.error)(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  // đổi file: thoát chế độ sửa
+  createEffect(() => {
+    props.path;
+    setEditing(false);
+  });
+  // --- backlinks: file nào nhắc tới file này
+  const [links] = createResource(() => props.path, (p) => api.backlinks(p).catch((): Backlink[] => []));
   const [outline] = createResource(() => props.path, vaultOutline);
   /** Chỉ mục tra ảnh từ mục lục vault (null = ngoài vault -> dò mạng như cũ). */
   const imgIdx = createMemo(() => {
@@ -451,13 +542,30 @@ export default function MarkdownView(props: {
   createEffect(() => {
     // gắn lại sau mỗi lần render danh sách block
     list();
-    // 1) ảnh tương đối / embed -> blob URL có auth.
+    // 1) embed ![[note]] hiện nội dung inline trước, rồi mới tải ảnh (kể cả ảnh trong note nhúng).
     // Đợi mục lục vault xong mới tra đường dẫn (khớp chính xác, không dò 404);
     // effect đăng ký outline() qua imgIdx() nên tự chạy lại khi mục lục về.
     // Lazy-load: chỉ tải ảnh trong/kề khung nhìn, còn lại đợi cuộn tới.
     const idx = imgIdx();
     const ready = !outline.loading;
     onCleanup(() => { imgObs?.disconnect(); imgObs = null; });
+    if (ready) {
+      const anchors = Array.from(host?.querySelectorAll<HTMLAnchorElement>("a.wiki-embed:not(.md-embed a):not([data-embed-done])") ?? []);
+      anchors.forEach((a) => {
+        a.setAttribute("data-embed-done", "1");
+        const raw = decodeURIComponent(a.getAttribute("data-wiki") ?? "");
+        void embedHtml(props.path, raw, idx).then((html) => {
+          if (html && a.isConnected) {
+            const div = document.createElement("div");
+            div.className = "md-embed";
+            div.innerHTML = html;
+            a.replaceWith(div);
+            hydrate();
+          }
+        });
+      });
+    }
+    const hydrate = () => {
     const imgs = host?.querySelectorAll<HTMLImageElement>("img[data-wsrc]") ?? [];
     if (ready) {
       const root = host?.closest(".viewer") ?? null;
@@ -517,6 +625,8 @@ export default function MarkdownView(props: {
         ensureObs().observe(img);
       });
     }
+    };
+    if (ready) hydrate(); // ảnh trong note nhúng: hydrate() lại sau mỗi lần chèn embed (xem trên)
     // 2) công thức: chỉ tải KaTeX khi bài có công thức
     const maths = host?.querySelectorAll<HTMLElement>("[data-tex]:not([data-done])") ?? [];
     if (maths.length) {
@@ -576,16 +686,28 @@ export default function MarkdownView(props: {
       onClick={onArticleClick}
     >
       <div class="md-bar">
-        <button onClick={readAll} disabled={playingAll()}>
+        <button onClick={readAll} disabled={playingAll() || editing()}>
           {playingAll() ? "Đang đọc…" : (<><Icon name="listen" size={15} /> Đọc cả bài</>)}
         </button>
-        <button class="ghost" onClick={prefetchAll} disabled={!!prepping() || playingAll()} title="Tải trước audio của cả bài vào bộ nhớ đệm để nghe liền mạch, không phải chờ từng đoạn. Tắt/reload trang là mất, phải tải lại — chưa phải lưu offline lâu dài.">
+        <button class="ghost" onClick={prefetchAll} disabled={!!prepping() || playingAll() || editing()} title="Tải trước audio của cả bài vào bộ nhớ đệm để nghe liền mạch, không phải chờ từng đoạn. Tắt/reload trang là mất, phải tải lại — chưa phải lưu offline lâu dài.">
           {prepping() ? `Đang tải ${prepping()![0]}/${prepping()![1]}…` : prepped() ? "Đã tải xong ✓" : "Tải trước audio"}
         </button>
+        <Show when={!editing()} fallback={
+          <>
+            <button class="primary" onClick={saveEdit} disabled={saving() || draft() === props.text}>{saving() ? "Đang lưu…" : "Lưu"}</button>
+            <button class="ghost" onClick={() => setEditing(false)} disabled={saving()}>Hủy</button>
+          </>
+        }>
+          <button class="ghost" onClick={enterEdit} title="Sửa file markdown này"><Icon name="edit" size={15} /> Sửa</button>
+        </Show>
       </div>
+      <Show when={editing() && mirrored()}>
+        <p class="stale">⚠️ File nằm trong vault mirror từ git ("{mirrored()}") — bản sửa ở đây sẽ bị ghi đè khi sync.</p>
+      </Show>
       <Show when={stale()}>
         <p class="stale">⚠️ Bài đã sửa sau khi bấm đọc — âm thanh đã cũ, bấm "Đọc cả bài" lại để render mới.</p>
       </Show>
+      <Show when={editing()} fallback={
       <For each={list()}>
         {(b, i) => {
           const anns = () => byBlock().get(i()) ?? [];
@@ -621,6 +743,22 @@ export default function MarkdownView(props: {
           );
         }}
       </For>
+      }>
+        <textarea class="md-edit" value={draft()} onInput={(e) => setDraft(e.currentTarget.value)} spellcheck={false} placeholder="Markdown…" />
+      </Show>
+      <Show when={!editing() && (links() ?? []).length}>
+        <section class="md-links">
+          <b>Được nhắc tới ở {(links() ?? []).length} nơi</b>
+          <For each={links() ?? []}>
+            {(l) => (
+              <button class="md-linkref" onClick={() => props.onOpenLink?.("/" + l.path)} title={l.path}>
+                <b>{l.name}</b>
+                <span class="muted xs">{l.snippet.replace(/\s+/g, " ").slice(0, 140)}</span>
+              </button>
+            )}
+          </For>
+        </section>
+      </Show>
       <Show when={lb()}>{(l) => <Portal><Lightbox src={l().src} alt={l().alt} onClose={() => setLb(null)} /></Portal>}</Show>
     </article>
     </ReaderLayout>

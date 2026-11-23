@@ -1320,7 +1320,7 @@ export default function App() {
                     <Suspense fallback={<p class="muted">Đang mở…</p>}>
                       <Switch>
                         <Match when={open()!.kind === "markdown"}>
-                          <MarkdownView path={open()!.path} text={open()!.text ?? ""} anchor={open()!.anchor ?? null} onOpenLink={openWikiLink} onError={setErr} mark={open()!.mark} />
+                          <MarkdownView path={open()!.path} text={open()!.text ?? ""} anchor={open()!.anchor ?? null} onOpenLink={openWikiLink} onError={setErr} mark={open()!.mark} onSaved={() => openAt(open()!.path, "")} />
                         </Match>
                         <Match when={open()!.kind === "text"}>
                           <TextView path={open()!.path} />

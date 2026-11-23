@@ -157,6 +157,11 @@ export interface SharedItem {
   permission: string;
   expires_at: number | null;
 }
+export interface Backlink {
+  path: string;
+  name: string;
+  snippet: string;
+}
 export interface VaultOutline {
   root: string;
   files: { path: string; headings: [number, string][] }[];
@@ -549,6 +554,10 @@ export const api = {
   async vaultOutline(path: string) {
     if (isSecret(path)) return null;
     return (await req(`/api/vault/outline?path=${encodeURIComponent(path)}`)).json() as Promise<VaultOutline | null>;
+  },
+  /** File nào nhắc tới file này qua [[wikilink]]. */
+  async backlinks(path: string) {
+    return (await req(`/api/vault/backlinks?path=${encodeURIComponent(path)}`)).json() as Promise<Backlink[]>;
   },
   async allNotes(state?: NoteState) {
     return (await req(`/api/annotations${state ? `?state=${state}` : ""}`)).json() as Promise<Annotation[]>;
