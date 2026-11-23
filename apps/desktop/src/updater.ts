@@ -13,7 +13,8 @@ export const updateState = { info, checking, progress, error, done };
 
 /** Kiểm tra bản mới (chỉ chạy trong app Tauri; web trả về null). */
 export async function checkUpdate(silent = false): Promise<UpdateInfo | null> {
-  if (!isTauri()) return null;
+  // updater chỉ có trên desktop; app iOS/Android cập nhật qua bản cài mới
+  if (!isTauri() || /iPhone|iPad|Android/i.test(navigator.userAgent)) return null;
   if (checking()) return info();
   setChecking(true);
   if (!silent) setError("");
