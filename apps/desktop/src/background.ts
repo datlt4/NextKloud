@@ -2,6 +2,7 @@
 // Lưu trong storage của user (.nextkloud/) -> sync mọi thiết bị.
 import { createSignal } from "solid-js";
 import { api } from "./api";
+import { applyLang, type Lang } from "./i18n";
 
 export const PRESETS: { id: string; name: string; css: string }[] = [
   { id: "cream", name: "Kem", css: "radial-gradient(at 0% 0%, #fbe1cc 0, transparent 45%), radial-gradient(at 100% 100%, #f7d3bc 0, transparent 45%), #f5f0e8" },
@@ -34,11 +35,12 @@ export interface UiSettings {
   font: string; // phông giao diện (FONTS id)
   readFont: string; // phông khi đọc md: "" = giống giao diện
   readSize: number; // cỡ chữ khi đọc (px)
+  lang: Lang; // ngôn ngữ giao diện, đồng bộ mọi thiết bị
 }
 
 const SETTINGS = ".nextkloud/settings.json";
 const IMAGE = ".nextkloud/background.webp";
-const DEFAULT: UiSettings = { bg: "cream", dim: 0.2, v: 0, theme: "auto", font: "system", readFont: "", readSize: 15 };
+const DEFAULT: UiSettings = { bg: "cream", dim: 0.2, v: 0, theme: "auto", font: "system", readFont: "", readSize: 15, lang: "vi" };
 
 function cached(): UiSettings {
   try {
@@ -111,6 +113,7 @@ async function loadImage(v: number) {
 function apply(s: UiSettings) {
   setUi(s);
   applyFonts(s);
+  applyLang(s.lang ?? "vi");
   if (s.theme === "auto") delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = s.theme;
   localStorage.setItem("nk-ui", JSON.stringify(s));
@@ -133,6 +136,7 @@ async function save(s: UiSettings) {
 }
 
 export const setTheme = (theme: UiSettings["theme"]) => save({ ...ui(), theme });
+export const setLang = (lang: Lang) => save({ ...ui(), lang });
 export const setPreset = (id: string) => save({ ...ui(), bg: id });
 /** Kéo slider: chỉ preview; thả tay mới lưu (tránh upload mỗi pixel). */
 export const previewDim = (dim: number) => setUi({ ...ui(), dim });

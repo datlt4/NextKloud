@@ -1,6 +1,7 @@
 import { For, Show, createResource, createSignal, onCleanup } from "solid-js";
 import { api, type GitRepo } from "./api";
 import { errText } from "./fileops";
+import { fmtDateTime, fmtNum, t } from "./i18n";
 import { Icon } from "./icons";
 
 const repoName = (url: string) => {
@@ -8,12 +9,12 @@ const repoName = (url: string) => {
   return last.replace(/\.git$/, "") || "repo";
 };
 const ago = (s: number | null) => {
-  if (!s) return "chưa đồng bộ";
+  if (!s) return t("git.never");
   const d = Math.max(0, Date.now() / 1000 - s);
-  if (d < 60) return "vừa xong";
-  if (d < 3600) return `${Math.floor(d / 60)} phút trước`;
-  if (d < 86400) return `${Math.floor(d / 3600)} giờ trước`;
-  return new Date(s * 1000).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" });
+  if (d < 60) return t("git.justNow");
+  if (d < 3600) return t("git.minAgo", { n: Math.floor(d / 60) });
+  if (d < 86400) return t("git.hourAgo", { n: Math.floor(d / 3600) });
+  return t("git.dayAgo", { d: fmtDateTime(s) });
 };
 const INTERVALS = [1, 4, 8, 12, 24];
 
@@ -25,7 +26,7 @@ function Copy(props: { text: string }) {
       setOk(true);
       setTimeout(() => setOk(false), 1500);
     }}>
-      <Icon name={ok() ? "check" : "text"} /> {ok() ? "Đã chép" : "Chép"}
+      <Icon name={ok() ? "check" : "text"} /> {ok() ? t("git.copied") : t("git.copy")}
     </button>
   );
 }
@@ -51,17 +52,17 @@ export function GitPanel(props: { onOpen: (folder: string) => void; onError: (m:
       <section class="set-card">
         <div class="git-top">
           <div>
-            <h2>Đồng bộ Git</h2>
+            <h2>{t("git.title")}</h2>
             <p class="muted sm">
-              Mirror 1 chiều từ git repo (vd vault Obsidian) vào thư mục của bạn, tự cập nhật theo chu kỳ. Sửa file trong NextKloud sẽ bị ghi đè khi repo thay đổi.
+              {t("git.desc")}
             </p>
           </div>
-          <button class="btn primary" onClick={() => setAdding(true)}><Icon name="plus" /> Thêm repo</button>
+          <button class="btn primary" onClick={() => setAdding(true)}><Icon name="plus" /> {t("git.add")}</button>
         </div>
       </section>
       <For each={repos() ?? []} fallback={
         <Show when={!repos.loading}>
-          <section class="set-card"><p class="muted sm">Chưa có repo nào.</p></section>
+          <section class="set-card"><p class="muted sm">{t("git.empty")}</p></section>
         </Show>
       }>
         {(r) => <RepoCard r={r} onOpen={props.onOpen} act={act} />}
@@ -77,8 +78,8 @@ function RepoCard(props: { r: GitRepo; onOpen: (f: string) => void; act: (f: () 
   const r = () => props.r;
   const [showKey, setShowKey] = createSignal(false);
   const [editing, setEditing] = createSignal(false);
-  const chip = () =>
-    ({ pending: ["Chờ thêm khoá", "warn"], idle: ["Đã đồng bộ", "good"], syncing: ["Đang đồng bộ…", "soft"], error: ["Lỗi", "err"] })[r().state];
+  const chip = (): [string, string] =>
+    ({ pending: [t("git.pending"), "warn"], idle: [t("git.synced"), "good"], syncing: [t("git.syncing"), "soft"], error: [t("git.error"), "err"] })[r().state] as [string, string];
   return (
     <section class="set-card repo">
       <div class="repo-head">
@@ -91,7 +92,7 @@ function RepoCard(props: { r: GitRepo; onOpen: (f: string) => void; act: (f: () 
       </div>
       <div class="repo-meta muted sm">
         <button class="link" onClick={() => props.onOpen(r().folder)}><Icon name="folder" size={14} /> {r().folder}</button>
-        <span>{r().files.toLocaleString("vi-VN")} file</span>
+        <span>{t("f.filesN", { n: fmtNum(r().files) })}</span>
         <span>{ago(r().last_sync)}</span>
         <Show when={r().last_commit}><span class="mono">{r().last_commit!.slice(0, 7)}</span></Show>
       </div>
@@ -100,37 +101,35 @@ function RepoCard(props: { r: GitRepo; onOpen: (f: string) => void; act: (f: () 
       </Show>
       <Show when={r().ssh_pub && (r().state === "pending" || (r().state === "error" && !r().last_commit) || showKey())}>
         <div class="keybox">
-          <p class="sm">
-            Thêm khoá này vào <b>Deploy keys</b> của repo (GitHub/Gitea: Settings → Deploy keys, chỉ cần quyền đọc), rồi bấm <b>Đồng bộ ngay</b>.
-          </p>
+          <p class="sm" innerHTML={t("git.deployNote")} />
           <pre class="secret">{r().ssh_pub}</pre>
           <Copy text={r().ssh_pub!} />
         </div>
       </Show>
       <div class="repo-act">
         <button class="btn primary sm" disabled={r().state === "syncing"} onClick={() => props.act(() => api.gitSync(r().id))}>
-          <Icon name="cloud" /> {r().state === "syncing" ? "Đang đồng bộ…" : "Đồng bộ ngay"}
+          <Icon name="cloud" /> {r().state === "syncing" ? t("git.syncing") : t("git.syncNow")}
         </button>
         <label class="muted sm interval">
-          Mỗi
+          {t("git.every")}
           <select value={r().interval_h} onChange={(e) => props.act(() => api.gitUpdate(r().id, { interval_h: +e.currentTarget.value }))}>
             <For each={INTERVALS.includes(r().interval_h) ? INTERVALS : [...INTERVALS, r().interval_h].sort((a, b) => a - b)}>
-              {(h) => <option value={h}>{h} giờ</option>}
+              {(h) => <option value={h}>{t("git.intervalOpt", { h })}</option>}
             </For>
           </select>
         </label>
         <span class="grow" />
         <Show when={r().state !== "syncing"}>
-          <button class="btn ghost sm" title="Sửa link remote / nhánh" onClick={() => setEditing(true)}>
-            <Icon name="edit" /> <span class="hide-xs">Sửa link</span>
+          <button class="btn ghost sm" title={t("git.editTitle")} onClick={() => setEditing(true)}>
+            <Icon name="edit" /> <span class="hide-xs">{t("git.editLink")}</span>
           </button>
         </Show>
         <Show when={r().ssh_pub && r().state !== "pending"}>
-          <button class="btn ghost sm" onClick={() => setShowKey(!showKey())}><Icon name="key" /> <span class="hide-xs">Khoá</span></button>
+          <button class="btn ghost sm" onClick={() => setShowKey(!showKey())}><Icon name="key" /> <span class="hide-xs">{showKey() ? t("git.hideKey") : t("git.showKey")}</span></button>
         </Show>
-        <button class="btn danger sm" disabled={r().state === "syncing"} title="Gỡ repo" onClick={() => {
-          if (!confirm(`Gỡ mirror "${repoName(r().url)}"? Sẽ ngừng đồng bộ.`)) return;
-          const files = confirm(`Chuyển luôn thư mục "${r().folder}" vào thùng rác?\nOK = chuyển vào thùng rác · Huỷ = giữ lại file`);
+        <button class="btn danger sm" disabled={r().state === "syncing"} title={t("git.remove")} onClick={() => {
+          if (!confirm(t("git.removeAsk", { name: repoName(r().url) }))) return;
+          const files = confirm(t("git.trashAsk", { folder: r().folder }));
           props.act(() => api.gitRemove(r().id, files));
         }}>
           <Icon name="trash" />
@@ -164,7 +163,7 @@ function EditDialog(props: { r: GitRepo; onClose: () => void; onDone: () => void
           const u = url().trim();
           // Chặn gửi nhầm URL đã che: token thật không bao giờ rời server.
           if (u.includes("***")) {
-            setErr("URL còn chứa ***, hãy dán lại URL đầy đủ (kèm token nếu repo riêng tư), hoặc để trống để giữ nguyên.");
+            setErr(t("git.urlStars"));
             return;
           }
           setBusy(true);
@@ -182,18 +181,18 @@ function EditDialog(props: { r: GitRepo; onClose: () => void; onDone: () => void
         }}
       >
         <div class="modal-head">
-          <h3>Sửa link remote</h3>
+          <h3>{t("git.editTitle")}</h3>
           <button type="button" class="icon-btn" onClick={props.onClose}><Icon name="close" /></button>
         </div>
         <label>URL repo</label>
         <input value={url()} onInput={(e) => setUrl(e.currentTarget.value)} placeholder={props.r.url} autocomplete="off" spellcheck={false} />
-        <p class="muted sm">Để trống để giữ nguyên URL hiện tại. Dán URL đầy đủ khi muốn đổi (kèm token nếu repo riêng tư); đổi URL áp dụng ngay lần đồng bộ kế tiếp, giữ nguyên deploy key.</p>
-        <label>Nhánh <span class="muted">(trống = mặc định của repo)</span></label>
-        <input value={branch()} onInput={(e) => setBranch(e.currentTarget.value)} placeholder="mặc định của repo" spellcheck={false} />
-        <p class="muted sm">Đổi nhánh sẽ clone lại từ đầu.</p>
+        <p class="muted sm">{t("git.urlKeep")}</p>
+        <label>{t("git.branch")} <span class="muted">({t("git.branchDefault")})</span></label>
+        <input value={branch()} onInput={(e) => setBranch(e.currentTarget.value)} placeholder={t("git.branchPh")} spellcheck={false} />
+        <p class="muted sm">{t("git.branchWarn")}</p>
         <Show when={err()}><p class="err">{err()}</p></Show>
         <button type="submit" class="btn primary block" disabled={busy() || !changed()}>
-          {busy() ? "Đang lưu…" : "Lưu"}
+          {busy() ? t("git.saving") : t("git.save")}
         </button>
       </form>
     </div>
@@ -230,45 +229,45 @@ function AddDialog(props: { onClose: () => void; onDone: () => void }) {
         }}
       >
         <div class="modal-head">
-          <h3>Thêm git repo</h3>
+          <h3>{t("git.addTitle")}</h3>
           <button type="button" class="icon-btn" onClick={props.onClose}><Icon name="close" /></button>
         </div>
         <label>URL repo</label>
         <input value={url()} onInput={(e) => setUrl(e.currentTarget.value)} placeholder="git@github.com:ban/vault.git" autocomplete="off" spellcheck={false} />
-        <p class="muted sm">Repo riêng tư qua https: dùng dạng https://user:token@host/ban/vault.git và chọn “Không cần khoá”.</p>
+        <p class="muted sm">{t("git.addPrivate")}</p>
         <div class="two">
           <div>
-            <label>Nhánh</label>
-            <input value={branch()} onInput={(e) => setBranch(e.currentTarget.value)} placeholder="mặc định của repo" spellcheck={false} />
+            <label>{t("git.branch")}</label>
+            <input value={branch()} onInput={(e) => setBranch(e.currentTarget.value)} placeholder={t("git.branchPh")} spellcheck={false} />
           </div>
           <div>
-            <label>Thư mục đích</label>
-            <input value={folder()} onInput={(e) => setFolder(e.currentTarget.value)} placeholder={`Obsidian Vaults/${url().trim() ? repoName(url().trim()) : "<tên repo>"}`} spellcheck={false} />
+            <label>{t("git.dest")}</label>
+            <input value={folder()} onInput={(e) => setFolder(e.currentTarget.value)} placeholder={`Obsidian Vaults/${url().trim() ? repoName(url().trim()) : `<${t("c.name").toLowerCase()}>`}`} spellcheck={false} />
           </div>
         </div>
-        <label>Khoá truy cập</label>
+        <label>{t("git.key")}</label>
         <div class="seg wide">
-          <button type="button" classList={{ on: key() === "generate" }} onClick={() => setKey("generate")}>Tạo khoá mới</button>
-          <button type="button" classList={{ on: key() === "paste" }} onClick={() => setKey("paste")}>Dán private key</button>
-          <button type="button" classList={{ on: key() === "none" }} onClick={() => setKey("none")}>Không cần khoá</button>
+          <button type="button" classList={{ on: key() === "generate" }} onClick={() => setKey("generate")}>{t("git.keyNew")}</button>
+          <button type="button" classList={{ on: key() === "paste" }} onClick={() => setKey("paste")}>{t("git.keyPaste")}</button>
+          <button type="button" classList={{ on: key() === "none" }} onClick={() => setKey("none")}>{t("git.keyNone")}</button>
         </div>
         <Show when={key() === "generate"}>
-          <p class="muted sm">NextKloud tạo khoá ed25519 riêng cho repo này. Sau khi thêm, chép khoá công khai vào Deploy keys của repo.</p>
+          <p class="muted sm">{t("git.keyNewNote")}</p>
         </Show>
         <Show when={key() === "paste"}>
           <textarea class="keyarea" value={priv()} onInput={(e) => setPriv(e.currentTarget.value)} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" spellcheck={false} />
-          <p class="muted sm">Khoá không được có passphrase. Lưu trên server, không bao giờ gửi lại về trình duyệt.</p>
+          <p class="muted sm">{t("git.keyNote")}</p>
         </Show>
         <Show when={key() === "none" && !isHttps() && url().trim()}>
-          <p class="err sm">URL ssh cần khoá.</p>
+          <p class="err sm">{t("git.keyNeed")}</p>
         </Show>
-        <label>Tự đồng bộ</label>
+        <label>{t("git.interval")}</label>
         <select value={interval()} onChange={(e) => setInterval_(+e.currentTarget.value)}>
-          <For each={INTERVALS}>{(h) => <option value={h}>Mỗi {h} giờ</option>}</For>
+          <For each={INTERVALS}>{(h) => <option value={h}>{t("git.hours", { h })}</option>}</For>
         </select>
         <Show when={err()}><p class="err">{err()}</p></Show>
         <button type="submit" class="btn primary block" disabled={busy() || !url().trim() || (key() === "paste" && !priv().trim())}>
-          {busy() ? "Đang thêm…" : key() === "generate" ? "Thêm & tạo khoá" : "Thêm & đồng bộ"}
+          {busy() ? t("git.adding") : key() === "generate" ? t("git.addGoKey") : t("git.addGo")}
         </button>
       </form>
     </div>

@@ -2,6 +2,7 @@ import { For, Show, createResource, createSignal } from "solid-js";
 import { api, type Me } from "./api";
 import { Avatar, squareAvatar } from "./avatar";
 import { fmtSize } from "./format";
+import { fmtNum, t } from "./i18n";
 import { ResetForm } from "./forms";
 import { Icon } from "./icons";
 import { LookPanel } from "./look";
@@ -10,14 +11,15 @@ import { GitPanel } from "./gitsync";
 
 export type SettingsTab = "profile" | "security" | "look" | "git" | "users" | "system";
 
-const TABS: { id: SettingsTab; label: string; icon: string; admin?: boolean }[] = [
-  { id: "profile", label: "Hồ sơ", icon: "user" },
-  { id: "security", label: "Mật khẩu", icon: "key" },
-  { id: "look", label: "Giao diện & nền", icon: "palette" },
-  { id: "git", label: "Đồng bộ Git", icon: "code" },
-  { id: "users", label: "Người dùng", icon: "users", admin: true },
-  { id: "system", label: "Hệ thống", icon: "server", admin: true },
+const TABS: { id: SettingsTab; icon: string; admin?: boolean }[] = [
+  { id: "profile", icon: "user" },
+  { id: "security", icon: "key" },
+  { id: "look", icon: "palette" },
+  { id: "git", icon: "code" },
+  { id: "users", icon: "users", admin: true },
+  { id: "system", icon: "server", admin: true },
 ];
+const tabLabel = (id: SettingsTab) => t(`set.${id}`);
 
 export default function Settings(props: {
   me: Me;
@@ -31,20 +33,20 @@ export default function Settings(props: {
   return (
     <div class="settings">
       <nav class="set-nav">
-        <div class="set-group">Cá nhân</div>
+        <div class="set-group">{t("set.personal")}</div>
         <For each={tabs().filter((t) => !t.admin)}>
           {(t) => (
             <button class="nav" classList={{ active: props.tab === t.id }} onClick={() => props.onTab(t.id)}>
-              <Icon name={t.icon} /> {t.label}
+              <Icon name={t.icon} /> {tabLabel(t.id)}
             </button>
           )}
         </For>
         <Show when={props.me.is_admin}>
-          <div class="set-group">Quản trị</div>
+          <div class="set-group">{t("set.admin")}</div>
           <For each={tabs().filter((t) => t.admin)}>
             {(t) => (
               <button class="nav" classList={{ active: props.tab === t.id }} onClick={() => props.onTab(t.id)}>
-                <Icon name={t.icon} /> {t.label}
+                <Icon name={t.icon} /> {tabLabel(t.id)}
               </button>
             )}
           </For>
@@ -59,7 +61,7 @@ export default function Settings(props: {
         </Show>
         <Show when={props.tab === "look"}>
           <section class="set-card">
-            <h2>Giao diện & nền</h2>
+            <h2>{t("set.look")}</h2>
             <LookPanel onError={props.onError} />
           </section>
         </Show>
@@ -88,7 +90,7 @@ function Profile(props: { me: Me; onMe: (m: Me) => void; onError: (m: string) =>
       props.onMe(await f());
       return true;
     } catch (e) {
-      props.onError("Không lưu được hồ sơ: " + String((e as Error).message));
+      props.onError(t("set.saveProfileErr") + String((e as Error).message));
       return false;
     } finally {
       setBusy(false);
@@ -98,19 +100,19 @@ function Profile(props: { me: Me; onMe: (m: Me) => void; onError: (m: string) =>
   return (
     <>
       <section class="set-card">
-        <h2>Hồ sơ</h2>
+        <h2>{t("set.profile")}</h2>
         <div class="profile-head">
           <Avatar id={props.me.id} v={props.me.avatar_v} name={props.me.display_name || props.me.username} size={88} class="big" />
           <div class="profile-act">
             <button class="btn primary" disabled={busy()} onClick={() => pick.click()}>
-              <Icon name="image" /> {props.me.avatar_v ? "Đổi ảnh" : "Tải ảnh lên"}
+              <Icon name="image" /> {props.me.avatar_v ? t("set.avatarChange") : t("set.avatarUpload")}
             </button>
             <Show when={props.me.avatar_v > 0}>
               <button class="btn ghost" disabled={busy()} onClick={() => run(() => api.deleteAvatar())}>
-                <Icon name="trash" /> Xoá ảnh
+                <Icon name="trash" /> {t("set.avatarDel")}
               </button>
             </Show>
-            <p class="muted sm">Ảnh được cắt vuông, thu về 256px.</p>
+            <p class="muted sm">{t("set.avatarNote")}</p>
           </div>
           <input
             ref={pick}
@@ -132,28 +134,28 @@ function Profile(props: { me: Me; onMe: (m: Me) => void; onError: (m: string) =>
             if (await run(() => api.updateMe(name()))) setSaved(true);
           }}
         >
-          <label>Tên đăng nhập</label>
+          <label>{t("set.username")}</label>
           <input value={props.me.username} disabled />
-          <label>Tên hiển thị</label>
+          <label>{t("set.displayName")}</label>
           <div class="row-input">
             <input value={name()} maxLength={64} placeholder={props.me.username} onInput={(e) => { setName(e.currentTarget.value); setSaved(false); }} />
             <button type="submit" class="btn primary" disabled={busy() || name().trim() === (props.me.display_name ?? "")}>
-              {saved() ? "Đã lưu" : "Lưu"}
+              {saved() ? t("set.saved") : t("set.save")}
             </button>
           </div>
         </form>
       </section>
       <section class="set-card">
-        <h2>Dung lượng</h2>
+        <h2>{t("set.quota")}</h2>
         <p class="big-num">
           {fmtSize(props.me.quota_used)}
-          <span class="muted"> / {props.me.quota_limit > 0 ? fmtSize(props.me.quota_limit) : "không giới hạn"}</span>
+          <span class="muted"> / {props.me.quota_limit > 0 ? fmtSize(props.me.quota_limit) : t("set.unlimited")}</span>
         </p>
         <Show when={props.me.quota_limit > 0}>
           <div class="bar thick"><i style={{ width: `${pct()}%` }} classList={{ hot: pct() > 90 }} /></div>
-          <p class="muted sm">Còn trống {fmtSize(Math.max(0, props.me.quota_limit - props.me.quota_used))}. Muốn thêm dung lượng, liên hệ quản trị viên.</p>
+          <p class="muted sm">{t("set.free", { size: fmtSize(Math.max(0, props.me.quota_limit - props.me.quota_used)) })}</p>
         </Show>
-        <Show when={props.me.is_admin}><p class="muted sm"><span class="tag">admin</span> Tài khoản quản trị.</p></Show>
+        <Show when={props.me.is_admin}><p class="muted sm"><span class="tag">admin</span> {t("set.isAdmin")}</p></Show>
       </section>
     </>
   );
@@ -165,10 +167,10 @@ function Security() {
   const [k, setK] = createSignal(0); // đổi key để xoá trắng form sau khi đổi xong
   return (
     <section class="set-card">
-      <h2>Đổi mật khẩu</h2>
-      <p class="muted sm">Tối thiểu 8 ký tự. Các thiết bị đang đăng nhập vẫn giữ phiên.</p>
+      <h2>{t("set.changePass")}</h2>
+      <p class="muted sm">{t("set.passHint")}</p>
       <Show when={err()}><p class="err">{err()}</p></Show>
-      <Show when={ok()}><p class="ok">Đã đổi mật khẩu.</p></Show>
+      <Show when={ok()}><p class="ok">{t("set.passDone")}</p></Show>
       <div class="set-form">
         <Show when={k() + 1} keyed>
           <ResetForm
@@ -206,12 +208,12 @@ function System(props: { onError: (m: string) => void }) {
       const lines = [];
       for (const u of todo) {
         const r = await api.adminReindex(u.id);
-        lines.push(`${u.username}: ${r.files.toLocaleString("vi-VN")} file · ${fmtSize(r.bytes)}`);
+        lines.push(`${u.username}: ${fmtNum(r.files)} file · ${fmtSize(r.bytes)}`);
       }
       setResult(lines.join("\n"));
       refetch();
     } catch (e) {
-      props.onError("Dựng lại chỉ mục lỗi: " + String((e as Error).message));
+      props.onError(t("set.reindexErr") + String((e as Error).message));
     } finally {
       setBusy(false);
     }
@@ -220,34 +222,34 @@ function System(props: { onError: (m: string) => void }) {
     const s = stats();
     if (!s) return [];
     return [
-      ["Phiên bản", s.version],
-      ["Lưu trữ", s.storage === "s3" ? "RustFS (S3)" : s.storage],
-      ["Người dùng", s.users.toLocaleString("vi-VN")],
-      ["File", s.files.toLocaleString("vi-VN")],
-      ["Thư mục", s.dirs.toLocaleString("vi-VN")],
-      ["Tổng dung lượng", fmtSize(s.bytes)],
+      [t("set.version"), s.version],
+      [t("set.storage"), s.storage === "s3" ? t("set.storageS3") : s.storage],
+      [t("set.usersN"), fmtNum(s.users)],
+      [t("set.filesN"), fmtNum(s.files)],
+      [t("set.dirsN"), fmtNum(s.dirs)],
+      [t("set.bytesN"), fmtSize(s.bytes)],
     ];
   };
   return (
     <>
       <section class="set-card">
-        <h2>Hệ thống</h2>
+        <h2>{t("set.system")}</h2>
         <div class="stats">
           <For each={cards()}>{([k, v]) => <div class="stat"><span class="muted sm">{k}</span><b>{v}</b></div>}</For>
         </div>
       </section>
       <section class="set-card">
-        <h2>Dựng lại chỉ mục</h2>
+        <h2>{t("set.reindex")}</h2>
         <p class="muted sm">
-          Quét lại toàn bộ file trên kho lưu trữ, cập nhật danh sách, ngày sửa và dung lượng đã dùng. Dùng khi chép dữ liệu thẳng vào RustFS hoặc thấy danh sách bị lệch.
+          {t("set.reindexDesc")}
         </p>
         <div class="row-input">
           <select value={target()} onChange={(e) => setTarget(e.currentTarget.value)}>
-            <option value="">Tất cả người dùng</option>
+            <option value="">{t("set.allUsers")}</option>
             <For each={users() ?? []}>{(u) => <option value={u.id}>{u.username}</option>}</For>
           </select>
           <button class="btn primary" disabled={busy() || !users()} onClick={reindex}>
-            {busy() ? "Đang quét…" : "Dựng lại"}
+            {busy() ? t("set.scanning") : t("set.rebuild")}
           </button>
         </div>
         <Show when={result()}><pre class="secret">{result()}</pre></Show>

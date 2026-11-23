@@ -334,7 +334,7 @@ git_repos(id, user_id → users CASCADE, url, branch, folder, ssh_key, ssh_pub, 
 4. **Obsidian:** sửa + lưu ngược về file (cảnh báo khi vault mirror từ git), embed `![[note]]`, backlinks.
 5. **Lịch sử phiên bản** khi ghi đè; chuyển trash (854MB) và versions (1,7GB) từ Nextcloud.
 6. **Desktop sync 2 chiều / mobile / auto-update / thông báo** (9.6, 9.7).
-7. **Đa ngôn ngữ** vi/en/ja/zh (9.5).
+7. **Đa ngôn ngữ** vi/en/ja/zh (9.5). — ✅ xong v1 ở 0.1.20 (`i18n.ts`: dict 4 ngôn ngữ, `t()` fallback vi, `lang` lưu localStorage + đồng bộ server qua `UiSettings.lang`, chọn trong Giao diện & nền; chuyển toàn bộ chuỗi App/Settings/UsersAdmin/fileops/forms/look/gitsync; ngày/số theo locale). Chưa làm: trang Deck/Ghi chú/Theo dõi/Chia sẻ/Bí mật và các viewer vẫn tiếng Việt; lỗi backend vẫn message tiếng Việt.
 8. **Vận hành:** giới hạn đăng nhập sai; dọn staging và multipart S3 bỏ dở; CI chạy test DB + S3 (service container); kiểm tra định kỳ bản sao lưu đêm (`backup.sh`) còn chạy; Docker Hub login trong CI dễ dính 429 khi push dày.
 
 **Thứ tự đề xuất:** 9.1 → 9.2 → 9.3 → 9.4 → 9.5 → các mục còn lại. Sau mỗi mục: viết test, chạy test đầy đủ, test UI 2 khổ màn hình, commit, push, deploy, báo người dùng bằng tiếng Việt kèm số đo.

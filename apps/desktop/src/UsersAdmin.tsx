@@ -2,6 +2,7 @@ import { For, Match, Show, Switch, createSignal, onMount } from "solid-js";
 import { api, type UserRow } from "./api";
 import { Avatar } from "./avatar";
 import { fmtSize } from "./format";
+import { fmtNum, t } from "./i18n";
 import { Icon } from "./icons";
 
 const GB = 1024 ** 3;
@@ -30,7 +31,7 @@ export default function UsersAdmin(props: { meId: string; onError: (m: string) =
     try {
       setUsers(await api.users());
     } catch (e) {
-      props.onError("Không tải được danh sách người dùng: " + String((e as Error).message));
+      props.onError(t("u.loadErr") + String((e as Error).message));
     }
   };
   onMount(reload);
@@ -50,7 +51,7 @@ export default function UsersAdmin(props: { meId: string; onError: (m: string) =
     } catch (e) {
       const m = String((e as Error).message);
       setDlgErr(
-        m.includes("username taken") ? "Tên đăng nhập đã tồn tại" : m.includes("at least 8") ? "Mật khẩu tối thiểu 8 ký tự" : m,
+        m.includes("username taken") ? t("u.taken") : m.includes("at least 8") ? t("u.short") : m,
       );
     } finally {
       setBusy(false);
@@ -63,11 +64,11 @@ export default function UsersAdmin(props: { meId: string; onError: (m: string) =
     <div class="admin">
       <div class="admin-head">
         <div>
-          <h2>Người dùng</h2>
-          <p class="muted sm">{users().length} tài khoản · người mới phải đổi mật khẩu ở lần đăng nhập đầu</p>
+          <h2>{t("u.title")}</h2>
+          <p class="muted sm">{t("u.sub", { n: fmtNum(users().length) })}</p>
         </div>
         <button class="btn primary" onClick={() => open({ kind: "create" })}>
-          <Icon name="plus" /> <span class="hide-xs">Thêm người dùng</span>
+          <Icon name="plus" /> <span class="hide-xs">{t("u.add")}</span>
         </button>
       </div>
 
@@ -81,12 +82,12 @@ export default function UsersAdmin(props: { meId: string; onError: (m: string) =
                   <b>{u.display_name || u.username}</b>
                   <Show when={u.display_name}><span class="muted sm">@{u.username}</span></Show>
                   <Show when={u.is_admin}><span class="tag">admin</span></Show>
-                  <Show when={u.id === props.meId}><span class="tag soft">bạn</span></Show>
-                  <Show when={u.must_reset}><span class="tag warn">chờ đổi mật khẩu</span></Show>
+                  <Show when={u.id === props.meId}><span class="tag soft">{t("u.you")}</span></Show>
+                  <Show when={u.must_reset}><span class="tag warn">{t("u.waitReset")}</span></Show>
                 </div>
                 <div class="uquota">
                   <span>
-                    {fmtSize(u.quota_used)} / {u.quota_limit > 0 ? fmtSize(u.quota_limit) : "không giới hạn"}
+                    {fmtSize(u.quota_used)} / {u.quota_limit > 0 ? fmtSize(u.quota_limit) : t("u.unlimited")}
                   </span>
                   <Show when={u.quota_limit > 0}>
                     <div class="bar"><i style={{ width: `${pct(u)}%` }} classList={{ hot: u.quota_used > u.quota_limit * 0.9 }} /></div>
@@ -94,17 +95,17 @@ export default function UsersAdmin(props: { meId: string; onError: (m: string) =
                 </div>
               </div>
               <div class="uact">
-                <button class="btn ghost sm" onClick={() => open({ kind: "quota", u })} title="Dung lượng">
+                <button class="btn ghost sm" onClick={() => open({ kind: "quota", u })} title={t("u.quota")}>
                   <Icon name="cloud" /> <span class="hide-sm">Quota</span>
                 </button>
-                <button class="btn ghost sm" onClick={() => open({ kind: "reset", u })} title="Đặt lại mật khẩu">
-                  <Icon name="key" /> <span class="hide-sm">Reset mật khẩu</span>
+                <button class="btn ghost sm" onClick={() => open({ kind: "reset", u })} title={t("u.resetPw")}>
+                  <Icon name="key" /> <span class="hide-sm">{t("u.resetPw")}</span>
                 </button>
                 <button
                   class="btn ghost sm danger"
                   disabled={u.id === props.meId}
                   onClick={() => open({ kind: "delete", u })}
-                  title={u.id === props.meId ? "Không thể xoá chính mình" : "Xoá người dùng"}
+                  title={u.id === props.meId ? t("u.cantDelSelf") : t("u.delete")}
                 >
                   <Icon name="trash" />
                 </button>
@@ -123,7 +124,7 @@ export default function UsersAdmin(props: { meId: string; onError: (m: string) =
                   <CreateForm busy={busy()} err={dlgErr()} onClose={() => setDlg(null)} onSubmit={(b) =>
                     run(async () => {
                       await api.createUser(b);
-                      return { kind: "secret", title: "Đã tạo người dùng", username: b.username, password: b.password };
+                      return { kind: "secret", title: t("u.created"), username: b.username, password: b.password };
                     })}
                   />
                 </Match>
@@ -139,7 +140,7 @@ export default function UsersAdmin(props: { meId: string; onError: (m: string) =
                   {(u) => <ResetForm u={u()} busy={busy()} err={dlgErr()} onClose={() => setDlg(null)} onSubmit={(pw) =>
                     run(async () => {
                       await api.resetPassword(u().id, pw);
-                      return { kind: "secret", title: "Đã đặt lại mật khẩu", username: u().username, password: pw };
+                      return { kind: "secret", title: t("u.resetDone"), username: u().username, password: pw };
                     })}
                   />}
                 </Match>
@@ -176,8 +177,8 @@ function PasswordField(props: { value: string; onInput: (v: string) => void }) {
   return (
     <div class="pw-row">
       <input value={props.value} onInput={(e) => props.onInput(e.currentTarget.value)} autocomplete="off" spellcheck={false} />
-      <button type="button" class="btn ghost" onClick={() => props.onInput(genPassword())} title="Tạo ngẫu nhiên">
-        Tạo mới
+      <button type="button" class="btn ghost" onClick={() => props.onInput(genPassword())} title={t("u.random")}>
+        {t("u.new")}
       </button>
     </div>
   );
@@ -201,7 +202,7 @@ export function gbToPos(gb: number): number {
   return i * SEG + ((gb - STOPS[i]) / (STOPS[i + 1] - STOPS[i])) * SEG;
 }
 
-const fmtGb = (g: number) => (g === 0 ? "Không giới hạn" : g >= 1000 ? `${+(g / 1000).toFixed(2)} TB` : `${g} GB`);
+const fmtGb = (g: number) => (g === 0 ? t("u.unlimited") : g >= 1000 ? `${+(g / 1000).toFixed(2)} TB` : `${g} GB`);
 
 function QuotaSlider(props: { gb: number; onChange: (gb: number) => void; usedBytes?: number }) {
   const pct = (gb: number) => `${(gbToPos(gb) / MAX_POS) * 100}%`;
@@ -229,7 +230,7 @@ function QuotaSlider(props: { gb: number; onChange: (gb: number) => void; usedBy
           onInput={(e) => props.onChange(posToGb(+e.currentTarget.value))}
         />
         <Show when={props.usedBytes}>
-          <i class="qs-used" style={{ left: pct(props.usedBytes! / GB) }} title="Đang dùng" />
+          <i class="qs-used" style={{ left: pct(props.usedBytes! / GB) }} title={t("u.usedTitle")} />
         </Show>
       </div>
       <div class="qs-ticks">
@@ -257,20 +258,20 @@ function CreateForm(props: FormProps<{ username: string; password: string; quota
       e.preventDefault();
       props.onSubmit({ username: name().trim(), password: pw(), quota_limit: Math.round(gb() * GB), is_admin: admin() });
     }}>
-      <Head title="Thêm người dùng" onClose={props.onClose} />
+      <Head title={t("u.add")} onClose={props.onClose} />
       <Show when={props.err}><p class="err">{props.err}</p></Show>
-      <label>Tên đăng nhập</label>
+      <label>{t("u.username")}</label>
       <input value={name()} onInput={(e) => setName(e.currentTarget.value)} autocomplete="off" required maxLength={64} />
-      <label>Mật khẩu mặc định</label>
+      <label>{t("u.passDefault")}</label>
       <PasswordField value={pw()} onInput={setPw} />
-      <p class="muted sm">Người dùng sẽ phải đổi mật khẩu ở lần đăng nhập đầu.</p>
-      <label>Dung lượng</label>
+      <p class="muted sm">{t("u.mustReset")}</p>
+      <label>{t("u.quotaLabel")}</label>
       <QuotaSlider gb={gb()} onChange={setGb} />
       <label class="check">
-        <input type="checkbox" checked={admin()} onChange={(e) => setAdmin(e.currentTarget.checked)} /> Quyền quản trị
+        <input type="checkbox" checked={admin()} onChange={(e) => setAdmin(e.currentTarget.checked)} /> {t("u.isAdmin")}
       </label>
       <button type="submit" class="btn primary block" disabled={props.busy || !name().trim()}>
-        {props.busy ? "Đang tạo…" : "Tạo người dùng"}
+        {props.busy ? t("u.creating") : t("u.create")}
       </button>
     </form>
   );
@@ -281,16 +282,16 @@ function QuotaForm(props: FormProps<number> & { u: UserRow }) {
   const bytes = () => Math.round(gb() * GB);
   return (
     <form onSubmit={(e) => { e.preventDefault(); props.onSubmit(bytes()); }}>
-      <Head title={`Dung lượng · ${props.u.username}`} onClose={props.onClose} />
+      <Head title={`${t("u.quota")} · ${props.u.username}`} onClose={props.onClose} />
       <Show when={props.err}><p class="err">{props.err}</p></Show>
-      <p class="muted sm">Đang dùng {fmtSize(props.u.quota_used)}.</p>
-      <label>Giới hạn</label>
+      <p class="muted sm">{t("u.using", { size: fmtSize(props.u.quota_used) })}</p>
+      <label>{t("u.limit")}</label>
       <QuotaSlider gb={gb()} onChange={setGb} usedBytes={props.u.quota_used} />
       <Show when={bytes() > 0 && bytes() < props.u.quota_used}>
-        <p class="err">Thấp hơn dung lượng đang dùng: người này sẽ không upload được cho tới khi xoá bớt file.</p>
+        <p class="err">{t("u.overQuota")}</p>
       </Show>
       <button type="submit" class="btn primary block" disabled={props.busy || !(gb() >= 0)}>
-        {props.busy ? "Đang lưu…" : "Lưu"}
+        {props.busy ? t("u.resetting") : t("c.save")}
       </button>
     </form>
   );
@@ -300,13 +301,13 @@ function ResetForm(props: FormProps<string> & { u: UserRow }) {
   const [pw, setPw] = createSignal(genPassword());
   return (
     <form onSubmit={(e) => { e.preventDefault(); props.onSubmit(pw()); }}>
-      <Head title={`Đặt lại mật khẩu · ${props.u.username}`} onClose={props.onClose} />
+      <Head title={`${t("u.resetPw")} · ${props.u.username}`} onClose={props.onClose} />
       <Show when={props.err}><p class="err">{props.err}</p></Show>
-      <label>Mật khẩu mặc định mới</label>
+      <label>{t("u.newPassDefault")}</label>
       <PasswordField value={pw()} onInput={setPw} />
-      <p class="muted sm">Người dùng sẽ phải đổi mật khẩu ở lần đăng nhập tới.</p>
+      <p class="muted sm">{t("u.nextReset")}</p>
       <button type="submit" class="btn primary block" disabled={props.busy}>
-        {props.busy ? "Đang lưu…" : "Đặt lại"}
+        {props.busy ? t("u.resetting") : t("u.reset")}
       </button>
     </form>
   );
@@ -316,15 +317,13 @@ function DeleteForm(props: FormProps<void> & { u: UserRow }) {
   const [typed, setTyped] = createSignal("");
   return (
     <form onSubmit={(e) => { e.preventDefault(); props.onSubmit(); }}>
-      <Head title="Xoá người dùng" onClose={props.onClose} />
+      <Head title={t("u.delete")} onClose={props.onClose} />
       <Show when={props.err}><p class="err">{props.err}</p></Show>
-      <p class="err">
-        Xoá <b>{props.u.username}</b> và <b>toàn bộ {fmtSize(props.u.quota_used)}</b> dữ liệu của người này. Không thể hoàn tác.
-      </p>
-      <label>Gõ lại tên đăng nhập để xác nhận</label>
+      <p class="err" innerHTML={`${t("c.delForever")} <b>${props.u.username.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c]!)}</b> ${t("u.delWarn", { size: fmtSize(props.u.quota_used) })}`} />
+      <label>{t("u.typeName")}</label>
       <input value={typed()} onInput={(e) => setTyped(e.currentTarget.value)} autocomplete="off" />
       <button type="submit" class="btn danger block" disabled={props.busy || typed() !== props.u.username}>
-        {props.busy ? "Đang xoá…" : "Xoá vĩnh viễn"}
+        {props.busy ? t("u.deleting") : t("c.delForever")}
       </button>
     </form>
   );
@@ -332,17 +331,17 @@ function DeleteForm(props: FormProps<void> & { u: UserRow }) {
 
 function SecretView(props: { s: { title: string; username: string; password: string }; onClose: () => void }) {
   const [copied, setCopied] = createSignal(false);
-  const text = () => `Tên đăng nhập: ${props.s.username}\nMật khẩu: ${props.s.password}`;
+  const text = () => `${t("u.accountName")}${props.s.username}\n${t("u.accountPass")}${props.s.password}`;
   return (
     <div>
       <Head title={props.s.title} onClose={props.onClose} />
-      <p class="muted sm">Gửi thông tin này cho người dùng. Mật khẩu chỉ hiện một lần.</p>
+      <p class="muted sm">{t("u.sendInfo")}</p>
       <pre class="secret">{text()}</pre>
       <button class="btn primary block" onClick={async () => {
         await navigator.clipboard?.writeText(text()).catch(() => {});
         setCopied(true);
       }}>
-        <Icon name={copied() ? "check" : "text"} /> {copied() ? "Đã chép" : "Chép"}
+        <Icon name={copied() ? "check" : "text"} /> {copied() ? t("c.copied") : t("c.copyBtn")}
       </button>
     </div>
   );

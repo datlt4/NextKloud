@@ -1,5 +1,6 @@
 import { For, Show, createSignal } from "solid-js";
-import { FONTS, PRESETS, previewDim, previewReadSize, setDim, setFonts, setImage, setPreset, setTheme, ui } from "./background";
+import { FONTS, PRESETS, previewDim, previewReadSize, setDim, setFonts, setImage, setLang, setPreset, setTheme, ui } from "./background";
+import { LANGS, lang, t } from "./i18n";
 import { Icon } from "./icons";
 
 export function LookPanel(props: { onError: (m: string) => void }) {
@@ -10,17 +11,27 @@ export function LookPanel(props: { onError: (m: string) => void }) {
     try {
       await f();
     } catch (e) {
-      props.onError("Không lưu được giao diện: " + String((e as Error).message));
+      props.onError(t("look.saveErr") + String((e as Error).message));
     } finally {
       setBusy(false);
     }
   };
   return (
     <div class="look">
-      <p class="muted sm">Lưu trên server — đồng bộ mọi thiết bị.</p>
-      <div class="field-label">Chế độ màu</div>
+      <p class="muted sm">{t("look.synced")}</p>
+      <div class="field-label">{t("look.lang")}</div>
       <div class="seg wide">
-        <For each={[["auto", "Theo hệ thống"], ["light", "Sáng"], ["dark", "Tối"]] as const}>
+        <For each={LANGS}>
+          {({ id, label }) => (
+            <button classList={{ on: lang() === id }} disabled={busy()} onClick={() => run(() => setLang(id))}>
+              {label}
+            </button>
+          )}
+        </For>
+      </div>
+      <div class="field-label">{t("look.theme")}</div>
+      <div class="seg wide">
+        <For each={[["auto", t("look.auto")], ["light", t("look.light")], ["dark", t("look.dark")]] as const}>
           {([id, label]) => (
             <button classList={{ on: ui().theme === id }} disabled={busy()} onClick={() => run(() => setTheme(id))}>
               {label}
@@ -28,24 +39,24 @@ export function LookPanel(props: { onError: (m: string) => void }) {
           )}
         </For>
       </div>
-      <div class="field-label">Phông chữ</div>
+      <div class="field-label">{t("look.font")}</div>
       <div class="font-grid">
         <label>
-          <span class="muted sm">Giao diện</span>
+          <span class="muted sm">{t("look.uiFont")}</span>
           <select value={ui().font} disabled={busy()} onChange={(e) => run(() => setFonts({ font: e.currentTarget.value }))}>
             <For each={FONTS}>{(f) => <option value={f.id}>{f.name}</option>}</For>
           </select>
         </label>
         <label>
-          <span class="muted sm">Khi đọc tài liệu (.md)</span>
+          <span class="muted sm">{t("look.readFont")}</span>
           <select value={ui().readFont} disabled={busy()} onChange={(e) => run(() => setFonts({ readFont: e.currentTarget.value }))}>
-            <option value="">Giống giao diện</option>
+            <option value="">{t("look.sameFont")}</option>
             <For each={FONTS}>{(f) => <option value={f.id}>{f.name}</option>}</For>
           </select>
         </label>
       </div>
       <label class="slider">
-        <span>Cỡ chữ khi đọc: {ui().readSize}px</span>
+        <span>{t("look.readSize", { size: ui().readSize })}</span>
         <input
           type="range"
           min="12"
@@ -57,17 +68,17 @@ export function LookPanel(props: { onError: (m: string) => void }) {
         />
       </label>
       <p class="font-sample">Tiếng Việt có dấu: Hệ thống 1 tư duy nhanh, trực giác — ABC xyz 0123.</p>
-      <div class="field-label">Hình nền</div>
+      <div class="field-label">{t("look.wallpaper")}</div>
       <div class="swatches">
         <button
           class="swatch upload"
           classList={{ on: ui().bg === "image" }}
           disabled={busy()}
           onClick={() => pick.click()}
-          title="Ảnh của bạn"
+          title={t("look.yourPhoto")}
         >
           <Icon name={busy() ? "cloud" : "image"} size={22} />
-          <span>{busy() ? "Đang lưu…" : "Ảnh của bạn"}</span>
+          <span>{busy() ? t("look.saving") : t("look.yourPhoto")}</span>
         </button>
         <For each={PRESETS}>
           {(p) => (
@@ -97,7 +108,7 @@ export function LookPanel(props: { onError: (m: string) => void }) {
       />
       <Show when={ui().bg === "image"}>
         <label class="slider">
-          <span>Làm tối ảnh nền</span>
+          <span>{t("look.dim")}</span>
           <input
             type="range"
             min="0"
@@ -118,7 +129,7 @@ export function LookDialog(props: { onClose: () => void; onError: (m: string) =>
     <div class="modal-bg" onClick={props.onClose}>
       <div class="modal glass" onClick={(e) => e.stopPropagation()}>
         <div class="modal-head">
-          <h3>Giao diện & nền</h3>
+          <h3>{t("look.title")}</h3>
           <button class="icon-btn" onClick={props.onClose}><Icon name="close" /></button>
         </div>
         <LookPanel onError={props.onError} />

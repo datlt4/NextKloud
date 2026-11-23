@@ -4,6 +4,7 @@ import { syncFromServer, ui, wallCss } from "./background";
 import { ResetForm } from "./forms";
 import { LookDialog } from "./look";
 import { fmtSize } from "./format";
+import { fmtDate as fdate, fmtNum, t } from "./i18n";
 import { Icon, ext, kindOf } from "./icons";
 import Settings, { type SettingsTab } from "./Settings";
 import { Avatar } from "./avatar";
@@ -52,10 +53,10 @@ import { SecretGate, SecretSettings } from "./secret";
 
 type SortKey = "name" | "size" | "modified";
 
-const fmtDate = (s: number) => (s ? new Date(s * 1000).toLocaleDateString("vi-VN") : "");
+const fmtDate = (s: number) => (s ? fdate(s) : "");
 const parentOf = (p: string) => p.split("/").slice(0, -1).join("/");
 /** Tên thư mục để hiện (gốc khu Bí mật hiện là "Bí mật"). */
-const pretty = (p: string) => (isSecret(p) ? ["Bí mật", ...p.split("/").slice(1)].join("/") : p || "Tất cả file");
+const pretty = (p: string) => (isSecret(p) ? [t("f.secret"), ...p.split("/").slice(1)].join("/") : p || t("f.allFiles"));
 const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 /** Đoạn trích kết quả tìm nội dung: tô đậm chỗ khớp (không phân biệt hoa thường). */
 const highlight = (snip: string, q: string) => {
@@ -129,7 +130,7 @@ export default function App() {
   const [upStat, setUpStat] = createSignal<{ total: number; done: number; ok: number; fails: (UpJob & { err: string })[]; running: boolean } | null>(null);
   let upCancel = false;
   const [upRate, setUpRate] = createSignal<{ speed: number; eta: number } | null>(null);
-  const fmtEta = (s: number) => (s >= 3600 ? `${Math.floor(s / 3600)} giờ ${Math.round((s % 3600) / 60)} phút` : s >= 60 ? `${Math.floor(s / 60)} phút ${Math.round(s % 60)} giây` : `${Math.max(1, Math.round(s))} giây`);
+  const fmtEta = (s: number) => (s >= 3600 ? t("f.etaHMS", { h: Math.floor(s / 3600), m: Math.round((s % 3600) / 60) }) : s >= 60 ? t("f.etaMS", { m: Math.floor(s / 60), s: Math.round(s % 60) }) : t("f.etaS", { s: Math.max(1, Math.round(s)) }));
   let upCloseTimer: number | undefined;
   let fileInput!: HTMLInputElement;
   let dirInput!: HTMLInputElement;
@@ -196,7 +197,7 @@ export default function App() {
       setStats({ dirs: r.dirs, files: r.files, bytes: r.bytes });
       setVer((v) => v + 1);
     } catch (e) {
-      if (g === gen) fail(e, "Không tải được danh sách file");
+      if (g === gen) fail(e, t("f.loadList"));
     } finally {
       if (g === gen) inflight.delete(p);
     }
@@ -216,7 +217,7 @@ export default function App() {
       if (scrollEl) scrollEl.scrollTop = 0;
       setScrollTop(0);
     } catch (e) {
-      fail(e, "Không tải được danh sách file");
+      fail(e, t("f.loadList"));
     } finally {
       setLoading(false);
     }
@@ -233,7 +234,7 @@ export default function App() {
       const st = await api.secretStatus();
       if (st.unlocked) return load(SECRET_ROOT);
     } catch (e) {
-      return fail(e, "Không mở được khu Bí mật");
+      return fail(e, t("f.secretErr"));
     }
     setOpen(null);
     setPage("secret");
@@ -354,7 +355,7 @@ export default function App() {
       }
       else enter();
     } catch {
-      setErr("Đăng nhập thất bại — kiểm tra server/username/password");
+      setErr(t("login.fail"));
     }
   };
 
@@ -423,7 +424,7 @@ export default function App() {
     try {
       await fetchSet(prefix(), pagesInView());
     } catch (e) {
-      fail(e, "Không tải được danh sách file");
+      fail(e, t("f.loadList"));
     }
   };
 
@@ -471,7 +472,7 @@ export default function App() {
         if (scrollEl) scrollEl.scrollTop = 0;
         setScrollTop(0);
       } catch (e) {
-        fail(e, "Tìm kiếm lỗi");
+        fail(e, t("search.err"));
       }
     }, 250);
   });
@@ -483,7 +484,7 @@ export default function App() {
     if (!results()) {
       if (scrollEl) scrollEl.scrollTop = 0;
       setScrollTop(0);
-      fetchSet(prefix(), [0]).catch((e) => fail(e, "Không tải được danh sách file"));
+      fetchSet(prefix(), [0]).catch((e) => fail(e, t("f.loadList")));
     }
   };
 
@@ -496,7 +497,7 @@ export default function App() {
       if (kind === "markdown") setOpen({ path, name, kind, text: await api.readText(path), mark });
       else setOpen({ path, name, kind, mark });
     } catch (e) {
-      fail(e, "Không mở được file");
+      fail(e, t("f.openFile"));
     }
   };
 
@@ -513,7 +514,7 @@ export default function App() {
       else if (kind === "other") download(path, name);
       else setOpen({ path, name, kind });
     } catch (e) {
-      fail(e, "Không mở được file");
+      fail(e, t("f.openFile"));
     }
   };
 
@@ -544,8 +545,8 @@ export default function App() {
     return out.join("/");
   };
   const openWikiLink = async (target: string, anchor?: string) => {
-    const t = target.trim();
-    if (!t) {
+    const tt = target.trim();
+    if (!tt) {
       if (anchor) scrollToAnchor(anchor);
       return;
     }
@@ -563,11 +564,11 @@ export default function App() {
       cands.push(p);
       if (!/\.[a-zA-Z0-9]{1,5}$/.test(p)) cands.push(`${p}.md`);
     };
-    if (t.startsWith("/")) pushCand(normPath(t.slice(1).split("/")));
+    if (tt.startsWith("/")) pushCand(normPath(tt.slice(1).split("/")));
     else {
-      pushCand(normPath([...(dir ? dir.split("/") : []), ...t.split("/")]));
-      const base = t.split("/").pop()!;
-      if (base !== t && !t.startsWith("./") && !t.startsWith("../")) {
+      pushCand(normPath([...(dir ? dir.split("/") : []), ...tt.split("/")]));
+      const base = tt.split("/").pop()!;
+      if (base !== tt && !tt.startsWith("./") && !tt.startsWith("../")) {
         pushCand(normPath([...(dir ? dir.split("/") : []), base]));
       }
     }
@@ -589,7 +590,7 @@ export default function App() {
     }
     // fallback: tìm theo tên file trong cả vault (giống Obsidian resolve by basename)
     try {
-      const base = t.split("/").pop()!.replace(/\.md$/i, "");
+      const base = tt.split("/").pop()!.replace(/\.md$/i, "");
       const hits = (await api.search(base)).filter(
         (e) => !e.is_dir && (e.name === `${base}.md` || e.name === base),
       );
@@ -604,7 +605,7 @@ export default function App() {
     } catch {
       /* bỏ qua, báo lỗi chung bên dưới */
     }
-    fail(new Error("404"), `Không tìm thấy "${t}" trong vault`);
+    fail(new Error("404"), t("f.wikiMiss", { name: tt }));
   };
 
   /** Cuộn tới heading sau khi mở file (link dạng [[note#section]]). */
@@ -632,7 +633,7 @@ export default function App() {
       a.download = name;
       a.click();
     } catch (e) {
-      fail(e, "Không tải được file");
+      fail(e, t("f.downloadFile"));
     }
   };
 
@@ -662,13 +663,13 @@ export default function App() {
 
   const remove = async (paths: string[]) => {
     try {
-      const items = await each("Đang xoá", paths, (p) => api.remove(p));
-      flash(items.length === 1 ? `Đã chuyển "${items[0].orig_path.split("/").pop()}" vào thùng rác` : `Đã chuyển ${items.length} mục vào thùng rác`, async () => {
-        await each("Đang khôi phục", items.map((t) => t.id), (id) => api.restore(id, isSecret(paths[0])));
-        flash("Đã khôi phục");
+      const items = await each(t("f.deleting"), paths, (p) => api.remove(p));
+      flash(items.length === 1 ? t("f.deleted1", { name: items[0].orig_path.split("/").pop() }) : t("f.deletedN", { n: items.length }), async () => {
+        await each(t("f.restoring"), items.map((x) => x.id), (id) => api.restore(id, isSecret(paths[0])));
+        flash(t("f.restored"));
       });
     } catch (e) {
-      fail({ message: errText(e) }, "Không xoá được");
+      fail({ message: errText(e) }, t("f.deleteErr"));
     }
   };
 
@@ -676,8 +677,8 @@ export default function App() {
   const moveTo = async (paths: string[], dest: string) => {
     const todo = paths.filter((p) => parentOf(p) !== dest && dest !== p && !dest.startsWith(p + "/"));
     if (!todo.length) return;
-    await each("Đang di chuyển", todo, (p) => api.move(p, joinPath(dest, p.split("/").pop()!)));
-    flash(`Đã chuyển ${todo.length} mục tới ${pretty(dest)}`);
+    await each(t("f.movingN"), todo, (p) => api.move(p, joinPath(dest, p.split("/").pop()!)));
+    flash(t("f.moved", { n: todo.length, dest: pretty(dest) }));
   };
   /** Sao chép vào `dest`; trùng tên trong cùng thư mục thì thêm " (bản sao)". */
   const copyTo = async (paths: string[], dest: string) => {
@@ -685,10 +686,10 @@ export default function App() {
       const n = p.split("/").pop()!;
       if (parentOf(p) !== dest) return n;
       const i = n.lastIndexOf(".");
-      return i > 0 ? `${n.slice(0, i)} (bản sao)${n.slice(i)}` : `${n} (bản sao)`;
+      return i > 0 ? `${n.slice(0, i)}${t("f.copySuffix")}${n.slice(i)}` : `${n}${t("f.copySuffix")}`;
     };
-    await each("Đang sao chép", paths, (p) => api.copy(p, joinPath(dest, name(p))));
-    flash(`Đã sao chép ${paths.length} mục tới ${pretty(dest)}`);
+    await each(t("f.copyingN"), paths, (p) => api.copy(p, joinPath(dest, name(p))));
+    flash(t("f.copied", { n: paths.length, dest: pretty(dest) }));
   };
 
   // --- chọn nhiều ---
@@ -711,7 +712,7 @@ export default function App() {
   };
   const selectAll = async () => {
     if (results()) return setSel(new Set(results()!.map((e) => e.path)));
-    if (total() > 5000) return setErr("Chỉ chọn tất cả được khi thư mục có tối đa 5.000 mục");
+    if (total() > 5000) return setErr(t("f.selectLimit"));
     const need = Array.from({ length: Math.ceil(total() / PAGE) }, (_, k) => k);
     await Promise.all(need.map(fetchPage));
     setSel(new Set(need.flatMap((p) => (pages.get(p) ?? []).map((e) => e.path))));
@@ -750,7 +751,7 @@ export default function App() {
       setDropOn(null);
       if (!raw) return;
       e.preventDefault();
-      moveTo(JSON.parse(raw), dest()).catch((x) => fail({ message: errText(x) }, "Không di chuyển được"));
+      moveTo(JSON.parse(raw), dest()).catch((x) => fail({ message: errText(x) }, t("f.moveErr")));
     },
   });
 
@@ -824,7 +825,7 @@ export default function App() {
         } catch (e) {
           if (String((e as Error)?.message).includes("unauthorized")) {
             upCancel = true;
-            fail(e, "Upload lỗi");
+            fail(e, t("f.uploadErr"));
           } else setUpStat((s) => s && { ...s, fails: [...s.fails, { ...j, err: errText(e) }] });
         }
         partial.delete(j);
@@ -898,7 +899,7 @@ export default function App() {
   };
   const RowMenu = (p: { f: Entry }) => (
     <div class="menu-wrap" onClick={(e) => e.stopPropagation()}>
-      <button class="icon-btn" title="Thao tác" onClick={(e) => {
+      <button class="icon-btn" title={t("f.menu")} onClick={(e) => {
         const n = p.f.path;
         if (menuFor() === n) { setMenuFor(null); setMenuUpFor(null); return; }
         setMenuUpFor(flipIfNeeded(e.currentTarget as HTMLElement) ? n : null);
@@ -914,39 +915,39 @@ export default function App() {
         <div class="menu" classList={{ up: menuUpFor() === p.f.path, left: menuLeftFor() === p.f.path }}>
           <Show when={!p.f.is_dir}>
             <button onClick={() => { closeMenu(); download(p.f.path, p.f.name); }}>
-              <Icon name="download" /> Tải xuống
+              <Icon name="download" /> {t("f.download")}
             </button>
           </Show>
           <Show when={p.f.is_dir}>
             <button onClick={() => { closeMenu(); load(p.f.path); }}>
-              <Icon name="folder" /> Mở
+              <Icon name="folder" /> {t("f.open")}
             </button>
           </Show>
           <Show when={p.f.is_dir && !isSecret(p.f.path)}>
             <button onClick={() => { closeMenu(); const a = document.createElement("a"); a.href = api.zipDownloadUrl(p.f.path); a.click(); }}>
-              <Icon name="download" /> Tải thư mục (zip)
+              <Icon name="download" /> {t("f.zip")}
             </button>
           </Show>
           <button onClick={() => { closeMenu(); setDlg({ kind: "rename", f: p.f }); }}>
-            <Icon name="edit" /> Đổi tên
+            <Icon name="edit" /> {t("f.rename")}
           </button>
           <button onClick={() => { closeMenu(); setDlg({ kind: "move", paths: [p.f.path] }); }}>
-            <Icon name="move" /> Di chuyển
+            <Icon name="move" /> {t("f.move")}
           </button>
           <button onClick={() => { closeMenu(); setDlg({ kind: "copy", paths: [p.f.path] }); }}>
-            <Icon name="copy" /> Sao chép
+            <Icon name="copy" /> {t("f.copy")}
           </button>
           <Show when={!isSecret(p.f.path)}>
             <button onClick={() => { closeMenu(); setShareFor({ path: p.f.path }); }}>
-              <Icon name="users" /> Chia sẻ
+              <Icon name="users" /> {t("f.share")}
             </button>
           </Show>
           <button onClick={() => { closeMenu(); toggleSel(p.f.path, true); lastIdx = -1; }}>
-            <Icon name="check" /> Chọn
+            <Icon name="check" /> {t("f.select")}
           </button>
           <div class="menu-sep" />
           <button class="danger" onClick={() => { closeMenu(); remove([p.f.path]); }}>
-            <Icon name="trash" /> Xoá
+            <Icon name="trash" /> {t("f.delete")}
           </button>
         </div>
       </Show>
@@ -972,8 +973,8 @@ export default function App() {
           <div class="auth">
             <div class="auth-card glass">
               <Logo />
-              <h2>Đặt mật khẩu mới</h2>
-              <p class="muted">Tài khoản mới hoặc vừa được quản trị viên đặt lại mật khẩu — hãy đặt mật khẩu của riêng bạn (tối thiểu 8 ký tự).</p>
+              <h2>{t("login.newTitle")}</h2>
+              <p class="muted">{t("login.newDesc")}</p>
               <Show when={err()}><p class="err">{err()}</p></Show>
               <ResetForm
                 current={loginPw}
@@ -1004,17 +1005,17 @@ export default function App() {
           <div class="auth">
             <form class="auth-card glass" onSubmit={(e) => { e.preventDefault(); doLogin(); }}>
               <Logo />
-              <p class="muted">Đám mây riêng của bạn</p>
+              <p class="muted">{t("login.sub")}</p>
               <Show when={err()}><p class="err">{err()}</p></Show>
               <Show when={!isSelfHostedWeb()}>
-                <label>Server</label>
+                <label>{t("login.server")}</label>
                 <input value={server()} onInput={(e) => setServer(e.currentTarget.value)} placeholder="http://mini:8011" />
               </Show>
-              <label>Tên đăng nhập</label>
+              <label>{t("login.user")}</label>
               <input value={username()} onInput={(e) => setUsername(e.currentTarget.value)} autocomplete="username" />
-              <label>Mật khẩu</label>
+              <label>{t("login.pass")}</label>
               <input type="password" value={password()} onInput={(e) => setPassword(e.currentTarget.value)} autocomplete="current-password" />
-              <button type="submit" class="btn primary block">Đăng nhập</button>
+              <button type="submit" class="btn primary block">{t("login.go")}</button>
             </form>
           </div>
         </Match>
@@ -1029,15 +1030,15 @@ export default function App() {
             </a>
             <div class="hdr-search hdr-search-inline">
               <Icon name="search" />
-              <input value={query()} onInput={(e) => { setPage("files"); setQuery(e.currentTarget.value); }} placeholder={byContent() ? "Tìm trong nội dung ghi chú (.md, .txt)" : "Tìm tất cả file"} />
-              <button class="search-mode" classList={{ on: byContent() }} onClick={() => setByContent(!byContent())} title="Đổi giữa tìm theo tên và theo nội dung">
-                {byContent() ? "Nội dung" : "Tên"}
+              <input value={query()} onInput={(e) => { setPage("files"); setQuery(e.currentTarget.value); }} placeholder={byContent() ? t("search.contentPh") : t("search.namePh")} />
+              <button class="search-mode" classList={{ on: byContent() }} onClick={() => setByContent(!byContent())} title={t("search.mode")}>
+                {byContent() ? t("search.content") : t("search.name")}
               </button>
               <Show when={query()}>
                 <button class="icon-btn sm" onClick={() => setQuery("")}><Icon name="close" size={14} /></button>
               </Show>
             </div>
-            <button class="icon-btn search-fab" onClick={() => setMSearch(true)} title="Tìm kiếm">
+            <button class="icon-btn search-fab" onClick={() => setMSearch(true)} title={t("c.search")}>
               <Icon name="search" size={20} />
             </button>
             <div class="menu-wrap">
@@ -1060,26 +1061,26 @@ export default function App() {
                     </span>
                   </button>
                   <button onClick={() => openSettings("profile")}>
-                    <Icon name="user" /> Hồ sơ & cài đặt
+                    <Icon name="user" /> {t("nav.profile")}
                   </button>
                   <button onClick={() => openSettings("security")}>
-                    <Icon name="key" /> Đổi mật khẩu
+                    <Icon name="key" /> {t("nav.password")}
                   </button>
                   <button onClick={() => { setUserMenu(false); setShowLook(true); }}>
-                    <Icon name="palette" /> Giao diện & nền
+                    <Icon name="palette" /> {t("nav.look")}
                   </button>
                   <Show when={me()?.is_admin}>
                     <div class="menu-sep" />
                     <button onClick={() => openSettings("users")}>
-                      <Icon name="users" /> Quản lý người dùng
+                      <Icon name="users" /> {t("nav.users")}
                     </button>
                     <button onClick={() => openSettings("system")}>
-                      <Icon name="server" /> Hệ thống
+                      <Icon name="server" /> {t("nav.system")}
                     </button>
                   </Show>
                   <div class="menu-sep" />
                   <button onClick={logout}>
-                    <Icon name="logout" /> Đăng xuất
+                    <Icon name="logout" /> {t("nav.logout")}
                   </button>
                 </div>
               </Show>
@@ -1090,15 +1091,15 @@ export default function App() {
               <div class="msearch glass" onClick={(e) => e.stopPropagation()}>
                 <div class="hdr-search hdr-search-modal">
                   <Icon name="search" />
-                  <input autofocus value={query()} onInput={(e) => { setPage("files"); setQuery(e.currentTarget.value); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setMSearch(false); }} placeholder={byContent() ? "Tìm trong nội dung ghi chú (.md, .txt)" : "Tìm tất cả file"} />
-                  <button class="search-mode" classList={{ on: byContent() }} onClick={() => setByContent(!byContent())} title="Đổi giữa tìm theo tên và theo nội dung">
-                    {byContent() ? "Nội dung" : "Tên"}
+                  <input autofocus value={query()} onInput={(e) => { setPage("files"); setQuery(e.currentTarget.value); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setMSearch(false); }} placeholder={byContent() ? t("search.contentPh") : t("search.namePh")} />
+                  <button class="search-mode" classList={{ on: byContent() }} onClick={() => setByContent(!byContent())} title={t("search.mode")}>
+                    {byContent() ? t("search.content") : t("search.name")}
                   </button>
                   <Show when={query()}>
                     <button class="icon-btn sm" onClick={() => setQuery("")}><Icon name="close" size={14} /></button>
                   </Show>
                 </div>
-                <button class="btn ghost" onClick={() => setMSearch(false)}>Đóng</button>
+                <button class="btn ghost" onClick={() => setMSearch(false)}>{t("c.close")}</button>
               </div>
             </div>
           </Show>
@@ -1111,33 +1112,33 @@ export default function App() {
               <div class="side-brand only-mobile"><Logo /></div>
               <nav>
                 <button class="nav" classList={{ active: page() === "files" && !prefix() && !open() }} onClick={() => load("")}>
-                  <Icon name="home" /> Tất cả file
+                  <Icon name="home" /> {t("nav.files")}
                 </button>
                 <button class="nav" classList={{ active: page() === "kanban" }} onClick={() => { setPage("kanban"); setSideOpen(false); }}>
-                  <Icon name="kanban" /> Deck
+                  <Icon name="kanban" /> {t("nav.deck")}
                 </button>
                 <button class="nav" classList={{ active: page() === "tasks" }} onClick={() => { setPage("tasks"); setSideOpen(false); }}>
-                  <Icon name="check" /> Theo dõi
+                  <Icon name="check" /> {t("nav.track")}
                 </button>
                 <button class="nav" classList={{ active: page() === "shared" }} onClick={() => { setPage("shared"); setSideOpen(false); }}>
-                  <Icon name="users" /> Được chia sẻ
+                  <Icon name="users" /> {t("nav.shared")}
                 </button>
                 <button class="nav" classList={{ active: page() === "notes" }} onClick={() => { setPage("notes"); setSideOpen(false); }}>
-                  <Icon name="note" /> Ghi chú
+                  <Icon name="note" /> {t("nav.notes")}
                 </button>
                 <button class="nav" classList={{ active: page() === "trash" }} onClick={() => { setPage("trash"); setSideOpen(false); }}>
-                  <Icon name="trash" /> Thùng rác
+                  <Icon name="trash" /> {t("nav.trash")}
                 </button>
                 <button class="nav" classList={{ active: page() === "secret" || inSecret() }} onClick={openSecret}>
-                  <Icon name="lock" /> Bí mật
+                  <Icon name="lock" /> {t("nav.secret")}
                 </button>
                 <Show when={me()?.is_admin}>
                   <button class="nav" classList={{ active: page() === "settings" && (setTab() === "users" || setTab() === "system") }} onClick={() => openSettings("users")}>
-                    <Icon name="users" /> Quản trị
+                    <Icon name="users" /> {t("nav.admin")}
                   </button>
                 </Show>
                 <button class="nav" classList={{ active: page() === "settings" && !["users", "system"].includes(setTab()) }} onClick={() => openSettings("profile")}>
-                  <Icon name="settings" /> Cài đặt
+                  <Icon name="settings" /> {t("nav.settings")}
                 </button>
               </nav>
               <div class="side-foot">
@@ -1220,24 +1221,24 @@ export default function App() {
                     <button class="icon-btn sm" onClick={() => setErr("")}><Icon name="close" size={14} /></button>
                   </div>
                 </Show>
-                <div class="toolbar"><button class="btn ghost sm" onClick={() => load(SECRET_ROOT)}><Icon name="back" /> Về Bí mật</button></div>
+                <div class="toolbar"><button class="btn ghost sm" onClick={() => load(SECRET_ROOT)}><Icon name="back" /> {t("c.backToVault")}</button></div>
                 <TrashPage secret onError={setErr} onChanged={refreshMe} />
               </Show>
               <Show when={page() === "files"}>
               <Show when={sel().size}>
                 <div class="toolbar selbar">
-                  <button class="icon-btn" title="Bỏ chọn (Esc)" onClick={() => setSel(new Set<string>())}><Icon name="close" /></button>
-                  <b>Đã chọn {sel().size.toLocaleString("vi-VN")}</b>
-                  <button class="btn ghost sm" onClick={selectAll}>Chọn tất cả</button>
+                  <button class="icon-btn" title={t("f.deselect")} onClick={() => setSel(new Set<string>())}><Icon name="close" /></button>
+                  <b>{t("f.selected", { n: fmtNum(sel().size) })}</b>
+                  <button class="btn ghost sm" onClick={selectAll}>{t("f.selectAll")}</button>
                   <span class="grow" />
                   <button class="btn ghost sm" onClick={() => setDlg({ kind: "move", paths: [...sel()] })}>
-                    <Icon name="move" /> <span class="hide-xs">Di chuyển</span>
+                    <Icon name="move" /> <span class="hide-xs">{t("f.move")}</span>
                   </button>
                   <button class="btn ghost sm" onClick={() => setDlg({ kind: "copy", paths: [...sel()] })}>
-                    <Icon name="copy" /> <span class="hide-xs">Sao chép</span>
+                    <Icon name="copy" /> <span class="hide-xs">{t("f.copy")}</span>
                   </button>
                   <button class="btn danger sm" onClick={() => remove([...sel()])}>
-                    <Icon name="trash" /> <span class="hide-xs">Xoá</span>
+                    <Icon name="trash" /> <span class="hide-xs">{t("f.delete")}</span>
                   </button>
                 </div>
               </Show>
@@ -1245,19 +1246,19 @@ export default function App() {
                 {/* đang mở file: thanh trên chỉ còn nút Quay lại (luôn thấy, không bị cuộn mất) */}
                 <Show when={!open()} fallback={
                   <button class="btn ghost" onClick={() => setOpen(null)}>
-                    <Icon name="back" /> Quay lại
+                    <Icon name="back" /> {t("c.back")}
                   </button>
                 }>
                   <button class="btn primary" onClick={() => fileInput.click()} disabled={!!upload()}>
-                    <Icon name="upload" /> <span class="hide-xs">Tải lên</span>
+                    <Icon name="upload" /> <span class="hide-xs">{t("c.upload")}</span>
                   </button>
                   <Show when={!results()}>
-                    <button class="btn ghost" title="Thư mục mới" onClick={() => setDlg({ kind: "mkdir" })}>
-                      <Icon name="folderPlus" /> <span class="hide-xs">Thư mục mới</span>
+                    <button class="btn ghost" title={t("f.newFolder")} onClick={() => setDlg({ kind: "mkdir" })}>
+                      <Icon name="folderPlus" /> <span class="hide-xs">{t("f.newFolder")}</span>
                     </button>
                   </Show>
-                  <button class="btn ghost" title="Tải lên cả thư mục (giữ thư mục con)" onClick={() => dirInput.click()} disabled={!!upload()}>
-                    <Icon name="folder" /> <span class="hide-xs">Tải thư mục</span>
+                  <button class="btn ghost" title={t("f.uploadDir")} onClick={() => dirInput.click()} disabled={!!upload()}>
+                    <Icon name="folder" /> <span class="hide-xs">{t("f.uploadDir")}</span>
                   </button>
                 </Show>
                 <input ref={fileInput} type="file" multiple hidden onChange={(e) => doUpload(e.currentTarget.files)} />
@@ -1276,7 +1277,7 @@ export default function App() {
                           onClick={() => load(crumbs().slice(0, i() + 1).join("/"))}
                           {...dropProps(() => crumbs().slice(0, i() + 1).join("/"))}
                         >
-                          {c === SECRET_ROOT ? (<><Icon name="lock" size={14} /> Bí mật</>) : c}
+                          {c === SECRET_ROOT ? (<><Icon name="lock" size={14} /> {t("f.secret")}</>) : c}
                         </button>
                       </>
                     )}
@@ -1288,18 +1289,18 @@ export default function App() {
                 </nav>
                 <Show when={inSecret()}>
                   <div class="sec-tools">
-                    <span class="sec-left" title="Tự khoá khi không dùng">{Math.floor(vaultLeft() / 60)}:{String(vaultLeft() % 60).padStart(2, "0")}</span>
-                    <button class="icon-btn" title="Thùng rác Bí mật" onClick={() => { setOpen(null); setPage("secret-trash"); }}><Icon name="trash" /></button>
-                    <button class="icon-btn" title="Cài đặt Bí mật" onClick={() => setSecretSet(true)}><Icon name="settings" /></button>
-                    <button class="btn ghost sm" title="Khoá ngay" onClick={lockSecret}><Icon name="lock" /> <span class="hide-xs">Khoá</span></button>
+                    <span class="sec-left" title={t("f.lockIdle")}>{Math.floor(vaultLeft() / 60)}:{String(vaultLeft() % 60).padStart(2, "0")}</span>
+                    <button class="icon-btn" title={t("f.secretTrash")} onClick={() => { setOpen(null); setPage("secret-trash"); }}><Icon name="trash" /></button>
+                    <button class="icon-btn" title={t("f.secretSettings")} onClick={() => setSecretSet(true)}><Icon name="settings" /></button>
+                    <button class="btn ghost sm" title={t("f.lockNow")} onClick={lockSecret}><Icon name="lock" /> <span class="hide-xs">{t("f.lock")}</span></button>
                   </div>
                 </Show>
                 <Show when={!open()}>
                   <div class="seg">
-                    <button classList={{ on: view() === "list" }} title="Danh sách" onClick={() => { setView("list"); localStorage.setItem("nk-view", "list"); }}>
+                    <button classList={{ on: view() === "list" }} title={t("f.list")} onClick={() => { setView("list"); localStorage.setItem("nk-view", "list"); }}>
                       <Icon name="list" />
                     </button>
-                    <button classList={{ on: view() === "grid" }} title="Lưới" onClick={() => { setView("grid"); localStorage.setItem("nk-view", "grid"); }}>
+                    <button classList={{ on: view() === "grid" }} title={t("f.grid")} onClick={() => { setView("grid"); localStorage.setItem("nk-view", "grid"); }}>
                       <Icon name="grid" />
                     </button>
                   </div>
@@ -1317,7 +1318,7 @@ export default function App() {
                 when={!open()}
                 fallback={
                   <div class="viewer">
-                    <Suspense fallback={<p class="muted">Đang mở…</p>}>
+                    <Suspense fallback={<p class="muted">{t("c.opening")}</p>}>
                       <Switch>
                         <Match when={open()!.kind === "markdown"}>
                           <MarkdownView path={open()!.path} text={open()!.text ?? ""} anchor={open()!.anchor ?? null} onOpenLink={openWikiLink} onError={setErr} mark={open()!.mark} onSaved={() => openAt(open()!.path, "")} />
@@ -1370,13 +1371,13 @@ export default function App() {
                   <Show when={view() === "list"}>
                     <div class="row head">
                       <span class="c-name sortable" onClick={() => toggleSort("name")}>
-                        Tên {sort().key === "name" ? (sort().asc ? "↑" : "↓") : ""}
+                        {t("c.name")} {sort().key === "name" ? (sort().asc ? "↑" : "↓") : ""}
                       </span>
                       <span class="c-size sortable" onClick={() => toggleSort("size")}>
-                        Dung lượng {sort().key === "size" ? (sort().asc ? "↑" : "↓") : ""}
+                        {t("set.quota")} {sort().key === "size" ? (sort().asc ? "↑" : "↓") : ""}
                       </span>
                       <span class="c-date sortable" onClick={() => toggleSort("modified")}>
-                        Sửa đổi {sort().key === "modified" ? (sort().asc ? "↑" : "↓") : ""}
+                        {t("f.modified")}{sort().key === "modified" ? (sort().asc ? " ↑" : " ↓") : ""}
                       </span>
                       <span class="c-act" />
                     </div>
@@ -1468,7 +1469,7 @@ export default function App() {
                                           <span class="fname" title={f().path}>{f().name}</span>
                                           <RowMenu f={f()} />
                                         </div>
-                                        <span class="tile-sub">{f().is_dir ? "Thư mục" : `${fmtSize(f().size)} · ${fmtDate(f().modified)}`}</span>
+                                        <span class="tile-sub">{f().is_dir ? t("f.dirLabel") : `${fmtSize(f().size)} · ${fmtDate(f().modified)}`}</span>
                                       </div>
                                     );
                                   }}
@@ -1484,10 +1485,10 @@ export default function App() {
                   <Show when={!loading() && total() === 0}>
                     <div class="empty">
                       <Icon name={results() ? "search" : "folder"} size={48} />
-                      <p>{results() ? "Không có kết quả" : "Thư mục trống"}</p>
+                      <p>{results() ? t("f.noResults") : t("f.emptyFolder")}</p>
                       <Show when={!results()}>
                         <button class="btn primary" onClick={() => fileInput.click()}>
-                          <Icon name="upload" /> Tải file lên
+                          <Icon name="upload" /> {t("f.uploadFile")}
                         </button>
                       </Show>
                     </div>
@@ -1496,10 +1497,10 @@ export default function App() {
                 <div class="foot">
                   <Show
                     when={!results()}
-                    fallback={<span>{results()!.length >= 300 ? "300+ kết quả (gõ cụ thể hơn)" : `${results()!.length} kết quả`}</span>}
+                    fallback={<span>{results()!.length >= 300 ? t("f.tooMany") : t("f.results", { n: results()!.length })}</span>}
                   >
                     <span>
-                      {stats().dirs.toLocaleString("vi-VN")} thư mục · {stats().files.toLocaleString("vi-VN")} file
+                      {t("f.folders", { n: fmtNum(stats().dirs) })} · {t("f.filesN", { n: fmtNum(stats().files) })}
                     </span>
                     <span>{fmtSize(stats().bytes)}</span>
                   </Show>
@@ -1514,18 +1515,18 @@ export default function App() {
               <div class="toast glass up-panel">
                 <div class="up-head">
                   <div>
-                    <b>{u().running ? `Còn lại ${u().total - u().done}` : upCancel ? "Đã dừng" : "Xong"} · Đã xử lý {u().done}/{u().total}</b>
+                    <b>{u().running ? t("f.upRunning", { left: fmtNum(u().total - u().done), done: fmtNum(u().done), total: fmtNum(u().total) }) : upCancel ? t("f.upStopped") : t("f.upFinished", { done: fmtNum(u().done), total: fmtNum(u().total) })}</b>
                     <div class="sm">
-                      <span class="up-ok">Đã tải lên {u().ok}</span> · <span classList={{ "up-bad": u().fails.length > 0 }}>Lỗi {u().fails.length}</span>
+                      <span class="up-ok">{t("f.upOk", { ok: fmtNum(u().ok) })}</span> · <span classList={{ "up-bad": u().fails.length > 0 }}>{t("f.upErr", { n: fmtNum(u().fails.length) })}</span>
                       <Show when={u().running && upRate()}>
-                        {(r) => <> · {fmtSize(r().speed)}/s · còn ~{fmtEta(r().eta)}</>}
+                        {(r) => <> · {fmtSize(r().speed)}/s · ~{fmtEta(r().eta)}</>}
                       </Show>
                     </div>
                   </div>
                   <Show when={u().running} fallback={
-                    <button class="icon-btn sm" title="Đóng" onClick={() => setUpStat(null)}><Icon name="close" size={15} /></button>
+                    <button class="icon-btn sm" title={t("f.upClose")} onClick={() => setUpStat(null)}><Icon name="close" size={15} /></button>
                   }>
-                    <button class="btn ghost sm" title="Dừng sau file đang tải" onClick={() => (upCancel = true)}>Dừng</button>
+                    <button class="btn ghost sm" title={t("f.upStop")} onClick={() => (upCancel = true)}>{t("f.upStopBtn")}</button>
                   </Show>
                 </div>
                 <Show when={upload()}>
@@ -1543,13 +1544,13 @@ export default function App() {
                         <div class="up-fail" title={f.err}>
                           <span class="fname">{f.rel}</span>
                           <span class="muted xs">{f.err}</span>
-                          <button class="icon-btn sm" title="Bỏ qua" onClick={() => setUpStat((s) => s && { ...s, fails: s.fails.filter((x) => x !== f) })}><Icon name="close" size={13} /></button>
+                          <button class="icon-btn sm" title={t("c.skip")} onClick={() => setUpStat((s) => s && { ...s, fails: s.fails.filter((x) => x !== f) })}><Icon name="close" size={13} /></button>
                         </div>
                       )}
                     </For>
                   </div>
                   <Show when={!u().running}>
-                    <button class="btn primary sm block" onClick={() => runUploads(u().fails.map(({ err: _e, ...j }) => j))}>Thử lại {u().fails.length} file lỗi</button>
+                    <button class="btn primary sm block" onClick={() => runUploads(u().fails.map(({ err: _e, ...j }) => j))}>{t("f.upRetryFails", { n: u().fails.length })}</button>
                   </Show>
                 </Show>
               </div>
@@ -1563,8 +1564,8 @@ export default function App() {
                   <Icon name="check" />
                   <span class="fname">{notice()!.text}</span>
                   <Show when={notice()!.undo}>
-                    <button class="btn ghost sm" onClick={() => { const u = notice()!.undo!; setNotice(null); u().catch((e) => fail({ message: errText(e) }, "Không hoàn tác được")); }}>
-                      Hoàn tác
+                    <button class="btn ghost sm" onClick={() => { const u = notice()!.undo!; setNotice(null); u().catch((e) => fail({ message: errText(e) }, t("f.undoFail"))); }}>
+                      {t("f.trashUndo")}
                     </button>
                   </Show>
                   <button class="icon-btn sm" onClick={() => setNotice(null)}><Icon name="close" size={14} /></button>
@@ -1579,7 +1580,7 @@ export default function App() {
             {(d) => (
               <Switch>
                 <Match when={d().kind === "mkdir"}>
-                  <NameDialog title="Thư mục mới" label={`Tạo trong ${pretty(prefix())}`} ok="Tạo" onClose={() => setDlg(null)} onSubmit={async (n) => {
+                  <NameDialog title={t("f.mkdirTitle")} label={t("f.mkdirIn", { dir: pretty(prefix()) })} ok={t("f.create")} onClose={() => setDlg(null)} onSubmit={async (n) => {
                     await api.mkdir(join(n));
                     setDlg(null);
                     await reload();
@@ -1587,7 +1588,7 @@ export default function App() {
                 </Match>
                 <Match when={d().kind === "rename" && (d() as { f: Entry }).f}>
                   {(f) => (
-                    <NameDialog title={f().is_dir ? "Đổi tên thư mục" : "Đổi tên file"} label="Tên mới" initial={f().name} ok="Đổi tên" onClose={() => setDlg(null)} onSubmit={async (n) => {
+                    <NameDialog title={f().is_dir ? t("f.renameDir") : t("f.renameFile")} label={t("f.newName")} initial={f().name} ok={t("f.rename")} onClose={() => setDlg(null)} onSubmit={async (n) => {
                       await api.move(f().path, joinPath(parentOf(f().path), n));
                       setDlg(null);
                       await reload();
