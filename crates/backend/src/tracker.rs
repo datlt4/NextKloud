@@ -70,10 +70,11 @@ pub async fn tasks(State(s): State<AppState>, user: AuthUser, Query(q): Query<Ta
     );
     let rows: Vec<TaskItem> = if q.view == "all" || q.view == "done" {
         sqlx::query_as(&sql).bind(user.id).fetch_all(&s.db).await?
-    } else if q.view == "overdue" {
-        sqlx::query_as(&sql).bind(user.id).bind(from).fetch_all(&s.db).await?
-    } else {
+    } else if q.view == "today" || q.view == "week" {
         sqlx::query_as(&sql).bind(user.id).bind(from).bind(to).fetch_all(&s.db).await?
+    } else {
+        // overdue + view lạ (rớt về overdue, khớp cond chỉ dùng $2)
+        sqlx::query_as(&sql).bind(user.id).bind(from).fetch_all(&s.db).await?
     };
     Ok(Json(rows))
 }
