@@ -252,6 +252,13 @@ export default function App() {
     await lockUi();
   };
   onMount(() => {
+    // Thả trượt ra ngoài vùng file (sidebar, header...): chặn trình duyệt mở luôn file đó.
+    // Chỉ chặn kéo từ ngoài OS vào (có "Files"), kéo nội bộ (di chuyển file) và gõ text vẫn bình thường.
+    const guard = (e: DragEvent) => {
+      if (externalDrag(e)) e.preventDefault();
+    };
+    window.addEventListener("dragover", guard);
+    window.addEventListener("drop", guard);
     const onLocked = () => {
       if (inSecret() || isSecret(open()?.path ?? "")) lockUi();
     };
@@ -272,6 +279,8 @@ export default function App() {
       }
     }, 1000);
     onCleanup(() => {
+      window.removeEventListener("dragover", guard);
+      window.removeEventListener("drop", guard);
       window.removeEventListener("nk-vault-locked", onLocked);
       clearInterval(tick);
     });
@@ -847,30 +856,36 @@ export default function App() {
     refreshMe();
   };
 
-  /** Kéo file/thư mục từ máy vào: duyệt cây thư mục (webkitGetAsEntry), giữ đường dẫn con. */
+  /** Kéo file/thư mục từ máy vào: duyệt cây thư mục (webkitGetAsEntry), giữ đường dẫn con.
+   *  1 entry lỗi (file mất, symlink hỏng...) không được giết cả lô: bỏ qua, báo số lượng. */
   const readDrop = async (dt: DataTransfer) => {
     const files: { file: File; rel: string }[] = [];
     const dirs: string[] = [];
+    let skipped = 0;
     const walk = async (e: any, rel: string): Promise<void> => {
-      if (e.isFile) {
-        files.push({ file: await new Promise<File>((ok, no) => e.file(ok, no)), rel });
-      } else if (e.isDirectory) {
-        const r = e.createReader();
-        let n = 0;
-        // readEntries trả từng đợt (~100 mục), đọc tới khi rỗng
-        for (;;) {
-          const batch: any[] = await new Promise((ok, no) => r.readEntries(ok, no));
-          if (!batch.length) break;
-          n += batch.length;
-          for (const c of batch) await walk(c, `${rel}/${c.name}`);
+      try {
+        if (e.isFile) {
+          files.push({ file: await new Promise<File>((ok, no) => e.file(ok, no)), rel });
+        } else if (e.isDirectory) {
+          const r = e.createReader();
+          let n = 0;
+          // readEntries trả từng đợt (~100 mục), đọc tới khi rỗng
+          for (;;) {
+            const batch: any[] = await new Promise((ok, no) => r.readEntries(ok, no));
+            if (!batch.length) break;
+            n += batch.length;
+            for (const c of batch) await walk(c, `${rel}/${c.name}`);
+          }
+          if (!n) dirs.push(rel);
         }
-        if (!n) dirs.push(rel);
+      } catch {
+        skipped++;
       }
     };
     const entries = Array.from(dt.items).map((it) => it.webkitGetAsEntry?.()).filter(Boolean);
-    if (!entries.length) return { files: Array.from(dt.files).map((f) => ({ file: f, rel: f.name })), dirs };
+    if (!entries.length) return { files: Array.from(dt.files).map((f) => ({ file: f, rel: f.name })), dirs, skipped };
     for (const e of entries) await walk(e, e!.name);
-    return { files, dirs };
+    return { files, dirs, skipped };
   };
   const externalDrag = (e: DragEvent) => !!e.dataTransfer?.types.includes("Files") && !e.dataTransfer.types.includes(DND);
   const panelDrop = {
@@ -886,8 +901,14 @@ export default function App() {
       setDropping(false);
       if (page() !== "files" || !externalDrag(e)) return;
       e.preventDefault();
-      const { files, dirs } = await readDrop(e.dataTransfer!);
-      doUpload(files, dirs);
+      try {
+        const { files, dirs, skipped } = await readDrop(e.dataTransfer!);
+        if (!files.length && !dirs.length) return setErr(t("f.dropEmpty"));
+        if (skipped) flash(t("f.dropSkip", { n: skipped }));
+        doUpload(files, dirs);
+      } catch (err) {
+        fail(err, t("f.uploadErr"));
+      }
     },
   };
 
