@@ -21,6 +21,14 @@
   --warn-bg: #fff4e5;
   --warn-line: #f0b46a;
   --code-bg: #f7f1e8;
+  --hl-com: #6e7781;
+  --hl-kw: #cf222e;
+  --hl-str: #0a3069;
+  --hl-num: #0550ae;
+  --hl-fn: #8250df;
+  --hl-type: #953800;
+  --hl-var: #0550ae;
+  --hl-meta: #6e7781;
   --shadow: 0 1px 2px rgba(60, 40, 20, 0.06), 0 8px 24px rgba(60, 40, 20, 0.08);
   --shadow-lg: 0 16px 48px rgba(60, 40, 20, 0.18);
   --radius: 14px;
@@ -49,6 +57,14 @@
   --warn-bg: #2e2416;
   --warn-line: #a86a2a;
   --code-bg: #1a1918;
+  --hl-com: #8b949e;
+  --hl-kw: #ff7b72;
+  --hl-str: #a5d6ff;
+  --hl-num: #79c0ff;
+  --hl-fn: #d2a8ff;
+  --hl-type: #ffa657;
+  --hl-var: #79c0ff;
+  --hl-meta: #8b949e;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.25);
   --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.5);
   color-scheme: dark;
@@ -75,6 +91,14 @@
     --warn-bg: #2e2416;
     --warn-line: #a86a2a;
     --code-bg: #1a1918;
+  --hl-com: #8b949e;
+  --hl-kw: #ff7b72;
+  --hl-str: #a5d6ff;
+  --hl-num: #79c0ff;
+  --hl-fn: #d2a8ff;
+  --hl-type: #ffa657;
+  --hl-var: #79c0ff;
+  --hl-meta: #8b949e;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.25);
     --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.5);
     color-scheme: dark;
@@ -390,6 +414,20 @@ input { font: inherit; color: var(--text); }
 .md-content li { margin: 2px 0; }
 .md-content li > p { margin: 2px 0; }
 .md-content ul ul, .md-content ol ol, .md-content ul ol, .md-content ol ul { margin: 2px 0; }
+/* highlight code (highlight.js) theo theme sáng/tối */
+.hljs-comment, .hljs-quote { color: var(--hl-com); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-doctag, .hljs-template-tag { color: var(--hl-kw); }
+.hljs-string, .hljs-regexp { color: var(--hl-str); }
+.hljs-number, .hljs-literal { color: var(--hl-num); }
+.hljs-title, .hljs-title.function_, .hljs-title.class_ { color: var(--hl-fn); }
+.hljs-built_in, .hljs-type, .hljs-class .hljs-title { color: var(--hl-type); }
+.hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable, .hljs-name { color: var(--hl-var); }
+.hljs-meta { color: var(--hl-meta); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: bold; }
+/* snippet backlinks: ảnh/thumb gọn, thẻ div bấm được như button cũ */
+.md-linkref span img { max-height: 80px; max-width: 100%; border-radius: 6px; }
+.md-linkref:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .md-block[data-level="1"] .voice-btn { font-size: 2em; }
 .md-block[data-level="2"] .voice-btn { font-size: 1.5em; }
 .md-block[data-level="3"] .voice-btn { font-size: 1.17em; }

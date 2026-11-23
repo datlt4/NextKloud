@@ -1,4 +1,5 @@
 import { marked } from "marked";
+import hljs from "highlight.js/lib/common";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import { api, hashText, speak, type Backlink, type VaultOutline } from "../api";
 import { fmtNum, t } from "../i18n";
@@ -91,9 +92,24 @@ export function blocks(md: string): Block[] {
   for (const t of marked.lexer(md)) {
     if (t.type === "space") continue;
     switch (t.type) {
-      case "code":
-        out.push({ kind: "skip", html: marked.parse(t.raw) as string, text: "" });
+      case "code": {
+        // marked chỉ thoát HTML, không tô màu -> highlight.js local (~40 ngôn ngữ, như Obsidian)
+        const lang = (t.lang ?? "").toLowerCase();
+        const src = t.text ?? "";
+        let body = escapeHtml(src);
+        let cls = "";
+        try {
+          if (lang && hljs.getLanguage(lang)) {
+            body = hljs.highlight(src, { language: lang }).value;
+            cls = ` language-${lang}`;
+          } else {
+            const auto = hljs.highlightAuto(src);
+            if (auto.relevance > 0) body = auto.value;
+          }
+        } catch { /* giữ text thuần */ }
+        out.push({ kind: "skip", html: `<pre><code class="hljs${cls}">${body}</code></pre>`, text: "" });
         break;
+      }
       case "heading":
       case "paragraph":
         if (/^\s*\$[^$]+\$\s*$/.test(t.raw)) {
@@ -756,12 +772,21 @@ export default function MarkdownView(props: {
         <section class="md-links">
           <b>{t("vw.mdLinks", { n: fmtNum((links() ?? []).length) })}</b>
           <For each={links() ?? []}>
-            {(l) => (
-              <button class="md-linkref" onClick={() => props.onOpenLink?.("/" + l.path)} title={l.path}>
-                <b>{l.name}</b>
-                <span class="muted xs">{l.snippet.replace(/\s+/g, " ").slice(0, 140)}</span>
-              </button>
-            )}
+            {(l) => {
+              // snippet backend trả raw markdown ([[...]], #tag...) -> render như body; link neo [[#...]] (data-wiki rỗng)
+              // phải mở đúng file đang nhắc tới, không nhảy trong bài hiện tại; tắt auto-embed trong snippet
+              const sHtml = linkifyWiki(marked.parseInline(l.snippet.replace(/\s+/g, " ").slice(0, 140)) as string)
+                .split('data-wiki=""').join(`data-wiki="${encodeURIComponent("/" + l.path)}"`)
+                .split("wiki-link wiki-embed").join("wiki-link");
+              return (
+                <div class="md-linkref" role="button" tabindex="0" title={l.path}
+                  onClick={(e) => { if ((e.target as HTMLElement).closest("a")) return; props.onOpenLink?.("/" + l.path); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); props.onOpenLink?.("/" + l.path); } }}>
+                  <b>{l.name}</b>
+                  <span class="muted xs" innerHTML={sHtml} />
+                </div>
+              );
+            }}
           </For>
         </section>
       </Show>
