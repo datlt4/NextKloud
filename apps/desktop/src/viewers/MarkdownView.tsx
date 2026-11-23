@@ -23,6 +23,9 @@ function escapeHtml(s: string) {
 const escAttr = (s: string) => escapeHtml(s).replace(/"/g, "&quot;");
 
 // Công thức $...$ / $$...$$: giữ nguyên TeX trong data-tex (marked không được đụng vào _ và *), KaTeX render sau (lazy).
+// Giống Obsidian (tắt "strict line breaks"): xuống dòng đơn trong đoạn cũng thành hàng mới,
+// không cần 2 space cuối dòng hay dòng trống. Khớp cách vault của user hiển thị bên Obsidian.
+marked.use({ breaks: true });
 marked.use({
   extensions: [
     {
@@ -446,7 +449,7 @@ export default function MarkdownView(props: {
     return o ? buildImgIndex(o) : null;
   });
   const reader = createReader(() => props.path, (m) => (props.onError ?? console.error)(m));
-  const plain = createMemo(() => list().map((b) => b.html.replace(/<[^>]+>/g, "").replace(/\s+/g, " ")));
+  const plain = createMemo(() => list().map((b) => b.html.replace(/<br\s*\/?>/gi, " ").replace(/<[^>]+>/g, "").replace(/\s+/g, " ")));
   // Annotation -> block: ưu tiên đoạn chứa đúng câu đã trích (bài có thể đã sửa), không thì theo số thứ tự.
   const blockOf = (anchor: string, quote: string) => {
     const i = +anchor.slice(1) || 0;
