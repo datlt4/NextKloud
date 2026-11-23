@@ -1,12 +1,13 @@
 name: release
 
+# TẠM DỪNG (24/11, yêu cầu người dùng): release tự động đã tắt để khỏi tốn thời gian build installer.
+# Muốn mở lại: trả `on:` về push main + workflow_dispatch như cũ.
+# Hiện tại push main chỉ chạy build.yml (web + backend + Docker); web mới theo image `latest` trên mini.
 # Merging into main publishes apps/desktop/package.json's version, once: branch release/vX.Y.Z,
 # tag vX.Y.Z, desktop installers for every common OS/CPU (Linux, macOS, Windows).
 # No mobile builds (Android/iOS dropped 23/11).
 # Bump the version (scripts/set-version.sh) before merging, or nothing is released.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
