@@ -399,7 +399,7 @@ export default function MarkdownView(props: {
   };
   const saveEdit = async () => {
     if (draft() === props.text) return setEditing(false);
-    if (mirrored() && !confirm(t("vw.mdMirrorAsk", { dir: mirrored() }))) return;
+    if (mirrored() && !confirm(t("vw.mdMirrorAsk", { dir: mirrored() ?? "" }))) return;
     setSaving(true);
     try {
       await api.saveText(props.path, draft());
@@ -703,7 +703,7 @@ export default function MarkdownView(props: {
         </Show>
       </div>
       <Show when={editing() && mirrored()}>
-        <p class="stale">{t("vw.mdMirrorWarn", { dir: mirrored() })}</p>
+        <p class="stale">{t("vw.mdMirrorWarn", { dir: mirrored() ?? "" })}</p>
       </Show>
       <Show when={stale()}>
         <p class="stale">{t("vw.mdStale")}</p>

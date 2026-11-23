@@ -203,8 +203,8 @@ export function TrashPage(props: { onError: (m: string) => void; onChanged: () =
       refetch();
     }
   };
-  const purge = (t: TrashItem) => {
-    if (confirm(t("trash.purgeOne", { name: baseName(t.orig_path) }))) run(t.id, () => api.purge(t.id, props.secret));
+  const purge = (it: TrashItem) => {
+    if (confirm(t("trash.purgeOne", { name: baseName(it.orig_path) }))) run(it.id, () => api.purge(it.id, props.secret));
   };
   return (
     <div class="trash">
@@ -223,23 +223,23 @@ export function TrashPage(props: { onError: (m: string) => void; onChanged: () =
             <div class="empty"><Icon name="trash" size={48} /><p>{t("trash.empty")}</p></div>
           </Show>
         }>
-          {(t) => (
+          {(it) => (
             <div class="row trow">
               <span class="c-name">
-                <span class="fi"><Icon name={t.is_dir ? "folder" : "file"} size={20} /></span>
+                <span class="fi"><Icon name={it.is_dir ? "folder" : "file"} size={20} /></span>
                 <span class="fcol">
-                  <span class="fname" title={shown(t.orig_path)}>{baseName(t.orig_path)}</span>
+                  <span class="fname" title={shown(it.orig_path)}>{baseName(it.orig_path)}</span>
                   <span class="fpath">
-                    {shown(t.orig_path).includes("/") ? shown(t.orig_path).split("/").slice(0, -1).join("/") + " · " : ""}
-                    {t.is_dir ? t("f.filesN", { n: fmtNum(t.files) }) + " · " : ""}{fmtSize(t.size)} · {fmtDateTime(t.deleted_at)}
+                    {shown(it.orig_path).includes("/") ? shown(it.orig_path).split("/").slice(0, -1).join("/") + " · " : ""}
+                    {it.is_dir ? t("f.filesN", { n: fmtNum(it.files) }) + " · " : ""}{fmtSize(it.size)} · {fmtDateTime(it.deleted_at)}
                   </span>
                 </span>
               </span>
               <span class="tact">
-                <button class="btn sm ghost" disabled={!!busy()} onClick={() => run(t.id, () => api.restore(t.id, props.secret))}>
+                <button class="btn sm ghost" disabled={!!busy()} onClick={() => run(it.id, () => api.restore(it.id, props.secret))}>
                   <Icon name="back" /> <span class="hide-xs">{t("trash.restore")}</span>
                 </button>
-                <button class="btn sm danger" disabled={!!busy()} title={t("trash.delTitle")} onClick={() => purge(t)}>
+                <button class="btn sm danger" disabled={!!busy()} title={t("trash.delTitle")} onClick={() => purge(it)}>
                   <Icon name="trash" />
                 </button>
               </span>

@@ -429,7 +429,7 @@ function CardItem(props: { card: KCard; parent?: KCard; cancelled?: boolean; lab
           <For each={k().labels}>{(l) => <span class="kb-label" style={{ background: props.labelColor(l) }} title={l}>{l}</span>}</For>
         </div>
       </Show>
-      <Show when={props.parent?.title ?? k().parent_title}>{(t) => <div class="kb-parent" title={t("kb.parentTip")}><Icon name="sub" size={12} /> {t()}</div>}</Show>
+      <Show when={props.parent?.title ?? k().parent_title}>{(label) => <div class="kb-parent" title={t("kb.parentTip")}><Icon name="sub" size={12} /> {label()}</div>}</Show>
       <div class="kb-title"><Show when={props.cancelled}><Icon name="close" size={13} class="ic kb-x" /></Show>{k().title}</div>
       <Show when={k().due_at || k().sub_total || cl()[1] || k().description || k().attachments.length}>
         <div class="kb-meta">

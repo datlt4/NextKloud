@@ -534,7 +534,7 @@ card_links(card_id, url, title, image_url, fetched_at)          -- unfurl Open G
 
 ### 9.7 Notifications và auto-update
 
-- Tauri updater plugin dùng `latest.json` trong GitHub release; ký bằng updater key (CI secret).
+- Tauri updater plugin dùng `latest.json` trong GitHub release; ký bằng updater key (CI secret). — ✅ xong 0.1.23: `tauri-plugin-updater` + `process` (Rust + JS), `plugins.updater.active` + capabilities, tự kiểm tra khi mở app (Tauri), banner + nút "Tải & cập nhật" (hiện % theo chunk), "Khởi động lại" sau khi cài; mục "Cập nhật phần mềm" trong Cài đặt → Hệ thống (check tay). Mobile: updater bỏ qua (không phải desktop).
 - **Thông báo:**
   - Server dùng SSE `GET /api/events`.
   - Sự kiện: upload xong, được chia sẻ board hoặc file, card được giao hoặc đến hạn.

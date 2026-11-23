@@ -125,15 +125,15 @@ export function ReaderLayout(props: {
     const box = main.getBoundingClientRect();
     setPop({ x: Math.min(Math.max(rect.left + rect.width / 2 - box.left, 90), box.width - 90), y: rect.top - box.top + main.scrollTop, anchor, quote: text });
   };
-  let t: number | undefined;
+  let debTimer: number | undefined;
   const deb = () => {
-    clearTimeout(t);
-    t = window.setTimeout(onSel, 250);
+    clearTimeout(debTimer);
+    debTimer = window.setTimeout(onSel, 250);
   };
   onMount(() => document.addEventListener("selectionchange", deb));
   onCleanup(() => {
     document.removeEventListener("selectionchange", deb);
-    clearTimeout(t);
+    clearTimeout(debTimer);
   });
   const act = (f: (a: string, q: string) => void) => {
     const p = pop();

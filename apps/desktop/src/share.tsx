@@ -234,7 +234,10 @@ export function PublicPage() {
   );
   const [prefix, setPrefix] = createSignal("");
   const [page] = createResource(
-    () => (meta() && !meta().locked && meta().is_dir ? { t: token(), p: prefix(), pw: tried() } : null),
+    () => {
+      const m = meta();
+      return m && !m.locked && m.is_dir ? { t: token(), p: prefix(), pw: tried() } : null;
+    },
     (v) => api.linkList(v.t, v.p, v.pw || undefined).catch(() => ({ entries: [], dirs: 0, files: 0, bytes: 0 })),
   );
   return (
@@ -244,7 +247,7 @@ export function PublicPage() {
         <Show when={!token()}><p class="err">{t("sh.badLink")}</p></Show>
         <Show when={token() && meta.loading}><p class="muted">{t("c.loading")}</p></Show>
         <Show when={token() && !meta.loading && gone()}><p class="err">{gone()}</p></Show>
-        <Show when={token() && meta()}>
+        <Show when={token() ? meta() : null}>
           {(md) => (
             <>
               <Show when={md().locked}>

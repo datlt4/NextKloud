@@ -54,8 +54,8 @@ function TasksView(props: { onOpenBoard: (id: string) => void; onError: (m: stri
             {([board, list]) => (
               <section class="tk-group">
                 <h3 class="tk-board">{board} <span class="muted xs">{list.length}</span></h3>
-                <For each={list()}>
-                  {(it) => (
+                <For each={list}>
+                  {(it: TaskItem) => (
                     <div class="tk-row" classList={{ done: !!it.done_at, late: !it.done_at && (it.due_at ?? 0) * 1000 < new Date().setHours(0, 0, 0, 0) }}>
                       <Show when={it.done_at} fallback={<Icon name="calendar" size={15} class="ic muted" />}><Icon name="check" size={15} class="ic kb-done-ic" /></Show>
                       <div class="tk-main">

@@ -234,12 +234,12 @@ export function token(): string | null {
 const JSON_H = { "Content-Type": "application/json" };
 
 async function req(path: string, init?: RequestInit) {
-  const t = token();
+  const tok = token();
   const sec = path.startsWith("/api/secret");
   const vt = sec ? vaultToken() : null;
   const r = await fetch(serverOrigin() + path, {
     ...init,
-    headers: { ...(init?.headers || {}), ...(t ? { Authorization: `Bearer ${t}` } : {}), ...(vt ? { "X-Vault-Token": vt } : {}) },
+    headers: { ...(init?.headers || {}), ...(tok ? { Authorization: `Bearer ${t}` } : {}), ...(vt ? { "X-Vault-Token": vt } : {}) },
   });
   if (r.status === 401) {
     localStorage.removeItem("nk-token");

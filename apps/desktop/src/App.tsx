@@ -48,6 +48,7 @@ import { MoveDialog, NameDialog, TrashPage, errText, joinPath } from "./fileops"
 import { NotesPage } from "./annot";
 import { KanbanPage } from "./kanban";
 import { TrackerPage } from "./tracker";
+import { checkUpdate, installUpdate, restartApp, updateState } from "./updater";
 import { PublicPage, ShareDialog, SharedPage } from "./share";
 import { SecretGate, SecretSettings } from "./secret";
 
@@ -327,6 +328,8 @@ export default function App() {
     refreshMe();
     refreshVer();
     syncFromServer();
+    // app cài đặt: tự kiểm tra cập nhật 1 lần
+    checkUpdate(true).catch(() => {});
   };
 
   onMount(() => {
@@ -664,7 +667,7 @@ export default function App() {
   const remove = async (paths: string[]) => {
     try {
       const items = await each(t("f.deleting"), paths, (p) => api.remove(p));
-      flash(items.length === 1 ? t("f.deleted1", { name: items[0].orig_path.split("/").pop() }) : t("f.deletedN", { n: items.length }), async () => {
+      flash(items.length === 1 ? t("f.deleted1", { name: items[0].orig_path.split("/").pop() ?? "?" }) : t("f.deletedN", { n: items.length }), async () => {
         await each(t("f.restoring"), items.map((x) => x.id), (id) => api.restore(id, isSecret(paths[0])));
         flash(t("f.restored"));
       });
@@ -1163,6 +1166,22 @@ export default function App() {
             </aside>
 
             <main class="panel glass" classList={{ dropping: dropping() }} {...panelDrop}>
+              <Show when={updateState.info() && !updateState.done()}>
+                <div class="banner up-banner">
+                  <span>{t("up.found", { v: updateState.info()!.version })}</span>
+                  <button class="btn primary sm" disabled={updateState.progress() !== null} onClick={installUpdate}>
+                    {updateState.progress() !== null
+                      ? updateState.progress()! < 0 ? t("up.downloading", { p: "…" }) : t("up.downloading", { p: `${updateState.progress()}%` })
+                      : t("up.download")}
+                  </button>
+                </div>
+              </Show>
+              <Show when={updateState.done()}>
+                <div class="banner up-banner">
+                  <span>{t("up.ready")}</span>
+                  <button class="btn primary sm" onClick={restartApp}>{t("up.restart")}</button>
+                </div>
+              </Show>
               <Show when={page() === "settings" && me()}>
                 <Show when={err()}>
                   <div class="err banner">

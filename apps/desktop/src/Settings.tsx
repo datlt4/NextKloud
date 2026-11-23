@@ -1,5 +1,5 @@
 import { For, Show, createResource, createSignal } from "solid-js";
-import { api, type Me } from "./api";
+import { api, isTauri, type Me } from "./api";
 import { Avatar, squareAvatar } from "./avatar";
 import { fmtSize } from "./format";
 import { fmtNum, t } from "./i18n";
@@ -7,6 +7,7 @@ import { ResetForm } from "./forms";
 import { Icon } from "./icons";
 import { LookPanel } from "./look";
 import UsersAdmin from "./UsersAdmin";
+import { installUpdate, restartApp, checkUpdate, updateState } from "./updater";
 import { GitPanel } from "./gitsync";
 
 export type SettingsTab = "profile" | "security" | "look" | "git" | "users" | "system";
@@ -237,6 +238,36 @@ function System(props: { onError: (m: string) => void }) {
         <div class="stats">
           <For each={cards()}>{([k, v]) => <div class="stat"><span class="muted sm">{k}</span><b>{v}</b></div>}</For>
         </div>
+      </section>
+      <section class="set-card">
+        <h2>{t("up.title")}</h2>
+        <Show when={isTauri()} fallback={<p class="muted sm">{t("up.web")}</p>}>
+          <p class="muted sm">{t("up.desc")}</p>
+          <div class="row-input">
+            <button class="btn primary" disabled={updateState.checking() || updateState.progress() !== null} onClick={() => checkUpdate()}>
+              {updateState.checking() ? t("up.checking") : t("up.check")}
+            </button>
+          </div>
+          <Show when={updateState.error()}><p class={updateState.info() ? "ok" : "muted sm"}>{updateState.error()}</p></Show>
+          <Show when={updateState.info()}>
+            {(u) => (
+              <>
+                <p><b>{t("up.found", { v: u().version })}</b></p>
+                <Show when={u().body}><p class="muted sm">{t("up.body")}: {u().body}</p></Show>
+                <Show when={!updateState.done()} fallback={
+                  <button class="btn primary" onClick={restartApp}>{t("up.restart")}</button>
+                }>
+                  <button class="btn primary" disabled={updateState.progress() !== null} onClick={installUpdate}>
+                    {updateState.progress() !== null
+                      ? updateState.progress()! < 0 ? t("up.downloading", { p: "…" }) : t("up.downloading", { p: `${updateState.progress()}%` })
+                      : t("up.download")}
+                  </button>
+                </Show>
+                <Show when={updateState.done()}><p class="ok">{t("up.ready")}</p></Show>
+              </>
+            )}
+          </Show>
+        </Show>
       </section>
       <section class="set-card">
         <h2>{t("set.reindex")}</h2>
