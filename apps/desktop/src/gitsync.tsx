@@ -40,12 +40,19 @@ export function GitPanel(props: { onOpen: (folder: string) => void; onError: (m:
   }, 2000);
   onCleanup(() => clearInterval(timer));
   const act = async (f: () => Promise<unknown>) => {
+    // refetch vẽ lại list làm .set-body rớt về top -> giữ vị trí cuộn (chỉ trả lại nếu bị kéo lên trên,
+    // user chủ động cuộn xuống sâu hơn thì tôn trọng)
+    const sc = document.querySelector(".set-body") as HTMLElement | null;
+    const top = sc ? sc.scrollTop : 0;
     try {
       await f();
     } catch (e) {
       props.onError(errText(e));
     }
     refetch();
+    for (let i = 0; i < 200 && repos.loading; i++) await new Promise((r) => setTimeout(r, 25));
+    for (let i = 0; i < 3; i++) await new Promise((r) => requestAnimationFrame(r));
+    if (sc && sc.scrollTop < top) sc.scrollTop = top;
   };
   return (
     <>
