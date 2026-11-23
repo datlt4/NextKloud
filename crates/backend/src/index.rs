@@ -162,6 +162,27 @@ pub async fn remove_file(db: &PgPool, user: Uuid, path: &str) -> Result<(), sqlx
     Ok(())
 }
 
+/// Xoá các dòng thư mục rỗng dưới `prefix` (git rename: file đã xoá nhưng dòng dir còn sót nên vẫn hiện).
+/// Chỉ chạy trong vùng mirror (prefix của repo), không đụng thư mục rỗng do user tạo ở ngoài.
+/// Lặp tới khi hết vì dir cha chỉ rỗng sau khi dir con đã bị xoá.
+pub async fn prune_empty_dirs(db: &PgPool, user: Uuid, prefix: &str) -> Result<(), sqlx::Error> {
+    loop {
+        let n = sqlx::query(
+            "DELETE FROM files WHERE user_id = $1 AND path LIKE $2 AND is_dir
+             AND NOT EXISTS (SELECT 1 FROM files c WHERE c.user_id = files.user_id AND c.parent = files.path)",
+        )
+        .bind(user)
+        .bind(format!("{}%", like_escape(prefix)))
+        .execute(db)
+        .await?
+        .rows_affected();
+        if n == 0 {
+            break;
+        }
+    }
+    Ok(())
+}
+
 /// Dựng lại chỉ mục của 1 user từ store (sau migrate / lệch dữ liệu). Cập nhật luôn quota_used.
 /// Trả về (số file, tổng bytes).
 pub async fn rebuild(db: &PgPool, store: &Store, user: Uuid) -> Result<(u64, u64), StoreError> {

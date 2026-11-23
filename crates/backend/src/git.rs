@@ -375,6 +375,8 @@ async fn apply(
             Err(e) => return Err(format!("{dest}: {e}")),
         }
     }
+    // Rename/move: file cũ đã xoá nhưng dòng dir rỗng còn sót sẽ vẫn hiện -> dọn trong vùng mirror.
+    index::prune_empty_dirs(db, user, prefix).await.map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -743,6 +745,15 @@ mod tests {
         assert_eq!(used().await, 6);
         assert!(s.stat(u, "Vaults/v/a.md").await.is_err());
 
+        // đổi tên thư mục: file theo tên mới, thư mục cũ rỗng phải biến mất khỏi listing
+        sh(&src, &["mv", "d", "dd"]);
+        sh(&src, &["commit", "-q", "-m", "3"]);
+        let r = sync().await;
+        assert_eq!((r.state.as_str(), r.files), ("idle", 2));
+        assert_eq!(names("Vaults/v").await, [("dd".to_string(), 0), ("c.md".to_string(), 1)]);
+        assert_eq!(names("Vaults/v/dd").await, [("b.md".to_string(), 5)]);
+        assert_eq!(used().await, 6);
+
         // không đổi gì -> vẫn ok
         let head = r.last_commit.clone();
         assert_eq!(sync().await.last_commit, head);
@@ -752,7 +763,7 @@ mod tests {
         index::add_file(&db, u, "Vaults/v/stale.md", 0, 1).await.unwrap();
         let r = sync().await;
         assert_eq!((r.state.as_str(), r.files), ("idle", 2));
-        assert_eq!(names("Vaults/v").await, [("d".to_string(), 0), ("c.md".to_string(), 1)]);
+        assert_eq!(names("Vaults/v").await, [("dd".to_string(), 0), ("c.md".to_string(), 1)]);
         assert_eq!(used().await, 6);
 
         // repo hỏng -> state error, có thông báo
@@ -765,7 +776,7 @@ mod tests {
 
         // đổi thư mục cũ "Vaults" -> "Obsidian Vaults", cập nhật luôn repo
         migrate_vaults_folder(&db, &s).await.unwrap();
-        assert_eq!(names("Obsidian Vaults/v").await, [("d".to_string(), 0), ("c.md".to_string(), 1)]);
+        assert_eq!(names("Obsidian Vaults/v").await, [("dd".to_string(), 0), ("c.md".to_string(), 1)]);
         assert_eq!(get(&db, id, u).await.unwrap().folder, "Obsidian Vaults/v");
     }
 }
