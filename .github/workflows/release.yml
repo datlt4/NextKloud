@@ -1,7 +1,8 @@
 name: release
 
 # Merging into main publishes apps/desktop/package.json's version, once: branch release/vX.Y.Z,
-# tag vX.Y.Z, desktop installers for every common OS/CPU, Android APK and unsigned iOS IPA.
+# tag vX.Y.Z, desktop installers for every common OS/CPU (Linux, macOS, Windows).
+# No mobile builds (Android/iOS dropped 23/11).
 # Bump the version (scripts/set-version.sh) before merging, or nothing is released.
 on:
   push:
@@ -124,16 +125,8 @@ jobs:
           Compress-Archive -Path $exe.FullName -DestinationPath nextkloud_${{ matrix.name }}_portable.zip
           gh release upload "${{ needs.prepare.outputs.tag }}" nextkloud_${{ matrix.name }}_portable.zip --clobber
 
-  mobile:
-    needs: prepare
-    if: needs.prepare.outputs.tag
-    uses: ./.github/workflows/mobile.yml
-    with:
-      tag: ${{ needs.prepare.outputs.tag }}
-    secrets: inherit
-
   publish:
-    needs: [prepare, desktop, mobile]
+    needs: [prepare, desktop]
     if: ${{ !cancelled() && needs.prepare.outputs.tag }}
     runs-on: ubuntu-latest
     steps:

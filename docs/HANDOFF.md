@@ -37,7 +37,7 @@ NextKloud là bản thay thế Nextcloud **không dùng PHP**: Tauri v2 + Rust (
 | Desktop | Sync kiểu OneDrive: chọn thư mục cục bộ, free-up space, tự giải phóng sau N ngày. |
 | Mobile | Chỉ duyệt, upload, download và Kanban. |
 | Khác | Notifications, auto-update. Giao diện như Nextcloud nhưng đẹp hơn: logo, favicon, ảnh nền tuỳ chọn, theme cam/kem/cam kiểu Claude. |
-| CI | Theo mẫu Kermius/Kellyfin. iOS theo chuẩn job-spec của ipa-resign-dashboard. |
+| CI | Theo mẫu Kermius/Kellyfin (chỉ desktop, không mobile). |
 | Host | Docker trên mini PC (Ryzen 5 3400GE, không có GPU NVIDIA). |
 
 ## 2. Quy tắc làm việc
@@ -170,8 +170,8 @@ NextKloud là bản thay thế Nextcloud **không dùng PHP**: Tauri v2 + Rust (
   - backend: `cargo test --locked`.
   - tauri: check trên Ubuntu.
   - docker backend + tts: multi-arch, push theo digest rồi gộp tag.
-- **`release.yml`:** khi version đổi thì tạo branch `release/vX.Y.Z`, tag, installer cho mọi OS/CPU, APK, IPA unsigned.
-- **`mobile.yml`:** build APK có ký và IPA unsigned (macos-15). Ký lại IPA bằng `scripts/resign-ios.sh`.
+- **`release.yml`:** khi version đổi thì tạo branch `release/vX.Y.Z`, tag, installer cho desktop (Linux/macOS/Windows).
+- **CI:** push `main` chạy `build.yml` (web + backend + Docker); version đổi thì `release.yml` tạo branch/tag + installer desktop.
 - **Secrets cần có:** `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, cùng các secret ký Android/iOS (xem workflow).
 
 ## 4. Bản đồ code
@@ -209,7 +209,7 @@ apps/desktop/
   src-tauri/           shell rỗng (lib.rs, main.rs 6 dòng)
 docker/server/         Dockerfile (web → rust → debian slim), docker-compose.yml
 docker/tts/            server.py (edge-tts + cache mp3 theo hash)
-scripts/               set-version.sh, resign-ios.sh
+scripts/               set-version.sh
 ```
 
 ## 5. API hiện có
@@ -312,10 +312,7 @@ git_repos(id, user_id → users CASCADE, url, branch, folder, ssh_key, ssh_pub, 
 - **Trình đọc (22/11):** sidebar mục lục + bookmark + ghi chú 3 trạng thái cho Markdown và PDF (`annot.tsx`, `notes.rs`, migration 0007); tải file trực tiếp bằng token ngắn hạn; quota upload cộng phần chênh; `.whiteboard` mở bằng Excalidraw; thư mục `Obsidian Vaults` (đã chuyển 14.261 mục của datlt4 từ `Vaults`, mất 7 phút); nút loa ngang dòng đầu.
 - **Obsidian hoàn thiện (22/11):** trang Ghi chú (`NotesPage` trong `annot.tsx`, `GET /api/annotations?state=`); KaTeX lazy (chunk riêng), callout, frontmatter, #tag trong `MarkdownView.tsx`; tìm theo nội dung (`fulltext.rs`, bảng `file_text` + trigram, `GET /api/search/content`, chỉ file `.md/.markdown/.txt` ≤ 2MB; ghi khi upload và git sync, dời theo move, xoá khi purge, khởi động thì bù file còn thiếu; tìm có JOIN `files` nên dòng mồ côi không hiện); cache TTS LRU (`TTS_CACHE_MAX_MB`, mặc định 5120). **23/11:** sửa inline + lưu ngược (cảnh báo vault mirror từ git, `api.saveText`, parent tải lại), embed `![[note]]` hiện nội dung inline 1 cấp (40 dòng, ảnh trong note nhúng vẫn lazy-load), backlinks `GET /api/vault/backlinks` (regex khớp chính xác stem/tên/path).
 - **Sao lưu** (`docker/server/backup.sh`, service `backup`): 3:00 mỗi đêm, `pg_dump -Fc` + `rclone sync` toàn bộ bucket ra `/mnt/hdd_1tb/backup/nextkloud/<ngày_giờ>/` (file thường, đọc được không cần RustFS), hardlink với bản trước nên chỉ tốn phần thay đổi, giữ 2 bản. Khôi phục: `pg_restore -d nextkloud db.dump` + `rclone copy files/ nk:nextkloud`. Bản sao lưu **chưa mã hoá** và có chứa SSH key của repo git (trong DB).
-- **Cài app mobile qua IPA Resign Dashboard** (máy Mac `mabu-wg`, `~/ipa-resign/jobs/`):
-  - `nextkloud-android.json`: tải `nextkloud_android_*.apk` từ GitHub release, `adb install` (package `com.nextkloud.app`) khi Samsung G885F cắm vào.
-  - `nextkloud.json` + `~/nextkloud-ios/` (script, helper Xcode project, launchd `com.datlt4.nextkloud-resign` mỗi 6 giờ): ký lại `nextkloud_ios_*_unsigned.ipa` với bundle `com.datlt4.nextkloud` bằng Apple ID miễn phí (profile 7 ngày).
-  - Apple ID miễn phí chỉ cho 3 app tự ký: đã **tắt** (không xoá) job Kellyfin iOS và gỡ app Kellyfin để lấy slot. Ký qua SSH lỗi `errSecInternalComponent` (keychain khoá): phải chạy qua launchd (`launchctl kickstart gui/$UID/com.datlt4.nextkloud-resign`).
+- **Mobile: đã bỏ** (xem 9.8).
 - **Hồ sơ & Cài đặt:** `Settings.tsx` có các tab Hồ sơ (ảnh đại diện, tên hiển thị, dung lượng), Mật khẩu, Giao diện, và cho admin: Người dùng, Hệ thống (thống kê + nút dựng lại chỉ mục). Menu user mới; header và danh sách user hiện ảnh đại diện.
 
 - **22–23/11 (0.1.7 → 0.1.14):**
@@ -545,8 +542,7 @@ card_links(card_id, url, title, image_url, fetched_at)          -- unfurl Open G
 - **Redis:** dùng cho rate-limit đăng nhập, trạng thái job, cache thumbnail và unfurl. Hiện container chạy nhưng không được dùng.
 - **Chia sẻ file/thư mục** (giữa user và link công khai có mật khẩu/hạn): chưa có trong spec chi tiết, **hỏi người dùng trước**.
 - **Versions:** lưu phiên bản cũ khi ghi đè; cân nhắc migrate 1,7G versions từ Nextcloud.
-- **iOS:** đối chiếu `mobile.yml` và `resign-ios.sh` với chuẩn job-spec của ipa-resign-dashboard.
-- **Mobile (23/11, 0.1.21):** icon Android bị crop do art tràn viền → vẽ lại foreground/legacy có safe-zone (emblem 58-60%, nền trắng); app Tauri (kể cả `tauri.localhost`) luôn hiện ô nhập server (`isTauri()`), trước đây bị coi là self-hosted nên gọi nhầm API vào origin của app (lỗi `<!doctype`); `req()` báo rõ khi server trả HTML thay vì JSON. IPA lỗi `localhost:1420` là bản dev — cài IPA release từ GitHub release.
+- **Mobile (bỏ từ 23/11, 0.1.24):** chỉ hỗ trợ PC Linux/macOS/Windows. Xoá `mobile.yml`, `scripts/resign-ios.sh`, job mobile trong `release.yml`; không build APK/IPA nữa. Lý do: iOS crash khi mở app, icon Android bị crop; nhu cầu mobile chưa có.
 - **Migrate trash** (854M) từ Nextcloud, sau khi đã có thùng rác ở 9.1.
 - Dọn thư mục MinIO cũ `/mnt/das_8tb/nextkloud_volume/s3` (rỗng): **hỏi người dùng trước khi xoá**.
 
