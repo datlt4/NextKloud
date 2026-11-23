@@ -52,6 +52,7 @@ NextKloud là bản thay thế Nextcloud **không dùng PHP**: Tauri v2 + Rust (
    - `release.yml` chỉ tạo release khi version trong `apps/desktop/package.json` khác tag đã có, nên bump mỗi commit = mỗi push đều ra installer mới; version hiện ở chân sidebar (server) khớp với code đang chạy.
    - Bản lớn: `scripts/set-version.sh X.Y.0` (người dùng muốn **bump major** khi ra bản lớn).
    - Gộp nhiều thay đổi vào 1 push khi sửa liên tục: push dày làm CI huỷ build lẫn nhau và Docker Hub trả `429 Too Many Requests` (gặp 23/11). Theo dõi deploy bằng `last_updated` của tag `latest` trên Docker Hub thay vì gọi GitHub API (giới hạn 60 lần/giờ khi không đăng nhập).
+   - **Ngoại lệ (yêu cầu 24/11):** fix web nhỏ (CSS/render, không đụng backend/desktop) thì **không bump version** để khỏi chạy `release.yml` (tốn thời gian build installer). Chỉ cần `build.yml` (web + backend + Docker) xanh. Web mới theo Docker image `latest` trên mini, user `Ctrl+Shift+R` là thấy.
 
 ## 3. Hạ tầng, deploy, test
 
