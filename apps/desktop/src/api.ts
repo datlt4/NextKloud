@@ -1,6 +1,14 @@
 // Nhỏ gọn: client cho backend /api + TTS service. Không dep ngoài solid.
+import { t } from "./i18n";
+/** Chạy trong app Tauri (desktop/mobile) thay vì trình duyệt web. */
+export function isTauri(): boolean {
+  return typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
+}
+
 export function isSelfHostedWeb(): boolean {
-  return window.location.protocol.startsWith("http");
+  // Web serve từ chính backend -> cùng origin, khỏi nhập tay.
+  // App Tauri (kể cả URL tauri.localhost bắt đầu bằng http) luôn cần nhập server tay.
+  return window.location.protocol.startsWith("http") && !isTauri();
 }
 
 export function serverOrigin(): string {
@@ -246,6 +254,11 @@ async function req(path: string, init?: RequestInit) {
     if (vt) vaultSeen = Date.now();
   }
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  // Server trả HTML thay vì JSON (sai địa chỉ server, proxy chặn...): báo rõ thay vì "Unexpected token '<'".
+  const ct = r.headers.get("content-type") ?? "";
+  if (ct.includes("text/html") && (path.startsWith("/api/") || path.startsWith("/s/"))) {
+    throw new Error(t("c.badJson"));
+  }
   return r;
 }
 

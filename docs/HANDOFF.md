@@ -546,6 +546,7 @@ card_links(card_id, url, title, image_url, fetched_at)          -- unfurl Open G
 - **Chia sẻ file/thư mục** (giữa user và link công khai có mật khẩu/hạn): chưa có trong spec chi tiết, **hỏi người dùng trước**.
 - **Versions:** lưu phiên bản cũ khi ghi đè; cân nhắc migrate 1,7G versions từ Nextcloud.
 - **iOS:** đối chiếu `mobile.yml` và `resign-ios.sh` với chuẩn job-spec của ipa-resign-dashboard.
+- **Mobile (23/11, 0.1.21):** icon Android bị crop do art tràn viền → vẽ lại foreground/legacy có safe-zone (emblem 58-60%, nền trắng); app Tauri (kể cả `tauri.localhost`) luôn hiện ô nhập server (`isTauri()`), trước đây bị coi là self-hosted nên gọi nhầm API vào origin của app (lỗi `<!doctype`); `req()` báo rõ khi server trả HTML thay vì JSON. IPA lỗi `localhost:1420` là bản dev — cài IPA release từ GitHub release.
 - **Migrate trash** (854M) từ Nextcloud, sau khi đã có thùng rác ở 9.1.
 - Dọn thư mục MinIO cũ `/mnt/das_8tb/nextkloud_volume/s3` (rỗng): **hỏi người dùng trước khi xoá**.
 
