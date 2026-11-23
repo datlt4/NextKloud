@@ -131,6 +131,32 @@ export interface Habit {
   done_today: boolean;
   days: string[];
 }
+export interface LinkMeta {
+  title: string;
+  is_dir: boolean;
+  locked: boolean;
+  expires_at: number | null;
+}
+export interface ShareRow {
+  id: string;
+  path: string;
+  is_dir: boolean;
+  target: string | null;
+  token: string | null;
+  has_password: boolean;
+  permission: string;
+  expires_at: number | null;
+  created_at: number;
+}
+export interface SharedItem {
+  id: string;
+  owner_id: string;
+  owner_name: string;
+  path: string;
+  is_dir: boolean;
+  permission: string;
+  expires_at: number | null;
+}
 export interface VaultOutline {
   root: string;
   files: { path: string; headings: [number, string][] }[];
@@ -239,10 +265,11 @@ export const api = {
     if (r.status === 400) throw new Error("Mật khẩu mới phải có ít nhất 8 ký tự");
     if (!r.ok) throw new Error(`Đổi mật khẩu thất bại (${r.status})`);
   },
-  /** 1 trang của thư mục (server phân trang, thư mục luôn trước). */
-  async files(prefix: string, o: ListOpts) {
+  /** 1 trang của thư mục (server phân trang, thư mục luôn trước). owner: duyệt vùng được chia sẻ. */
+  async files(prefix: string, o: ListOpts, owner?: string) {
     const sec = isSecret(prefix);
     const q = new URLSearchParams({ prefix: sec ? sRel(prefix) : prefix, sort: o.sort, desc: String(o.desc), offset: String(o.offset), limit: String(o.limit) });
+    if (owner) q.set("owner", owner);
     const r = (await (await req(`${sec ? "/api/secret/list" : "/api/files"}?${q}`)).json()) as Page;
     if (sec) r.entries.forEach((e) => (e.path = sAbs(e.path)));
     return r;
@@ -319,14 +346,15 @@ export const api = {
     const r = await req("/api/me");
     return r.json() as Promise<Me>;
   },
-  /** Xoá = chuyển vào thùng rác. */
-  async remove(path: string) {
-    const t = (await req(fileUrl(path), { method: "DELETE" })).json() as Promise<TrashItem>;
+  /** Xoá = chuyển vào thùng rác. owner: xoá trong vùng được chia sẻ (cần quyền sửa). */
+  async remove(path: string, owner?: string) {
+    const u = fileUrl(path) + (owner ? `?owner=${encodeURIComponent(owner)}` : "");
+    const t = (await req(u, { method: "DELETE" })).json() as Promise<TrashItem>;
     return isSecret(path) ? t.then((x) => ({ ...x, orig_path: sAbs(x.orig_path) })) : t;
   },
-  async mkdir(path: string) {
+  async mkdir(path: string, owner?: string) {
     const sec = isSecret(path);
-    await req(sec ? "/api/secret/mkdir" : "/api/mkdir", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: sec ? sRel(path) : path }) });
+    await req(sec ? "/api/secret/mkdir" : "/api/mkdir", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: sec ? sRel(path) : path, ...(owner ? { owner } : {}) }) });
   },
   /** Ghi đè / tạo file text (dùng khi editor drawio/excalidraw lưu). */
   async saveText(path: string, text: string) {
@@ -356,18 +384,18 @@ export const api = {
     const t = token();
     return `${serverOrigin()}/api/zip/file?path=${encodeURIComponent(path)}&entry=${encodeURIComponent(entry)}&t=${encodeURIComponent(t ?? "")}`;
   },
-  /** Đổi tên hoặc di chuyển (file/thư mục). */
-  async move(from: string, to: string) {
-    return this.xfer(from, to, false);
+  /** Đổi tên hoặc di chuyển (file/thư mục). owner: di chuyển trong vùng được chia sẻ. */
+  async move(from: string, to: string, owner?: string) {
+    return this.xfer(from, to, false, owner);
   },
-  async copy(from: string, to: string) {
-    return this.xfer(from, to, true);
+  async copy(from: string, to: string, owner?: string) {
+    return this.xfer(from, to, true, owner);
   },
   /** Chuyển/sao chép; qua lại giữa file thường và Bí mật thì server mã hoá/giải mã. */
-  async xfer(from: string, to: string, keep: boolean) {
+  async xfer(from: string, to: string, keep: boolean, owner?: string) {
     const [a, b] = [isSecret(from), isSecret(to)];
     const url = a && b ? (keep ? "/api/secret/copy" : "/api/secret/move") : !a && !b ? (keep ? "/api/copy" : "/api/move") : a ? "/api/secret/export" : "/api/secret/import";
-    const body = { from: a ? sRel(from) : from, to: b ? sRel(to) : to, keep };
+    const body = { from: a ? sRel(from) : from, to: b ? sRel(to) : to, keep, ...(owner && !a && !b ? { owner } : {}) };
     const r = await req(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     return r.json() as Promise<{ files: number }>;
   },
@@ -428,6 +456,48 @@ export const api = {
   },
   async deckApply(board_id: number, parents: Record<number, number | null>, skip_stacks: number[]) {
     return (await req("/api/kanban/import/deck", { method: "POST", headers: JSON_H, body: JSON.stringify({ board_id, parents, skip_stacks }) })).json() as Promise<{ board: string; cards: number; subtasks: number }>;
+  },
+  // --- chia sẻ ---
+  async shares(path?: string) {
+    return (await req(path ? `/api/shares?path=${encodeURIComponent(path)}` : "/api/shares")).json() as Promise<ShareRow[]>;
+  },
+  async shareWith(path: string, username: string, permission: string) {
+    return (await req("/api/shares", { method: "POST", headers: JSON_H, body: JSON.stringify({ path, username, permission }) })).json() as Promise<ShareRow>;
+  },
+  async unshare(id: string) {
+    await req(`/api/shares/${id}`, { method: "DELETE" });
+  },
+  async createLink(path: string, password?: string, expires_in_days?: number | null) {
+    return (
+      await req("/api/shares/link", {
+        method: "POST",
+        headers: JSON_H,
+        body: JSON.stringify({ path, password: password ?? "", expires_in_days: expires_in_days ?? null }),
+      })
+    ).json() as Promise<ShareRow>;
+  },
+  async shared() {
+    return (await req("/api/shared")).json() as Promise<SharedItem[]>;
+  },
+  async saveCopy(owner: string, path: string, to: string) {
+    return (await req("/api/shared/save", { method: "POST", headers: JSON_H, body: JSON.stringify({ owner, path, to }) })).json() as Promise<{ files: number }>;
+  },
+  /** Tải trực tiếp file được chia sẻ (không qua RAM tab). */
+  async sharedDirectUrl(owner: string, path: string): Promise<string> {
+    const r = await req("/api/dl", { method: "POST", headers: JSON_H, body: JSON.stringify({ path, owner }) });
+    const { token: t } = (await r.json()) as { token: string };
+    return `${serverOrigin()}/api/files/${encPath(path)}?dl=${encodeURIComponent(t)}`;
+  },
+  /** Link tải file qua link công khai (không cần đăng nhập). */
+  linkFileUrl(token: string, path: string, pw?: string) {
+    return `${serverOrigin()}/api/s/${token}/file/${encPath(path)}${pw ? `?pw=${encodeURIComponent(pw)}` : ""}`;
+  },
+  async linkMeta(token: string, pw?: string) {
+    return (await req(`/api/s/${token}${pw ? `?pw=${encodeURIComponent(pw)}` : ""}`)).json() as Promise<LinkMeta>;
+  },
+  async linkList(token: string, prefix: string, pw?: string) {
+    const q = new URLSearchParams({ prefix, ...(pw ? { pw } : {}) });
+    return (await req(`/api/s/${token}/list?${q}`)).json() as Promise<Page>;
   },
   // --- task + habit tracker ---
   async tasks(view: TaskView) {
@@ -537,8 +607,8 @@ export const api = {
   async readBlob(path: string) {
     return (await req(fileUrl(path))).blob();
   },
-  /** Chunked upload 8MB tuần tự — không giữ cả file trong RAM. */
-  async upload(path: string, data: Blob, onProgress?: (done: number) => void) {
+  /** Chunked upload 8MB tuần tự — không giữ cả file trong RAM. owner: ghi vào vùng được chia sẻ. */
+  async upload(path: string, data: Blob, onProgress?: (done: number) => void, owner?: string) {
     const json = { "Content-Type": "application/json" };
     const up = isSecret(path) ? "/api/secret/uploads" : "/api/files/uploads";
     const init = await req(up, {
@@ -548,6 +618,7 @@ export const api = {
         path: isSecret(path) ? sRel(path) : path,
         size: data.size,
         mtime: data instanceof File ? Math.floor(data.lastModified / 1000) : undefined,
+        ...(owner ? { owner } : {}),
       }),
     });
     const { id } = (await init.json()) as { id: string };

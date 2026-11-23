@@ -328,7 +328,7 @@ git_repos(id, user_id → users CASCADE, url, branch, folder, ssh_key, ssh_pub, 
 
 ### 9.0 Việc còn lại (tổng hợp 23/11, ưu tiên từ trên xuống)
 
-1. **Chia sẻ** (người dùng chốt làm ngay sau Kanban): chia sẻ file/thư mục giữa user (quyền xem/sửa) + link công khai có mật khẩu và hạn, như Google Drive. File trong Bí mật không chia sẻ được.
+1. **Chia sẻ** (người dùng chốt làm ngay sau Kanban): chia sẻ file/thư mục giữa user (quyền xem/sửa) + link công khai có mật khẩu và hạn, như Google Drive. File trong Bí mật không chia sẻ được. — ✅ xong 0.1.17 (`shares.rs`, `share.tsx`, migration `0014`): share theo username, link public (chỉ xem, MK + hạn), duyệt/tải/upload/sửa trong "Được chia sẻ", "Lưu bản sao" về file mình, link dùng được khi chưa đăng nhập. Chưa làm: xem inline/thumbnail/zip/office/search/TTS trên file được chia sẻ (tải về để xem), re-share.
 2. **Task tracker** (danh sách việc theo hạn, lấy từ card có `due_at`) và **Habit tracker** (lưới ngày, streak) — ✅ xong 0.1.15 (`tracker.rs`, `tracker.tsx`, migration `0013`): task lọc Quá hạn/Hôm nay/7 ngày/Tất cả/Đã xong; habit chấm theo ngày, streak tính tới hôm nay, lưới 12 tuần. Chưa làm: lịch weekly, nhắc hạn (đợi SSE 9.7).
 3. **Upload/download lớn** (9.2): resume sau rớt mạng/F5 (trạng thái upload lưu Postgres), tạm dừng, tải thư mục thành zip stream, API upload hàng loạt file nhỏ, job nền có tiến độ cho move/rename thư mục rất lớn, merge khi đích trùng tên. **Hỏi người dùng trước:** bỏ qua file trùng (cùng tên + dung lượng) thay vì ghi đè.
 4. **Obsidian:** sửa + lưu ngược về file (cảnh báo khi vault mirror từ git), embed `![[note]]`, backlinks.

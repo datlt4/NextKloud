@@ -47,6 +47,7 @@ import { MoveDialog, NameDialog, TrashPage, errText, joinPath } from "./fileops"
 import { NotesPage } from "./annot";
 import { KanbanPage } from "./kanban";
 import { TrackerPage } from "./tracker";
+import { PublicPage, ShareDialog, SharedPage } from "./share";
 import { SecretGate, SecretSettings } from "./secret";
 
 type SortKey = "name" | "size" | "modified";
@@ -91,13 +92,14 @@ export default function App() {
   const [view, setView] = createSignal<"list" | "grid">((localStorage.getItem("nk-view") as "grid") || "list");
   const [sideOpen, setSideOpen] = createSignal(false);
   const [menuFor, setMenuFor] = createSignal<string | null>(null);
+  const [shareFor, setShareFor] = createSignal<{ path: string } | null>(null);
   const [menuUpFor, setMenuUpFor] = createSignal<string | null>(null);
   const [menuLeftFor, setMenuLeftFor] = createSignal<string | null>(null);
   const [userMenu, setUserMenu] = createSignal(false);
   const [userMenuUp, setUserMenuUp] = createSignal(false);
   const [mSearch, setMSearch] = createSignal(false);
   const [showLook, setShowLook] = createSignal(false);
-  const [page, setPage] = createSignal<"files" | "settings" | "trash" | "notes" | "kanban" | "tasks" | "secret" | "secret-trash">("files");
+  const [page, setPage] = createSignal<"files" | "settings" | "trash" | "notes" | "kanban" | "tasks" | "shared" | "secret" | "secret-trash">("files");
   const [secretSet, setSecretSet] = createSignal(false);
   const [vaultLeft, setVaultLeft] = createSignal(0);
   const inSecret = () => isSecret(prefix()) || page() === "secret-trash";
@@ -296,12 +298,12 @@ export default function App() {
   const go = async (h: string) => {
     routing = true;
     try {
-      const m = /^#\/(f|o|notes|trash|tasks|settings|kanban|secret)(?:\/(.*))?$/.exec(h);
+      const m = /^#\/(f|o|notes|trash|tasks|shared|settings|kanban|secret)(?:\/(.*))?$/.exec(h);
       const rest = m?.[2] ? decodeURIComponent(m[2]) : "";
       if (m?.[1] === "secret") await openSecret();
       else if (m?.[1] === "f") await load(rest);
       else if (m?.[1] === "o" && rest) await openAt(rest, "");
-      else if (m?.[1] === "notes" || m?.[1] === "trash" || m?.[1] === "tasks") setPage(m[1]);
+      else if (m?.[1] === "notes" || m?.[1] === "trash" || m?.[1] === "tasks" || m?.[1] === "shared") setPage(m[1]);
       else if (m?.[1] === "kanban") {
         setBoardId(rest || null);
         setPage("kanban");
@@ -929,6 +931,11 @@ export default function App() {
           <button onClick={() => { closeMenu(); setDlg({ kind: "copy", paths: [p.f.path] }); }}>
             <Icon name="copy" /> Sao chép
           </button>
+          <Show when={!isSecret(p.f.path)}>
+            <button onClick={() => { closeMenu(); setShareFor({ path: p.f.path }); }}>
+              <Icon name="users" /> Chia sẻ
+            </button>
+          </Show>
           <button onClick={() => { closeMenu(); toggleSel(p.f.path, true); lastIdx = -1; }}>
             <Icon name="check" /> Chọn
           </button>
@@ -981,6 +988,11 @@ export default function App() {
               />
             </div>
           </div>
+        </Match>
+
+        {/* Link công khai: xem được khi chưa đăng nhập */}
+        <Match when={!authed() && /^#\/s\/[A-Za-z0-9]+/.test(location.hash)}>
+          <PublicPage />
         </Match>
 
         <Match when={!authed()}>
@@ -1102,6 +1114,9 @@ export default function App() {
                 <button class="nav" classList={{ active: page() === "tasks" }} onClick={() => { setPage("tasks"); setSideOpen(false); }}>
                   <Icon name="check" /> Theo dõi
                 </button>
+                <button class="nav" classList={{ active: page() === "shared" }} onClick={() => { setPage("shared"); setSideOpen(false); }}>
+                  <Icon name="users" /> Được chia sẻ
+                </button>
                 <button class="nav" classList={{ active: page() === "notes" }} onClick={() => { setPage("notes"); setSideOpen(false); }}>
                   <Icon name="note" /> Ghi chú
                 </button>
@@ -1180,6 +1195,15 @@ export default function App() {
                   </div>
                 </Show>
                 <TrashPage onError={setErr} onChanged={refreshMe} />
+              </Show>
+              <Show when={page() === "shared"}>
+                <Show when={err()}>
+                  <div class="err banner">
+                    <span>{err()}</span>
+                    <button class="icon-btn sm" onClick={() => setErr("")}><Icon name="close" size={14} /></button>
+                  </div>
+                </Show>
+                <SharedPage onError={setErr} />
               </Show>
               <Show when={page() === "secret"}>
                 <SecretGate onUnlocked={() => load(SECRET_ROOT)} />
@@ -1591,6 +1615,10 @@ export default function App() {
 
           <Show when={showLook()}>
             <LookDialog onClose={() => setShowLook(false)} onError={(m) => setErr(m)} />
+          </Show>
+
+          <Show when={shareFor()}>
+            {(s) => <ShareDialog path={s().path} onClose={() => setShareFor(null)} onError={setErr} />}
           </Show>
         </Match>
       </Switch>

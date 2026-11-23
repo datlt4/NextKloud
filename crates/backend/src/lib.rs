@@ -16,6 +16,7 @@ pub mod ops;
 pub mod quota;
 pub mod routes;
 pub mod secret;
+pub mod shares;
 pub mod state;
 pub mod thumb;
 pub mod tts;

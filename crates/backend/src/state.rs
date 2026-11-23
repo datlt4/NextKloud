@@ -19,6 +19,8 @@ use crate::{auth::verify_jwt, files::Store};
 #[derive(Debug, Clone)]
 pub struct PendingUpload {
     pub user_id: Uuid,
+    /// chủ file (== user_id khi upload file của mình; khác khi upload vào thư mục được chia sẻ)
+    pub owner: Uuid,
     pub path: String,
     pub size: u64,
     pub mtime: Option<i64>,

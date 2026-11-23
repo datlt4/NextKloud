@@ -774,6 +774,18 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 @media (max-width: 640px) {
   .tk-row .btn { padding: 4px 8px; font-size: 12px; }
 }
+/* chia sẻ */
+.sh-sec { margin-bottom: 14px; }
+.sh-sec > b { display: block; margin-bottom: 6px; font-size: 14px; }
+.sh-add { display: flex; gap: 6px; margin-bottom: 8px; }
+.sh-add input { flex: 1; min-width: 0; height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--input); color: var(--text); font: inherit; font-size: 13px; }
+.sh-add select { height: 32px; border-radius: 8px; border: 1px solid var(--line); background: var(--input); color: var(--text); font: inherit; font-size: 13px; }
+.sh-row { display: flex; align-items: center; gap: 8px; padding: 7px 4px; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+.sh-row:last-child { border-bottom: 0; }
+.sh-link { flex: 1; min-width: 0; height: 30px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--input); color: var(--text); font: inherit; font-size: 12.5px; }
+.sh-list { padding: 0 12px 12px; }
+.auth-card.pub { min-width: min(560px, 92vw); }
+.auth-card.pub .sh-row span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kb-bar { flex-wrap: wrap; }
 .kb-boards { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
 .chip { height: 30px; padding: 0 12px; border-radius: 15px; border: 1px solid var(--line); font-size: 13px; font-weight: 600; color: var(--muted); }

@@ -30,6 +30,9 @@ pub struct ListQuery {
     #[serde(default)]
     pub offset: i64,
     pub limit: Option<i64>,
+    /// xem thư mục của user khác (đòi hỏi được chia sẻ)
+    #[serde(default)]
+    pub owner: Option<Uuid>,
 }
 
 /// 1 trang của thư mục, đọc từ chỉ mục Postgres (không hỏi S3).
@@ -39,8 +42,9 @@ pub async fn list_files(
     Query(q): Query<ListQuery>,
 ) -> Result<Json<index::Page>, AppError> {
     let parent = clean_path(&q.prefix)?;
+    let oid = crate::shares::resolve(&s.db, user.id, q.owner, &parent, false).await?;
     let limit = q.limit.unwrap_or(200).clamp(0, 1000);
-    Ok(Json(index::list(&s.db, user.id, &parent, q.sort, q.desc, q.offset.max(0), limit).await?))
+    Ok(Json(index::list(&s.db, oid, &parent, q.sort, q.desc, q.offset.max(0), limit).await?))
 }
 
 #[derive(Deserialize)]
@@ -128,7 +132,9 @@ pub async fn download(
         Some(id) => crate::state::AuthUser { id, admin: false },
         None => crate::thumb::auth_opt(&headers, &q, &s).await.ok_or_else(|| AppError::Auth("missing token".into()))?,
     };
-    let meta = s.store.stat(user.id, &path).await?;
+    // đọc file của user khác: đòi hỏi được chia sẻ (xem). Token dl đã mang sẵn owner.
+    let oid = crate::shares::resolve(&s.db, user.id, q.get("owner").and_then(|v| v.parse().ok()), &path, false).await?;
+    let meta = s.store.stat(oid, &path).await?;
     if meta.is_dir() {
         return Err(AppError::BadRequest("not a file (use ?prefix= to list)".into()));
     }
@@ -145,7 +151,7 @@ pub async fn download(
         }
         None => (0, size, StatusCode::OK),
     };
-    let key = s.store.key(user.id, &path)?;
+    let key = s.store.key(oid, &path)?;
     let stream = s
         .store
         .op
@@ -181,35 +187,45 @@ fn pct(s: &str) -> String {
 #[derive(Deserialize)]
 pub struct DlBody {
     pub path: String,
+    /// tải file của user khác (đòi hỏi được chia sẻ)
+    #[serde(default)]
+    pub owner: Option<Uuid>,
 }
 
 /// Cấp token tải 1 file (10 phút) để trình duyệt tự stream xuống đĩa, không qua RAM của tab.
 pub async fn dl_token(State(s): State<AppState>, user: AuthUser, Json(b): Json<DlBody>) -> Result<Json<serde_json::Value>, AppError> {
     let p = clean_path(&b.path)?;
-    if s.store.stat(user.id, &p).await?.is_dir() {
+    let oid = crate::shares::resolve(&s.db, user.id, b.owner, &p, false).await?;
+    if s.store.stat(oid, &p).await?.is_dir() {
         return Err(AppError::BadRequest("not a file".into()));
     }
-    let t = crate::auth::create_dl_token(user.id, &p, &s.enc).map_err(AppError::Internal)?;
+    let t = crate::auth::create_dl_token(oid, &p, &s.enc).map_err(AppError::Internal)?;
     Ok(Json(serde_json::json!({ "token": t })))
 }
 
-/// Xoá = chuyển vào thùng rác (file hoặc cả thư mục).
+/// Xoá = chuyển vào thùng rác (file hoặc cả thư mục). Xoá trong vùng được chia sẻ cần quyền sửa, vào thùng rác của chủ file.
 pub async fn delete_file(
     State(s): State<AppState>,
     user: AuthUser,
     Path(path): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
 ) -> Result<Json<ops::TrashItem>, AppError> {
     let p = ops::user_path(&path)?;
-    Ok(Json(ops::trash(&s.db, &s.store, user.id, &p).await?))
+    let oid = crate::shares::resolve(&s.db, user.id, q.get("owner").and_then(|v| v.parse().ok()), &p, true).await?;
+    Ok(Json(ops::trash(&s.db, &s.store, oid, &p).await?))
 }
 
 #[derive(Deserialize)]
 pub struct MkdirBody {
     pub path: String,
+    #[serde(default)]
+    pub owner: Option<Uuid>,
 }
 
 pub async fn mkdir(State(s): State<AppState>, user: AuthUser, Json(b): Json<MkdirBody>) -> Result<StatusCode, AppError> {
-    ops::mkdir(&s.db, user.id, &ops::user_path(&b.path)?).await?;
+    let p = ops::user_path(&b.path)?;
+    let oid = crate::shares::resolve(&s.db, user.id, b.owner, &p, true).await?;
+    ops::mkdir(&s.db, oid, &p).await?;
     Ok(StatusCode::CREATED)
 }
 
@@ -217,6 +233,9 @@ pub async fn mkdir(State(s): State<AppState>, user: AuthUser, Json(b): Json<Mkdi
 pub struct MoveBody {
     pub from: String,
     pub to: String,
+    /// di chuyển trong vùng được chia sẻ (from/to cùng 1 chủ, cần quyền sửa)
+    #[serde(default)]
+    pub owner: Option<Uuid>,
 }
 
 /// Đổi tên + di chuyển. Trả về số file đã chuyển.
@@ -226,7 +245,9 @@ pub async fn move_entry(
     Json(b): Json<MoveBody>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let (from, to) = (ops::user_path(&b.from)?, ops::user_path(&b.to)?);
-    let n = ops::move_path(&s.db, &s.store, user.id, &from, &to).await?;
+    let oid = crate::shares::resolve(&s.db, user.id, b.owner, &from, true).await?;
+    crate::shares::resolve(&s.db, user.id, b.owner, &to, true).await?;
+    let n = ops::move_path(&s.db, &s.store, oid, &from, &to).await?;
     Ok(Json(serde_json::json!({ "files": n })))
 }
 
@@ -237,7 +258,9 @@ pub async fn copy_entry(
     Json(b): Json<MoveBody>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let (from, to) = (ops::user_path(&b.from)?, ops::user_path(&b.to)?);
-    let n = ops::copy_path(&s.db, &s.store, user.id, &from, &to).await?;
+    let oid = crate::shares::resolve(&s.db, user.id, b.owner, &from, true).await?;
+    crate::shares::resolve(&s.db, user.id, b.owner, &to, true).await?;
+    let n = ops::copy_path(&s.db, &s.store, oid, &from, &to).await?;
     Ok(Json(serde_json::json!({ "files": n })))
 }
 
@@ -271,6 +294,9 @@ pub struct InitBody {
     pub size: u64,
     /// mtime gốc của file (unix giây), giữ lại thay vì lấy giờ upload.
     pub mtime: Option<i64>,
+    /// upload vào thư mục được chia sẻ (cần quyền sửa, quota tính cho chủ file)
+    #[serde(default)]
+    pub owner: Option<Uuid>,
 }
 
 #[derive(Serialize)]
@@ -291,10 +317,15 @@ pub async fn init_upload(
     let q = Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64);
     q.can_add(b.size).map_err(|e| AppError::Conflict(format!("quota exceeded: {e}")))?;
     ops::upload_path(&b.path)?; // validate early, chặn ghi vào .nextkloud (trừ file cài đặt client)
+    let oid = crate::shares::resolve(&s.db, user.id, b.owner, &b.path, true).await?;
+    // quota tính cho chủ vùng (chủ file khi upload vào thư mục được chia sẻ)
+    let orow = if oid == user.id { row } else { load_user(&s.db, oid).await? };
+    let oq = Quota::new(orow.quota_limit.max(0) as u64, orow.quota_used.max(0) as u64);
+    oq.can_add(b.size).map_err(|e| AppError::Conflict(format!("quota exceeded: {e}")))?;
     let id = Uuid::new_v4().to_string();
     s.uploads.lock().await.insert(
         id.clone(),
-        PendingUpload { user_id: user.id, path: b.path, size: b.size, mtime: b.mtime },
+        PendingUpload { user_id: user.id, owner: oid, path: b.path, size: b.size, mtime: b.mtime },
     );
     Ok(Json(InitOut { id }))
 }
@@ -320,7 +351,7 @@ pub async fn put_chunk(
         return Err(AppError::Forbidden("not your upload".into()));
     }
     let mut map = HashMap::new();
-    map.insert("received".to_string(), s.store.write_chunk(user.id, &id, q.offset, &body)?);
+    map.insert("received".to_string(), s.store.write_chunk(pend.owner, &id, q.offset, &body)?);
     Ok(Json(map))
 }
 
@@ -338,23 +369,23 @@ pub async fn complete_upload(
     if pend.user_id != user.id {
         return Err(AppError::Forbidden("not your upload".into()));
     }
-    let row = load_user(&s.db, user.id).await?;
+    let row = load_user(&s.db, pend.owner).await?;
     let mut q = Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64);
-    let r = s.store.complete(user.id, &id, &pend.path, pend.size, pend.mtime, &mut q).await;
+    let r = s.store.complete(pend.owner, &id, &pend.path, pend.size, pend.mtime, &mut q).await;
     // Clean staging on failure so retries start fresh.
     if r.is_err() {
-        let _ = std::fs::remove_file(s.store.stage_path(user.id, &id));
+        let _ = std::fs::remove_file(s.store.stage_path(pend.owner, &id));
     }
     let mtime = r?;
     // Cộng phần chênh (file mới, hoặc chênh khi ghi đè), không ghi đè giá trị: upload song song không lệch.
     sqlx::query("UPDATE users SET quota_used = GREATEST(0, quota_used + $1) WHERE id = $2")
         .bind(q.used_bytes as i64 - row.quota_used.max(0))
-        .bind(user.id)
+        .bind(pend.owner)
         .execute(&s.db)
         .await?;
     let p = clean_path(&pend.path)?;
-    index::add_file(&s.db, user.id, &p, pend.size, mtime).await?;
-    crate::fulltext::put_from_store(&s.db, &s.store, user.id, &p, pend.size).await;
+    index::add_file(&s.db, pend.owner, &p, pend.size, mtime).await?;
+    crate::fulltext::put_from_store(&s.db, &s.store, pend.owner, &p, pend.size).await;
     Ok(StatusCode::CREATED)
 }
 
