@@ -254,6 +254,17 @@ function buildImgIndex(o: VaultOutline): ImgIndex {
   return { root: o.root, set, byName };
 }
 
+/** Khoảng cách cây thư mục từ note tới file: 0 = cùng thư mục, càng nhỏ càng gần.
+ *  Trùng tên file khác folder (mỗi chương đều có ảnh riêng) phải lấy file gần nhất, không phải đường ngắn nhất. */
+function dirDist(mdDir: string, p: string): number {
+  const a = mdDir ? mdDir.split("/") : [];
+  const pd = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
+  const b = pd ? pd.split("/") : [];
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  return a.length - i + (b.length - i);
+}
+
 /** Tra đường dẫn thật của target Obsidian (ảnh/embed/link): trong vault tra mục lục, ngoài vault dò mạng. */
 async function resolveTarget(mdPath: string, raw: string, idx?: ImgIndex | null): Promise<string | null> {
   const clean = raw.split("#")[0].split("?")[0] || raw;
@@ -275,10 +286,11 @@ async function resolveTarget(mdPath: string, raw: string, idx?: ImgIndex | null)
         if (!d) break;
       }
     }
-    // chỉ có tên file: tra theo tên trong cây thư mục gần nhất (không gọi /api/search)
+    // chỉ có tên file: tra theo tên, ưu tiên file gần note nhất (cùng thư mục trước),
+    // không lấy đường ngắn nhất toàn vault (trùng tên khác folder sẽ nhầm)
     const name = clean.split("/").pop()!;
-    const hits = (idx.byName.get(name) ?? []).filter((p) => ups.some((u) => !u || p.startsWith(u + "/")));
-    hits.sort((a, b) => a.length - b.length);
+    const hits = [...(idx.byName.get(name) ?? [])];
+    hits.sort((x, y) => dirDist(dir, x) - dirDist(dir, y) || x.length - y.length);
     if (hits.length) return hits[0];
     // không có trong mục lục (có thể cache cũ) -> dò mạng như ngoài vault
   }
@@ -296,10 +308,10 @@ async function resolveTarget(mdPath: string, raw: string, idx?: ImgIndex | null)
       /* thử chỗ khác */
     }
   }
-  // chỉ có tên file: tìm theo tên trong cây thư mục gần nhất
+  // chỉ có tên file: tìm theo tên, ưu tiên file gần note nhất
   const name = clean.split("/").pop()!;
-  const hit = (await api.search(name)).filter((e) => !e.is_dir && e.name === name && ups.some((u) => !u || e.path.startsWith(u + "/")));
-  hit.sort((a, b) => a.path.length - b.path.length);
+  const hit = (await api.search(name)).filter((e) => !e.is_dir && e.name === name);
+  hit.sort((x, y) => dirDist(dir, x.path) - dirDist(dir, y.path) || x.path.length - y.path.length);
   return hit.length ? hit[0].path : null;
 }
 
