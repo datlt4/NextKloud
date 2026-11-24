@@ -117,7 +117,7 @@ function HabitsView(props: { onError: (m: string) => void }) {
 /** Biểu đồ năm kiểu GitHub: cột = tuần (Thứ 2..Chủ nhật), màu = đã làm.
  *  Màn rộng hiện cả năm (53 tuần), màn bé tự rút còn vài tháng cho vừa khung.
  *  Ô 12px + gap 3px đều mọi phía. Bấm ô để chấm/bỏ. */
-const HB_CELL = 12, HB_GAP = 3, HB_DAYW = 30, HB_WEEKS_MIN = 13, HB_WEEKS_MAX = 53;
+const HB_CELL = 12, HB_GAP = 3, HB_DAYW = 30, HB_WEEKS_MIN = 13, HB_WEEKS_MAX = 260;
 function HabitCard(props: { h: Habit; onToggle: (day: string, on: boolean) => void; onPatch: (b: { title?: string; archived?: boolean }) => void; onDelete: () => void }) {
   const done = () => new Set(props.h.days);
   const [wrapW, setWrapW] = createSignal(0);
@@ -146,20 +146,30 @@ function HabitCard(props: { h: Habit; onToggle: (day: string, on: boolean) => vo
     d.setDate(startMon().getDate() + w * 7 + r);
     return d;
   };
-  // nhãn tháng: cột đầu tiên mang tháng mới
+  // nhãn tháng: cột đầu tiên mang tháng mới; tháng Một hiện số năm (phân biệt các năm).
+  // 2 nhãn cách nhau < 3 cột (vd Nov/Dec 2025 đầu chart) thì bỏ nhãn cũ, giữ tháng sau.
   const monthCells = createMemo(() => {
     const out: string[] = [];
-    let prev = -1;
+    let prev = -1, lastW = -99;
     for (let w = 0; w < weeks(); w++) {
-      const mo = at(w, 0).getMonth();
-      out.push(mo !== prev ? at(w, 0).toLocaleDateString(loc(), { month: "short" }) : "");
+      const d = at(w, 0);
+      const mo = d.getMonth();
+      if (mo === prev) {
+        out.push("");
+        continue;
+      }
       prev = mo;
+      const label = mo === 0 ? String(d.getFullYear()) : d.toLocaleDateString(loc(), { month: "short" });
+      if (w - lastW < 3) out[lastW] = "";
+      out.push(label);
+      lastW = w;
     }
     return out;
   });
   // nhãn Mon/Wed/Fri theo locale (01/01/2024 là Thứ 2)
   const dayName = (r: number) => new Date(2024, 0, 1 + r).toLocaleDateString(loc(), { weekday: "short" });
-  const yearCount = createMemo(() => [...done()].filter((d) => Date.parse(d) >= todayMs() - 364 * 86400000).length);
+  const rangeCount = createMemo(() => [...done()].filter((d) => Date.parse(d) >= startMon().getTime()).length);
+  const rangeMonths = createMemo(() => Math.max(1, Math.round((weeks() * 7) / 30.44)));
   const rename = () => {
     const nn = prompt(t("tk.namePrompt"), props.h.title)?.trim();
     if (nn) props.onPatch({ title: nn });
@@ -208,7 +218,7 @@ function HabitCard(props: { h: Habit; onToggle: (day: string, on: boolean) => vo
           </For>
         </div>
         <div class="hb-foot">
-          <span>{t("tk.yearN", { n: fmtNum(yearCount()) })}</span>
+          <span>{t("tk.yearN", { n: fmtNum(rangeCount()), m: rangeMonths() })}</span>
           <span class="hb-legend">{t("tk.less")}<i class="hb-sw" /><i class="hb-sw on" />{t("tk.more")}</span>
         </div>
       </div>
