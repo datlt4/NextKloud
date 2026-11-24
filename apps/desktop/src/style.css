@@ -809,8 +809,10 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 .tk-col { min-width: 0; }
 .tk-col-title { display: none; }
 /* màn bé: tab nào hiện tab đó (như cũ) */
-.tracker[data-tab="tasks"] .tk-col-habits { display: none; }
-.tracker[data-tab="habits"] .tk-col-tasks { display: none; }
+@media (max-width: 1099.98px) {
+  .tracker[data-tab="tasks"] .tk-col-habits { display: none; }
+  .tracker[data-tab="habits"] .tk-col-tasks { display: none; }
+}
 /* màn rộng: Due tasks + Habits cạnh nhau cho đỡ phí */
 @media (min-width: 1100px) {
   .tracker .kb-boards { display: none; }
