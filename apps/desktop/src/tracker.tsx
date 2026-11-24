@@ -272,13 +272,13 @@ function HabitMonth(props: {
           </Show>
         </div>
         <div class="hm-stats">
-          <span class="muted xs">{t("tk.numHabits")}: <b>{fmtNum(stats().n)}</b></span>
           <span class="muted xs">{t("tk.completedM")}: <b>{fmtNum(stats().done)}</b></span>
           <span class="hm-bar"><i style={{ width: `${Math.min(100, stats().pct)}%` }} /></span>
           <span class="muted xs"><b>{stats().pct.toFixed(2)}%</b></span>
         </div>
       </div>
       <div class="hm-pager">
+        <span class="muted xs">{t("tk.numHabits")}: <b>{fmtNum(stats().n)}</b></span>
         <button class="icon-btn sm" onClick={() => shiftWin(-1)}>‹</button>
         <span class="muted xs">{rangeLb()}</span>
         <button class="icon-btn sm" disabled={endD() >= new Date(curY, curM + 1, 0)} onClick={() => shiftWin(1)}>›</button>
