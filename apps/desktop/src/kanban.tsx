@@ -105,22 +105,15 @@ function BoardView(props: { board: KBoard; flashId?: string | null; onFlashed?: 
     }
   };
   const byId = createMemo(() => new Map(cards().map((c) => [c.id, c])));
-  // Mở từ Due tasks: cuộn tới đúng thẻ + nháy sáng. Thẻ ở cột done ngoài đợt tải thì tải thêm.
+  // Mở từ Due tasks: mở thẳng drawer của task. Task ở cột done ngoài đợt tải thì tải thêm rồi mở.
   const moreTried = new Set<string>();
   createEffect(() => {
     const id = props.flashId;
     const list = cards();
     if (!id || loading() || !list.length) return;
     if (list.some((c) => c.id === id)) {
-      requestAnimationFrame(() => {
-        const el = boardEl.querySelector<HTMLElement>(`.kb-card[data-id="${CSS.escape(id)}"]`);
-        if (el) {
-          el.scrollIntoView({ block: "nearest", behavior: "smooth" });
-          el.classList.add("flash");
-          setTimeout(() => el.classList.remove("flash"), 1600);
-        }
-        props.onFlashed?.();
-      });
+      setOpenId(id);
+      props.onFlashed?.();
     } else {
       const dc = cols().find((c) => c.is_done);
       const key = `${id}:${dc?.id ?? ""}`;
@@ -570,6 +563,7 @@ function CardDrawer(props: {
             {(pid) => <button class="kb-parent link" onClick={() => props.onOpen(pid())}><Icon name="sub" size={13} /> {parentTitle()}</button>}
           </Show>
           <span class="grow" />
+          <button class="link mono muted sm" title={`${t("kb.copyId")}: ${k().id}`} onClick={() => navigator.clipboard?.writeText(k().id).catch(() => {})}>#{k().id.slice(0, 8)}</button>
           <button class="icon-btn" onClick={props.onClose} title={t("c.close")}><Icon name="close" /></button>
         </div>
         <textarea class="kb-dr-title" value={k().title} rows={1} onChange={(e) => e.currentTarget.value.trim() && props.onPatch({ title: e.currentTarget.value.trim() })} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), e.currentTarget.blur())} />

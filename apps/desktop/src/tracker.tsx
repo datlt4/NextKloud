@@ -70,7 +70,7 @@ function TasksView(props: { onOpenBoard: (boardId: string, cardId?: string) => v
                         <b>{it.title}</b>
                         <span class="muted xs">{it.column_title}{it.due_at ? ` · ${t("tk.dueAt", { d: fmtDay(it.due_at) })}` : ""}{it.done_at ? ` · ${t("tk.doneAt", { d: fmtDay(it.done_at) })}` : ""}</span>
                       </div>
-                      <button class="btn ghost sm" onClick={() => props.onOpenBoard(it.board_id, it.id)}>{t("tk.openBoard")}</button>
+                      <button class="btn ghost sm" onClick={() => props.onOpenBoard(it.board_id, it.id)}>{t("tk.openTask")}</button>
                     </div>
                   )}
                 </For>
