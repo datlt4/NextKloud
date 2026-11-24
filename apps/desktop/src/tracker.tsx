@@ -171,8 +171,9 @@ function HabitMonth(props: {
     for (let d = 1; d <= n; d++) out.push(`${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
     return out;
   });
-  // cửa sổ trượt: ô 30px cố định, hiện vừa khít khung (neo ở cuối, tràn sang tháng trước nếu rộng)
-  const per = () => Math.max(7, Math.floor(((wrapW() || 1200) - 200) / 34));
+  // cửa sổ trượt: ô 30px cố định, hiện vừa khít khung (neo ở cuối, tràn sang tháng trước nếu rộng);
+  // màn bé co tới tối thiểu 4 ngày cho khỏi tràn ngang
+  const per = () => Math.max(4, Math.floor(((wrapW() || 1200) - 200) / 34));
   const vis = createMemo(() => {
     const out: string[] = [];
     const e = endD();
