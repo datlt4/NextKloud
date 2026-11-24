@@ -206,18 +206,19 @@ function HabitCard(props: { h: Habit; onToggle: (day: string, on: boolean) => vo
               <span class="hb-day">{[0, 2, 4].includes(r) ? dayName(r) : ""}</span>
               <For each={Array.from({ length: weeks() }, (_, w) => w)}>
                 {(w) => {
+                  // dd/ds chỉ phụ thuộc cột/tuần (đổi khi resize); còn done()/todayMs() phải đọc TRỰC TIẾP
+                  // trong binding để Solid theo dõi — rút ra const ngoài sẽ đóng băng theo lần render đầu
+                  // (header vẫn tươi vì binding thẳng props, còn ô thì kẹt màu cũ: lúc thừa xanh, lúc thiếu xanh).
                   const dd = at(w, r);
                   const ds = dayStr(dd);
-                  const fut = dd.getTime() > todayMs();
-                  const on = done().has(ds);
                   return (
                     <button
                       class="hb-cell"
                       role="gridcell"
-                      classList={{ on, future: fut }}
-                      title={`${dd.toLocaleDateString(loc(), { day: "2-digit", month: "2-digit" })}${on ? t("tk.cellDone") : ""}`}
-                      disabled={fut}
-                      onClick={() => props.onToggle(ds, !on)}
+                      classList={{ on: done().has(ds), future: dd.getTime() > todayMs() }}
+                      title={`${dd.toLocaleDateString(loc(), { day: "2-digit", month: "2-digit" })}${done().has(ds) ? t("tk.cellDone") : ""}`}
+                      disabled={dd.getTime() > todayMs()}
+                      onClick={() => props.onToggle(ds, !done().has(ds))}
                     />
                   );
                 }}
