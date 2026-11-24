@@ -908,14 +908,15 @@ export default function App() {
 
   /** Kéo file/thư mục từ máy vào: duyệt cây thư mục (webkitGetAsEntry), giữ đường dẫn con.
    *  1 entry lỗi (file mất, symlink hỏng...) không được giết cả lô: bỏ qua, báo số lượng. */
-  const readDrop = async (dt: DataTransfer) => {
+  const readDrop = async (dt: DataTransfer, onCount?: (n: number) => void) => {
     const files: { file: File; rel: string }[] = [];
     const dirs: string[] = [];
-    let skipped = 0;
+    let skipped = 0, counted = 0;
     const walk = async (e: any, rel: string): Promise<void> => {
       try {
         if (e.isFile) {
           files.push({ file: await new Promise<File>((ok, no) => e.file(ok, no)), rel });
+          if (++counted % 256 === 0) onCount?.(counted);
         } else if (e.isDirectory) {
           const r = e.createReader();
           let n = 0;
@@ -935,10 +936,16 @@ export default function App() {
     const entries = Array.from(dt.items).map((it) => it.webkitGetAsEntry?.()).filter(Boolean);
     if (!entries.length) return { files: Array.from(dt.files).map((f) => ({ file: f, rel: f.name })), dirs, skipped };
     for (const e of entries) await walk(e, e!.name);
+    onCount?.(counted);
     return { files, dirs, skipped };
   };
   const externalDrag = (e: DragEvent) => !!e.dataTransfer?.types.includes("Files") && !e.dataTransfer.types.includes(DND);
   const panelDrop = {
+    onDragEnter: (e: DragEvent) => {
+      if (page() !== "files" || !externalDrag(e)) return;
+      e.preventDefault();
+      setDropping(true);
+    },
     onDragOver: (e: DragEvent) => {
       if (page() !== "files" || !externalDrag(e)) return;
       e.preventDefault();
@@ -954,7 +961,8 @@ export default function App() {
       // liệt kê hàng nghìn file mất vài giây: hiện ngay để user biết đang đọc, không tưởng bị treo
       setUpload({ name: t("f.dropReading"), pct: 0, left: 0 });
       try {
-        const { files, dirs, skipped } = await readDrop(e.dataTransfer!);
+        const { files, dirs, skipped } = await readDrop(e.dataTransfer!, (n) =>
+          setUpload({ name: t("f.dropReadingN", { n: fmtNum(n) }), pct: 0, left: 0 }));
         if (!files.length && !dirs.length) {
           setUpload(null);
           return setErr(t("f.dropEmpty"));
