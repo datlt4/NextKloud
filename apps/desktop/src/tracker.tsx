@@ -137,7 +137,14 @@ const createdDayOf = (h: Habit) => dayStr(new Date(h.created_at * 1000));
 
 // tone cam chủ đề: nhạt -> đậm, tuần bên phải (gần hiện tại) luôn đậm nhất
 const ORANGE5 = ["#f3c39d", "#eda46f", "#e07f45", "#cf5c26", "#a8431f"];
-const weekOfMonth = (d: Date) => Math.floor((d.getDate() - 1) / 7);
+// tuần chuẩn Thứ 2 -> CN: số thứ tự tuần trong tháng (1-based), tuần đầu có thể cụt
+const weekOfMonth = (d: Date) => {
+  const firstDowMon = (new Date(d.getFullYear(), d.getMonth(), 1).getDay() + 6) % 7;
+  const shift = (7 - firstDowMon) % 7; // số ngày của tuần đầu
+  const date = d.getDate();
+  if (shift === 0) return Math.ceil(date / 7);
+  return date <= shift ? 1 : 1 + Math.ceil((date - shift) / 7);
+};
 const parseDS = (ds: string) => new Date(Number(ds.slice(0, 4)), Number(ds.slice(5, 7)) - 1, Number(ds.slice(8, 10)));
 // tên dài cắt giữa: "Learn ... Agent", giữ title đầy đủ ở tooltip
 const truncMiddle = (s: string, max = 22) => (s.length <= max ? s : `${s.slice(0, 13).trimEnd()}...${s.slice(-6).trimStart()}`);
@@ -243,7 +250,7 @@ function HabitMonth(props: {
   });
   const bandLb = (gi: number) => {
     const g = groups()[gi];
-    const wn = t("tk.weekN", { n: g.w + 1 });
+    const wn = t("tk.weekN", { n: g.w });
     return g.y === vy() && g.m === vm() ? wn : `T${g.m + 1} · ${wn}`;
   };
   const rangeLb = () => {
