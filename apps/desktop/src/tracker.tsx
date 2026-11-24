@@ -107,6 +107,14 @@ function HabitsView(props: { onError: (m: string) => void }) {
       mutate((l) => l.map((x) => (x.id === h.id ? { ...x, days: on ? [...x.days, day] : x.days.filter((d) => d !== day), done_today: day === todayStr() ? on : x.done_today } : x)));
       await api.habitCheck(h.id, day, on);
     });
+  const patch = (h: Habit, b: { title?: string; archived?: boolean }) => run(() => api.updateHabit(h.id, b));
+  const del = (h: Habit) => {
+    if (confirm(t("tk.delAsk", { name: h.title }))) run(() => api.deleteHabit(h.id));
+  };
+  const rename = (h: Habit) => {
+    const nn = prompt(t("tk.namePrompt"), h.title)?.trim();
+    if (nn) patch(h, { title: nn });
+  };
   return (
     <div>
       <div class="tk-views">
@@ -115,34 +123,33 @@ function HabitsView(props: { onError: (m: string) => void }) {
       </div>
       <Show when={!list.loading} fallback={<p class="muted pad">{t("c.loading")}</p>}>
         <Show when={visible().length} fallback={<div class="empty"><Icon name="check" size={48} /><p>{t("tk.emptyHabit")}</p></div>}>
-          <For each={visible()}>{(h) => <HabitCard h={h} onToggle={(d, on) => toggle(h, d, on)} onPatch={(b) => run(() => api.updateHabit(h.id, b))} onDelete={() => confirm(t("tk.delAsk", { name: h.title })) && run(() => api.deleteHabit(h.id))} />}</For>
+          <HabitMonth habits={visible()} onToggle={toggle} onRename={rename} onPatch={patch} onDelete={del} />
+          <HabitYear habits={visible()} />
         </Show>
       </Show>
     </div>
   );
 }
 
-function HabitDayCell(props: { ds: string; days: () => Set<string>; onToggle: (day: string, on: boolean) => void }) {
-  const label = () => {
-    const [y, m, d] = props.ds.split("-").map(Number);
-    return new Date(y, m - 1, d).toLocaleDateString(loc(), { day: "2-digit", month: "2-digit" });
-  };
-  const fut = () => props.ds > todayStr();
-  const on = () => props.days().has(props.ds);
-  return (
-    <button
-      class="hb-cell"
-      role="gridcell"
-      classList={{ on: on(), future: fut() }}
-      title={`${label()}${on() ? t("tk.cellDone") : ""}`}
-      disabled={fut()}
-      onClick={() => props.onToggle(props.ds, !on())}
-    />
-  );
-}
-const HB_CELL = 12, HB_GAP = 3, HB_DAYW = 30, HB_WEEKS_MIN = 13, HB_WEEKS_MAX = 260;
-function HabitCard(props: { h: Habit; onToggle: (day: string, on: boolean) => void; onPatch: (b: { title?: string; archived?: boolean }) => void; onDelete: () => void }) {
-  const done = () => new Set(props.h.days);
+// Ngày tạo habit (YYYY-MM-DD): các ô trước ngày này bị disable, thêm giữa chừng không ảnh hưởng số liệu cũ.
+const createdDayOf = (h: Habit) => dayStr(new Date(h.created_at * 1000));
+
+const WEEK_COLORS = ["#8b5cf6", "#3b82f6", "#14b8a6", "#ec4899", "#10b981"];
+const weekOfMonth = (d: Date) => Math.floor((d.getDate() - 1) / 7);
+
+function HabitMonth(props: {
+  habits: Habit[];
+  onToggle: (h: Habit, day: string, on: boolean) => void;
+  onRename: (h: Habit) => void;
+  onPatch: (h: Habit, b: { archived?: boolean }) => void;
+  onDelete: (h: Habit) => void;
+}) {
+  const nowD = new Date();
+  const curY = nowD.getFullYear(), curM = nowD.getMonth();
+  const [vy, setVy] = createSignal(curY);
+  const [vm, setVm] = createSignal(curM);
+  const [page, setPage] = createSignal(0);
+  const [manual, setManual] = createSignal(false);
   const [wrapW, setWrapW] = createSignal(0);
   let wrapEl!: HTMLDivElement;
   onMount(() => {
@@ -151,14 +158,166 @@ function HabitCard(props: { h: Habit; onToggle: (day: string, on: boolean) => vo
     setWrapW(wrapEl.clientWidth);
     onCleanup(() => ro.disconnect());
   });
+  const days = createMemo(() => {
+    const y = vy(), m = vm();
+    const n = new Date(y, m + 1, 0).getDate();
+    const out: string[] = [];
+    for (let d = 1; d <= n; d++) out.push(`${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
+    return out;
+  });
+  // màn to hiện cả tháng, hẹp hơn hiện 2 tuần, hẹp nữa hiện 1 tuần
+  const per = () => {
+    const fit = Math.floor(((wrapW() || 1200) - 200) / 32);
+    const n = days().length;
+    if (fit >= n) return n;
+    if (fit >= 14) return 14;
+    return 7;
+  };
+  const pages = () => Math.max(1, Math.ceil(days().length / per()));
+  const isCur = () => vy() === curY && vm() === curM;
+  const todayN = nowD.getDate();
+  const autoPage = () => (isCur() ? Math.min(pages() - 1, Math.floor((todayN - 1) / per())) : 0);
+  const pg = () => (manual() ? Math.min(page(), pages() - 1) : autoPage());
+  const vis = createMemo(() => days().slice(pg() * per(), pg() * per() + per()));
+  const goMonth = (d: number) => {
+    const nd = new Date(vy(), vm() + d, 1);
+    // không qua tháng hiện tại (ô tương lai không chấm được)
+    if (nd.getFullYear() > curY || (nd.getFullYear() === curY && nd.getMonth() > curM)) return;
+    setVy(nd.getFullYear());
+    setVm(nd.getMonth());
+    setManual(false);
+  };
+  const goToday = () => {
+    setVy(curY);
+    setVm(curM);
+    setManual(false);
+  };
+  const sets = createMemo(() => new Map(props.habits.map((h) => [h.id, new Set(h.days)])));
+  const doneOn = (h: Habit, ds: string) => sets().get(h.id)?.has(ds) ?? false;
+  const stats = createMemo(() => {
+    let done = 0, poss = 0;
+    for (const h of props.habits) {
+      const cd = createdDayOf(h);
+      for (const ds of days()) {
+        if (ds < cd || ds > todayStr()) continue;
+        poss++;
+        if (doneOn(h, ds)) done++;
+      }
+    }
+    return { n: props.habits.length, done, poss, pct: poss ? (done / poss) * 100 : 0 };
+  });
+  const monthLabel = () => new Date(vy(), vm(), 1).toLocaleDateString(loc(), { month: "long", year: "numeric" });
+  const dwName = (ds: string) => {
+    const [y, m, d] = ds.split("-").map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(loc(), { weekday: "short" });
+  };
+  const cellTitle = (h: Habit, ds: string) => {
+    const [y, m, d] = ds.split("-").map(Number);
+    const lb = new Date(y, m - 1, d).toLocaleDateString(loc(), { day: "2-digit", month: "2-digit" });
+    return `${h.title} · ${lb}${doneOn(h, ds) ? t("tk.cellDone") : ""}`;
+  };
+  return (
+    <section class="tk-habit hm">
+      <div class="hm-top">
+        <div class="hm-title">
+          <button class="icon-btn sm" onClick={() => goMonth(-1)} title={t("tk.prevM")}>‹</button>
+          <b>{monthLabel()}</b>
+          <button class="icon-btn sm" disabled={isCur()} onClick={() => goMonth(1)} title={t("tk.nextM")}>›</button>
+          <Show when={!isCur()}>
+            <button class="btn ghost sm" onClick={goToday}>{t("tk.todayBtn")}</button>
+          </Show>
+        </div>
+        <div class="hm-stats">
+          <span class="muted xs">{t("tk.numHabits")}: <b>{fmtNum(stats().n)}</b></span>
+          <span class="muted xs">{t("tk.completedM")}: <b>{fmtNum(stats().done)}</b></span>
+          <span class="hm-bar"><i style={{ width: `${Math.min(100, stats().pct)}%` }} /></span>
+          <span class="muted xs"><b>{stats().pct.toFixed(2)}%</b></span>
+        </div>
+      </div>
+      <Show when={pages() > 1}>
+        <div class="hm-pager">
+          <button class="icon-btn sm" disabled={pg() === 0} onClick={() => { setPage(pg() - 1); setManual(true); }}>‹</button>
+          <span class="muted xs">{pg() * per() + 1}–{Math.min(days().length, pg() * per() + per())}/{days().length}</span>
+          <button class="icon-btn sm" disabled={pg() >= pages() - 1} onClick={() => { setPage(pg() + 1); setManual(true); }}>›</button>
+        </div>
+      </Show>
+      <div class="hm-wrap" ref={wrapEl}>
+        <div class="hm-grid" style={{ "grid-template-columns": `minmax(150px, 1fr) repeat(${vis().length}, 30px)` }}>
+          <span class="hm-head-name">{t("tk.myHabits")}</span>
+          <For each={vis()}>
+            {(ds, i) => {
+              const d = new Date(ds.slice(0, 4) + "/" + ds.slice(5, 7) + "/" + ds.slice(8, 10));
+              const w = weekOfMonth(d);
+              const first = i() === 0 || weekOfMonth(new Date(vis()[i() - 1].slice(0, 4) + "/" + vis()[i() - 1].slice(5, 7) + "/" + vis()[i() - 1].slice(8, 10))) !== w;
+              return (
+                <span class="hm-wk" classList={{ today: ds === todayStr() }} style={{ background: WEEK_COLORS[w % 5] }}>
+                  {first ? t("tk.weekN", { n: w + 1 }) : ""}
+                </span>
+              );
+            }}
+          </For>
+          <span />
+          <For each={vis()}>
+            {(ds) => <span class="hm-dw" classList={{ today: ds === todayStr() }}>{dwName(ds)}</span>}
+          </For>
+          <span />
+          <For each={vis()}>
+            {(ds) => <span class="hm-dn" classList={{ today: ds === todayStr() }}>{Number(ds.slice(8, 10))}{ds === todayStr() ? " ●" : ""}</span>}
+          </For>
+          <For each={props.habits}>
+            {(h) => (
+              <>
+                <span class="hm-name" title={h.title}>
+                  <span class="hm-name-t">{h.title}</span>
+                  <span class="hm-acts">
+                    <button class="icon-btn sm" title={t("c.edit")} onClick={() => props.onRename(h)}><Icon name="edit" size={12} /></button>
+                    <button class="icon-btn sm" title={h.archived ? t("tk.unarchive") : t("tk.archive")} onClick={() => props.onPatch(h, { archived: !h.archived })}><Icon name="archive" size={12} /></button>
+                    <button class="icon-btn sm danger" title={t("c.delete")} onClick={() => props.onDelete(h)}><Icon name="trash" size={12} /></button>
+                  </span>
+                </span>
+                <For each={vis()}>
+                  {(ds) => {
+                    const dis = ds > todayStr() || ds < createdDayOf(h);
+                    const on = doneOn(h, ds);
+                    const d = new Date(Number(ds.slice(0, 4)), Number(ds.slice(5, 7)) - 1, Number(ds.slice(8, 10)));
+                    const wc = WEEK_COLORS[weekOfMonth(d) % 5];
+                    return (
+                      <button
+                        class="hm-cell"
+                        classList={{ on, today: ds === todayStr() }}
+                        style={on ? { background: wc, "border-color": wc } : {}}
+                        title={cellTitle(h, ds)}
+                        disabled={dis}
+                        onClick={() => props.onToggle(h, ds, !on)}
+                      >{on ? "✓" : ""}</button>
+                    );
+                  }}
+                </For>
+              </>
+            )}
+          </For>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function HabitYear(props: { habits: Habit[] }) {
+  const [wrapW, setWrapW] = createSignal(0);
+  let wrapEl!: HTMLDivElement;
+  onMount(() => {
+    const ro = new ResizeObserver(() => setWrapW(wrapEl.clientWidth));
+    ro.observe(wrapEl);
+    setWrapW(wrapEl.clientWidth);
+    onCleanup(() => ro.disconnect());
+  });
+  const CELL = 12, GAP = 3, DAYW = 30;
+  const weeks = () => Math.max(13, Math.min(53, Math.floor(((wrapW() || 1200) - DAYW) / (CELL + GAP))));
   const todayMs = () => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
     return d.getTime();
   };
-  // số tuần vừa khung hiện tại
-  const weeks = () => Math.max(HB_WEEKS_MIN, Math.min(HB_WEEKS_MAX, Math.floor(((wrapW() || 1200) - HB_DAYW) / (HB_CELL + HB_GAP))));
-  // Thứ 2 của tuần đầu (cột trái nhất)
   const startMon = createMemo(() => {
     const m = new Date(todayMs());
     m.setDate(m.getDate() - ((m.getDay() + 6) % 7) - 7 * (weeks() - 1));
@@ -169,8 +328,6 @@ function HabitCard(props: { h: Habit; onToggle: (day: string, on: boolean) => vo
     d.setDate(startMon().getDate() + w * 7 + r);
     return d;
   };
-  // nhãn tháng: cột đầu tiên mang tháng mới; tháng Một hiện số năm (phân biệt các năm).
-  // 2 nhãn cách nhau < 3 cột (vd Nov/Dec 2025 đầu chart) thì bỏ nhãn cũ, giữ tháng sau.
   const monthCells = createMemo(() => {
     const out: string[] = [];
     let prev = -1, lastW = -99;
@@ -189,7 +346,6 @@ function HabitCard(props: { h: Habit; onToggle: (day: string, on: boolean) => vo
     }
     return out;
   });
-  // chuỗi ngày (YYYY-MM-DD) từng ô theo hàng — item của For nên đổi là vẽ lại đúng vị trí sau resize
   const rowDays = (r: number) => {
     const n = weeks();
     const s = startMon();
@@ -201,45 +357,66 @@ function HabitCard(props: { h: Habit; onToggle: (day: string, on: boolean) => vo
     }
     return out;
   };
-  // nhãn Mon/Wed/Fri theo locale (01/01/2024 là Thứ 2)
   const dayName = (r: number) => new Date(2024, 0, 1 + r).toLocaleDateString(loc(), { weekday: "short" });
-  const rangeCount = createMemo(() => [...done()].filter((d) => Date.parse(d) >= startMon().getTime()).length);
-  const rangeMonths = createMemo(() => Math.max(1, Math.round((weeks() * 7) / 30.44)));
-  const rename = () => {
-    const nn = prompt(t("tk.namePrompt"), props.h.title)?.trim();
-    if (nn) props.onPatch({ title: nn });
+  // tổng hợp cả năm: mỗi ô 1 ngày, đậm dần theo % habit đã chấm (0–100% chia 4 nấc)
+  const info = (ds: string) => {
+    let done = 0, act = 0;
+    for (const h of props.habits) {
+      if (h.archived || ds < createdDayOf(h) || ds > todayStr()) continue;
+      act++;
+      if (h.days.includes(ds)) done++;
+    }
+    const pct = act ? done / act : 0;
+    const lv = pct <= 0 ? 0 : pct <= 0.25 ? 1 : pct <= 0.5 ? 2 : pct <= 0.75 ? 3 : 4;
+    return { done, act, lv };
   };
+  const cellTitle = (ds: string) => {
+    const [y, m, d] = ds.split("-").map(Number);
+    const lb = new Date(y, m - 1, d).toLocaleDateString(loc(), { day: "2-digit", month: "2-digit" });
+    const { done, act } = info(ds);
+    return `${lb}: ${done}/${act}`;
+  };
+  const total = createMemo(() => {
+    const s = startMon().getTime();
+    let n = 0;
+    for (const h of props.habits) for (const d of h.days) if (Date.parse(d) >= s) n++;
+    return n;
+  });
+  const rangeMonths = createMemo(() => Math.max(1, Math.round((weeks() * 7) / 30.44)));
   return (
-    <section class="tk-habit" classList={{ arch: props.h.archived }}>
+    <section class="tk-habit">
       <div class="tk-habit-head">
-        <b>{props.h.title}</b>
-        <span class="tk-streak" title={t("tk.streakTip")}>🔥 {fmtNum(props.h.streak)}</span>
-        <span class="muted xs">{t("tk.totalN", { n: fmtNum(props.h.total) })}</span>
+        <b>{t("tk.yearStats")}</b>
         <span class="grow" />
-        <button class={props.h.done_today ? "btn primary sm" : "btn ghost sm"} onClick={() => props.onToggle(todayStr(), !props.h.done_today)}>
-          {props.h.done_today ? t("tk.doneToday") : t("tk.checkToday")}
-        </button>
-        <button class="icon-btn sm" title={t("c.edit")} onClick={rename}><Icon name="edit" size={14} /></button>
-        <button class="icon-btn sm" title={props.h.archived ? t("tk.unarchive") : t("tk.archive")} onClick={() => props.onPatch({ archived: !props.h.archived })}><Icon name="archive" size={14} /></button>
-        <button class="icon-btn sm danger" title={t("c.delete")} onClick={props.onDelete}><Icon name="trash" size={14} /></button>
       </div>
       <div class="hb" ref={wrapEl}>
-        <div class="hb-chart" role="grid" aria-label={t("tk.gridLabel", { name: props.h.title })}
-          style={{ "grid-template-columns": `${HB_DAYW}px repeat(${weeks()}, ${HB_CELL}px)` }}>
+        <div class="hb-chart" role="grid" aria-label={t("tk.yearStats")}
+          style={{ "grid-template-columns": `${DAYW}px repeat(${weeks()}, ${CELL}px)` }}>
           <span />
           <For each={monthCells()}>{(m) => <span class="hb-mon">{m}</span>}</For>
           <For each={[0, 1, 2, 3, 4, 5, 6]}>
             {(r) => (<>
               <span class="hb-day">{[0, 2, 4].includes(r) ? dayName(r) : ""}</span>
               <For each={rowDays(r)}>
-                {(ds) => <HabitDayCell ds={ds} days={done} onToggle={props.onToggle} />}
+                {(ds) => {
+                  const { lv } = info(ds);
+                  const fut = ds > todayStr();
+                  return (
+                    <span
+                      class="hb-cell hy"
+                      role="img"
+                      classList={{ [`lv${lv}`]: lv > 0, future: fut }}
+                      title={cellTitle(ds)}
+                    />
+                  );
+                }}
               </For>
             </>)}
           </For>
         </div>
         <div class="hb-foot">
-          <span>{t("tk.yearN", { n: fmtNum(rangeCount()), m: rangeMonths() })}</span>
-          <span class="hb-legend">{t("tk.less")}<i class="hb-sw" /><i class="hb-sw on" />{t("tk.more")}</span>
+          <span>{t("tk.yearN", { n: fmtNum(total()), m: rangeMonths() })}</span>
+          <span class="hb-legend">{t("tk.less")}<i class="hb-sw hy" /><i class="hb-sw hy lv1" /><i class="hb-sw hy lv2" /><i class="hb-sw hy lv3" /><i class="hb-sw hy lv4" />{t("tk.more")}</span>
         </div>
       </div>
     </section>

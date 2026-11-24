@@ -855,6 +855,39 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 .hb-legend { margin-left: auto; display: flex; align-items: center; gap: 3px; }
 .hb-sw { width: 12px; height: 12px; border-radius: 3px; background: var(--hover); border: 1px solid var(--line); }
 .hb-sw.on { background: #16a34a; border-color: #16a34a; }
+/* habit: matrix theo tháng — hàng = habit, cột = ngày, gom theo tuần */
+.hm-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.hm-title { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.hm-stats { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-left: auto; }
+.hm-bar { width: 110px; height: 8px; border-radius: 99px; background: var(--hover); border: 1px solid var(--line); overflow: hidden; }
+.hm-bar i { display: block; height: 100%; background: var(--accent); }
+.hm-pager { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.hm-wrap { overflow-x: auto; scrollbar-width: thin; }
+.hm-grid { display: grid; gap: 4px; align-items: center; width: max-content; min-width: 100%; }
+.hm-head-name { font-size: 12px; font-weight: 700; color: var(--muted); }
+.hm-wk { font-size: 10px; font-weight: 700; color: #fff; border-radius: 4px; text-align: center; line-height: 18px; height: 18px; white-space: nowrap; overflow: hidden; }
+.hm-wk.today { outline: 2px solid var(--accent); outline-offset: 1px; }
+.hm-dw, .hm-dn { font-size: 9px; line-height: 12px; text-align: center; color: var(--muted); white-space: nowrap; }
+.hm-dw.today, .hm-dn.today { color: var(--accent-text); font-weight: 700; }
+.hm-name { display: flex; align-items: center; gap: 6px; min-width: 0; position: sticky; left: 0; background: var(--surface); padding-right: 6px; z-index: 1; }
+.hm-name-t { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hm-acts { display: flex; gap: 0; opacity: 0; }
+.hm-name:hover .hm-acts, .hm-name:focus-within .hm-acts { opacity: 1; }
+.hm-cell { width: 26px; height: 26px; border-radius: 6px; background: var(--hover); border: 1px solid var(--line); color: transparent; font-size: 14px; font-weight: 700; padding: 0; cursor: pointer; justify-self: center; }
+.hm-cell.on { color: #fff; }
+.hm-cell.today { outline: 2px solid var(--accent); outline-offset: 1px; }
+.hm-cell:disabled { cursor: default; opacity: .45; }
+@media (hover: none) { .hm-acts { opacity: 1; } }
+/* habit: heatmap tổng cả năm — mỗi ô 1 ngày, đậm dần theo % habit đã chấm */
+.hb-cell.hy { cursor: default; }
+.hb-cell.hy.lv1 { background: rgba(22, 163, 74, .25); border-color: rgba(22, 163, 74, .4); }
+.hb-cell.hy.lv2 { background: rgba(22, 163, 74, .5); border-color: rgba(22, 163, 74, .6); }
+.hb-cell.hy.lv3 { background: rgba(22, 163, 74, .75); border-color: rgba(22, 163, 74, .8); }
+.hb-cell.hy.lv4 { background: #16a34a; border-color: #16a34a; }
+.hb-sw.hy.lv1 { background: rgba(22, 163, 74, .25); border-color: rgba(22, 163, 74, .4); }
+.hb-sw.hy.lv2 { background: rgba(22, 163, 74, .5); border-color: rgba(22, 163, 74, .6); }
+.hb-sw.hy.lv3 { background: rgba(22, 163, 74, .75); border-color: rgba(22, 163, 74, .8); }
+.hb-sw.hy.lv4 { background: #16a34a; border-color: #16a34a; }
 @media (max-width: 640px) {
   .tk-row .btn { padding: 4px 8px; font-size: 12px; }
 }
