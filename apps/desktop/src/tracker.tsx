@@ -316,6 +316,7 @@ function HabitMonth(props: {
               <>
                 <span class="hm-name" title={h.title}>
                   <span class="hm-name-t">{truncMiddle(h.title)}</span>
+                  <button class="icon-btn sm hm-more" title={t("f.menu")}><Icon name="more" size={12} /></button>
                   <span class="hm-acts">
                     <button class="icon-btn sm" title={t("c.edit")} onClick={() => props.onRename(h)}><Icon name="edit" size={12} /></button>
                     <button class="icon-btn sm" title={h.archived ? t("tk.unarchive") : t("tk.archive")} onClick={() => props.onPatch(h, { archived: !h.archived })}><Icon name="archive" size={12} /></button>

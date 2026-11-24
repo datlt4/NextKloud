@@ -880,7 +880,11 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 .hm-cell.on { color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.3); }
 .hm-cell.today { background: var(--accent-soft); }
 .hm-cell:disabled { cursor: default; opacity: .45; }
-@media (hover: none) { .hm-acts { opacity: 1; } }
+.hm-more { display: none; }
+@media (hover: none) {
+  .hm-more { display: inline-flex; }
+  .hm-name:focus-within .hm-acts { opacity: 1; }
+}
 /* habit: heatmap tổng cả năm — mỗi ô 1 ngày, đậm dần theo % habit đã chấm (tone cam) */
 .hb-cell.hy { cursor: default; }
 .hb-cell.hy.lv1 { background: rgba(217, 101, 59, .25); border-color: rgba(217, 101, 59, .4); }
