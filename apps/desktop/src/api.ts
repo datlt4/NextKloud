@@ -457,6 +457,9 @@ export const api = {
   async updateCard(id: string, b: KCardPatch) {
     return (await req(`/api/cards/${id}`, { method: "PATCH", headers: JSON_H, body: JSON.stringify(b) })).json() as Promise<KCard>;
   },
+  async card(id: string) {
+    return (await req(`/api/cards/${id}`)).json() as Promise<KCard>;
+  },
   async deleteCard(id: string) {
     await req(`/api/cards/${id}`, { method: "DELETE" });
   },

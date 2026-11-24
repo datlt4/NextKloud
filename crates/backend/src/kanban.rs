@@ -422,6 +422,11 @@ pub async fn delete_card(State(s): State<AppState>, user: AuthUser, Path(id): Pa
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// 1 card theo id (mở drawer từ Tracker mà không cần tải cả board).
+pub async fn card_by_id(State(s): State<AppState>, user: AuthUser, Path(id): Path<Uuid>) -> Result<Json<Card>, AppError> {
+    Ok(Json(card(&s.db, user.id, id).await?.0))
+}
+
 /// Subtask của 1 card (kể cả đã xong nằm trong phần thu gọn).
 #[derive(Deserialize)]
 pub struct ParentQuery {

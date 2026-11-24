@@ -3,6 +3,8 @@ import { api, type Habit, type TaskItem, type TaskView } from "./api";
 import { fmtNum, loc, t } from "./i18n";
 import { errText } from "./fileops";
 import { Icon } from "./icons";
+import { TaskDrawer } from "./kanban";
+import { ViewerOverlay } from "./viewers/ViewerOverlay";
 
 const fmtDay = (s: number) => new Date(s * 1000).toLocaleDateString(loc(), { day: "2-digit", month: "2-digit" });
 const dayStr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -10,7 +12,7 @@ const todayStr = () => dayStr(new Date());
 
 const VIEWS: TaskView[] = ["overdue", "today", "week", "all", "done"];
 
-export function TrackerPage(props: { tab: "tasks" | "habits"; onTab: (t: "tasks" | "habits") => void; onOpenBoard: (boardId: string, cardId?: string) => void; onError: (m: string) => void }) {
+export function TrackerPage(props: { tab: "tasks" | "habits"; onTab: (t: "tasks" | "habits") => void; onError: (m: string) => void }) {
   const tab = () => props.tab;
   const setTab = props.onTab;
   return (
@@ -25,7 +27,7 @@ export function TrackerPage(props: { tab: "tasks" | "habits"; onTab: (t: "tasks"
       <div class="tk-cols">
         <div class="tk-col tk-col-tasks">
           <h3 class="tk-col-title">{t("tk.tasks")}</h3>
-          <TasksView onOpenBoard={props.onOpenBoard} onError={props.onError} />
+          <TasksView onError={props.onError} />
         </div>
         <div class="tk-col tk-col-habits">
           <h3 class="tk-col-title">{t("tk.habits")}</h3>
@@ -36,9 +38,12 @@ export function TrackerPage(props: { tab: "tasks" | "habits"; onTab: (t: "tasks"
   );
 }
 
-function TasksView(props: { onOpenBoard: (boardId: string, cardId?: string) => void; onError: (m: string) => void }) {
+function TasksView(props: { onError: (m: string) => void }) {
   const [view, setView] = createSignal<TaskView>("overdue");
   const [items, { refetch }] = createResource(view, (v) => api.tasks(v).catch((e) => (props.onError(errText(e)), [] as TaskItem[])), { initialValue: [] });
+  // mở task ngay tại Tracker (không nhảy sang Deck) + xem file đính kèm tại chỗ
+  const [openTask, setOpenTask] = createSignal<{ board: string; card: string } | null>(null);
+  const [viewPath, setViewPath] = createSignal<string | null>(null);
   const groups = createMemo(() => {
     const m = new Map<string, TaskItem[]>();
     for (const t of items()) {
@@ -57,7 +62,8 @@ function TasksView(props: { onOpenBoard: (boardId: string, cardId?: string) => v
         <span class="grow" />
         <button class="btn ghost sm" onClick={() => refetch()} title={t("tk.reload")}><Icon name="menu" size={14} /> {t("tk.reload")}</button>
       </div>
-      <Show when={!items.loading} fallback={<p class="muted pad">{t("c.loading")}</p>}>
+      {/* giữ list khi refetch (không unmount/remount gây blink + mất scroll) */}
+      <Show when={groups().length || !items.loading} fallback={<p class="muted pad">{t("c.loading")}</p>}>
         <Show when={items().length} fallback={<div class="empty"><Icon name="check" size={48} /><p>{view() === "done" ? t("tk.emptyDone") : t("tk.emptyOpen")}</p></div>}>
           <For each={groups()}>
             {([board, list]) => (
@@ -71,7 +77,7 @@ function TasksView(props: { onOpenBoard: (boardId: string, cardId?: string) => v
                         <b>{it.title}</b>
                         <span class="muted xs">{it.column_title}{it.due_at ? ` · ${t("tk.dueAt", { d: fmtDay(it.due_at) })}` : ""}{it.done_at ? ` · ${t("tk.doneAt", { d: fmtDay(it.done_at) })}` : ""}</span>
                       </div>
-                      <button class="btn ghost sm" onClick={() => props.onOpenBoard(it.board_id, it.id)}>{t("tk.openTask")}</button>
+                      <button class="btn ghost sm" onClick={() => setOpenTask({ board: it.board_id, card: it.id })}>{t("tk.openTask")}</button>
                     </div>
                   )}
                 </For>
@@ -79,6 +85,12 @@ function TasksView(props: { onOpenBoard: (boardId: string, cardId?: string) => v
             )}
           </For>
         </Show>
+      </Show>
+      <Show when={openTask()} keyed>
+        {(o) => <TaskDrawer boardId={o.board} cardId={o.card} onClose={() => setOpenTask(null)} onChanged={() => refetch()} onOpenFile={setViewPath} onError={props.onError} />}
+      </Show>
+      <Show when={viewPath()}>
+        {(p) => <ViewerOverlay path={p()} onClose={() => setViewPath(null)} onError={props.onError} />}
       </Show>
     </div>
   );

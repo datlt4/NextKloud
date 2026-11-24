@@ -1313,7 +1313,7 @@ export default function App() {
                     <button class="icon-btn sm" onClick={() => setErr("")}><Icon name="close" size={14} /></button>
                   </div>
                 </Show>
-                <KanbanPage boardId={boardId()} onBoard={(id) => { setFlashCard(null); setBoardId(id); }} flashId={flashCard()} onFlashed={() => setFlashCard(null)} onError={setErr} onOpenFile={(p) => openAt(p, "")} />
+                <KanbanPage boardId={boardId()} onBoard={(id) => { setFlashCard(null); setBoardId(id); }} flashId={flashCard()} onFlashed={() => setFlashCard(null)} onError={setErr} />
               </Show>
               <Show when={page() === "notes"}>
                 <NotesPage onOpen={openAt} onError={setErr} />
@@ -1325,13 +1325,7 @@ export default function App() {
                     <button class="icon-btn sm" onClick={() => setErr("")}><Icon name="close" size={14} /></button>
                   </div>
                 </Show>
-                <TrackerPage tab={trackerTab()} onTab={setTrackerTab} onOpenBoard={(id, card) => {
-                  setFlashCard(card ?? null);
-                  setBoardId(id);
-                  setPage("kanban");
-                  const h = card ? `#/kanban/${id}#${card.slice(0, 8)}` : `#/kanban/${id}`;
-                  if (location.hash !== h) history.replaceState(null, "", h);
-                }} onError={setErr} />
+                <TrackerPage tab={trackerTab()} onTab={setTrackerTab} onError={setErr} />
               </Show>
               <Show when={page() === "trash"}>
                 <Show when={err()}>

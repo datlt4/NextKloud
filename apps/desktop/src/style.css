@@ -401,6 +401,12 @@ input { font: inherit; color: var(--text); }
 /* viewer */
 .viewer { flex: 1; overflow: auto; padding: 4px 20px 40px; }
 .viewer > .btn { margin-bottom: 12px; }
+/* xem file ngay tại Deck/Tracker: phủ toàn màn hình, trên cả drawer (z 60) */
+.viewer-bg { position: fixed; inset: 0; z-index: 70; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 20px; }
+.viewer-sheet { width: min(1024px, 100%); height: min(92dvh, 900px); display: flex; flex-direction: column; border-radius: 14px; background: var(--surface); overflow: hidden; }
+.viewer-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.viewer-bar .fname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.viewer-sheet .viewer { flex: 1; min-height: 0; }
 
 /* markdown */
 .md-body { line-height: 1.75; max-width: 860px; margin: 0 auto; font-size: var(--read-size, 15px); font-family: var(--font-read, inherit); }

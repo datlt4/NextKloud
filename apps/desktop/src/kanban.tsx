@@ -4,6 +4,7 @@ import { api, type DeckPreview, type KBoard, type KCard, type KCardPatch, type K
 import { fmtNum, loc, t } from "./i18n";
 import { errText } from "./fileops";
 import { Icon, kindOf } from "./icons";
+import { ViewerOverlay } from "./viewers/ViewerOverlay";
 
 const DONE_LIMIT = 10;
 const fmtDay = (s: number) => new Date(s * 1000).toLocaleDateString(loc(), { day: "2-digit", month: "2-digit", year: "2-digit" });
@@ -18,9 +19,11 @@ const checklist = (md: string): [number, number] => {
   return [all.filter((l) => /\[[xX]\]/.test(l)).length, all.length];
 };
 
-export function KanbanPage(props: { boardId: string | null; onBoard: (id: string | null) => void; onError: (m: string) => void; onOpenFile: (path: string) => void; flashId?: string | null; onFlashed?: () => void }) {
+export function KanbanPage(props: { boardId: string | null; onBoard: (id: string | null) => void; onError: (m: string) => void; flashId?: string | null; onFlashed?: () => void }) {
   const [boards, { refetch }] = createResource(() => api.boards(), { initialValue: [] });
   const [importing, setImporting] = createSignal(false);
+  // xem file đính kèm ngay tại Deck (không nhảy sang All Files)
+  const [viewPath, setViewPath] = createSignal<string | null>(null);
   // có file xuất Deck mà user được nhập (admin hoặc chủ dữ liệu) thì mới hiện nút
   const [canImport] = createResource(() => api.deckPreview().then((l) => l.length > 0, () => false));
   const active = () => boards().filter((b) => !b.archived);
@@ -66,13 +69,16 @@ export function KanbanPage(props: { boardId: string | null; onBoard: (id: string
         </div>
       </div>
       <Show when={props.boardId ? boards().find((b) => b.id === props.boardId) : undefined} keyed>
-        {(b) => <BoardView board={b} flashId={props.flashId} onFlashed={props.onFlashed} onOpenFile={props.onOpenFile} onError={props.onError} onChanged={refetch} onDeleted={() => { refetch(); props.onBoard(null); }} />}
+        {(b) => <BoardView board={b} flashId={props.flashId} onFlashed={props.onFlashed} onOpenFile={setViewPath} onError={props.onError} onChanged={refetch} onDeleted={() => { refetch(); props.onBoard(null); }} />}
       </Show>
       <Show when={!boards.loading && !boards().length}>
         <div class="empty"><Icon name="kanban" size={48} /><p>{t("kb.emptyBoard")}</p></div>
       </Show>
       <Show when={importing()}>
         <DeckImport onClose={() => setImporting(false)} onError={props.onError} onDone={async (id) => { setImporting(false); await refetch(); props.onBoard(id); }} />
+      </Show>
+      <Show when={viewPath()}>
+        {(p) => <ViewerOverlay path={p()} onClose={() => setViewPath(null)} onError={props.onError} />}
       </Show>
     </div>
   );
@@ -416,28 +422,28 @@ function BoardView(props: { board: KBoard; flashId?: string | null; onFlashed?: 
           </For>
         </div>
       </Show>
-      <Show when={openId() ? byId().get(openId()!) : undefined} keyed>
+      <Show when={openId() ? byId().get(openId()!) : undefined}>
         {(k) => (
           <CardDrawer
-            card={k}
+            card={k()}
             board={props.board}
             cols={cols()}
             cards={cards()}
             labelColor={labelColor}
             onClose={() => setOpenId(null)}
             onOpen={(id) => setOpenId(id)}
-            onPatch={(b) => patch(k.id, b)}
+            onPatch={(b) => patch(k().id, b)}
             onPut={put}
             onDelete={() =>
               run(async () => {
-                await api.deleteCard(k.id);
+                await api.deleteCard(k().id);
                 setOpenId(null);
                 await load();
               })
             }
             firstOpen={firstOpen()}
             firstDone={firstDone()}
-            cancelled={cancelCol(k.column_id)}
+            cancelled={cancelCol(k().column_id)}
             onOpenFile={props.onOpenFile}
             onError={props.onError}
           />
@@ -479,7 +485,7 @@ function CardItem(props: { card: KCard; parent?: KCard; cancelled?: boolean; lab
   );
 }
 
-function CardDrawer(props: {
+export function CardDrawer(props: {
   card: KCard;
   board: KBoard;
   cols: KColumn[];
@@ -567,9 +573,12 @@ function CardDrawer(props: {
   document.addEventListener("keydown", onKey);
   onCleanup(() => document.removeEventListener("keydown", onKey));
   createEffect(on(() => k().id, () => setEditDesc(false)));
+  // không keyed (tránh remount mất scroll khi patch): đổi card thì cuộn lên đầu tay
+  let aside!: HTMLElement;
+  createEffect(on(() => k().id, () => aside?.scrollTo?.({ top: 0 })));
   return (
     <div class="kb-drawer-bg" onClick={props.onClose}>
-      <aside class="kb-drawer glass" onClick={(e) => e.stopPropagation()}>
+      <aside class="kb-drawer glass" ref={aside} onClick={(e) => e.stopPropagation()}>
         <div class="kb-dr-head">
           <Show when={k().parent_id}>
             {(pid) => <button class="kb-parent link" onClick={() => props.onOpen(pid())}><Icon name="sub" size={13} /> {parentTitle()}</button>}
@@ -720,6 +729,59 @@ function CardDrawer(props: {
         </div>
       </aside>
     </div>
+  );
+}
+
+/** Drawer xem/sửa task từ Tracker (không rời trang): tự tải board + card. */
+export function TaskDrawer(props: { boardId: string; cardId: string; onClose: () => void; onChanged: () => void; onOpenFile: (path: string) => void; onError: (m: string) => void }) {
+  const [id, setId] = createSignal(props.cardId);
+  createEffect(on(() => props.cardId, (c) => setId(c)));
+  const [bd] = createResource(() => props.boardId, (b) => api.board(b, DONE_LIMIT));
+  const [card, { mutate }] = createResource(() => id(), (c) => api.card(c));
+  const cols = () => bd()?.columns ?? [];
+  const labelColor = (ti: string) => bd()?.board.labels.find((l) => l.title === ti)?.color ?? "#8b8f98";
+  const run = async (f: () => Promise<unknown>) => {
+    try {
+      await f();
+    } catch (e) {
+      props.onError(errText(e));
+    }
+  };
+  const put = (c: KCard) => mutate((old) => (old && old.id === c.id ? c : old));
+  const patch = (b: KCardPatch) =>
+    run(async () => {
+      const cur = card();
+      if (cur) put({ ...cur, ...b } as KCard);
+      put(await api.updateCard(card()!.id, b));
+      props.onChanged();
+    });
+  const firstOpen = () => cols().find((c) => !c.is_done && !c.is_cancel);
+  const firstDone = () => cols().find((c) => c.is_done);
+  const cancelCol = (cid: string) => !!cols().find((c) => c.id === cid)?.is_cancel;
+  return (
+    <Show when={card() && bd()} fallback={
+      <div class="kb-drawer-bg" onClick={props.onClose}>
+        <aside class="kb-drawer glass"><p class="muted pad">{t("c.loading")}</p></aside>
+      </div>
+    }>
+      <CardDrawer
+        card={card()!}
+        board={bd()!.board}
+        cols={cols()}
+        cards={card() ? [card()!] : []}
+        labelColor={labelColor}
+        onClose={props.onClose}
+        onOpen={(nid) => setId(nid)}
+        onPatch={patch}
+        onPut={put}
+        onDelete={() => run(async () => { await api.deleteCard(card()!.id); props.onChanged(); props.onClose(); })}
+        firstOpen={firstOpen()}
+        firstDone={firstDone()}
+        cancelled={cancelCol(card()!.column_id) || !!card()!.parent_cancelled}
+        onOpenFile={props.onOpenFile}
+        onError={props.onError}
+      />
+    </Show>
   );
 }
 

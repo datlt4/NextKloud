@@ -158,7 +158,7 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/columns/:id", axum::routing::patch(crate::kanban::update_column).delete(crate::kanban::delete_column))
         .route("/api/columns/:id/cards", get(crate::kanban::column_cards))
         .route("/api/cards", post(crate::kanban::create_card))
-        .route("/api/cards/:id", axum::routing::patch(crate::kanban::update_card).delete(crate::kanban::delete_card))
+        .route("/api/cards/:id", get(crate::kanban::card_by_id).patch(crate::kanban::update_card).delete(crate::kanban::delete_card))
         .route("/api/kanban/import/deck", get(crate::deck::preview).post(crate::deck::apply))
         .route("/api/cards/:id/subtasks", get(crate::kanban::subtasks))
         .route("/api/tasks", get(crate::tracker::tasks))
