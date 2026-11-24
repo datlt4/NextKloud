@@ -120,6 +120,7 @@ export default function App() {
     noticeTimer = window.setTimeout(() => setNotice(null), 8000);
   };
   const [setTab, setSetTab] = createSignal<SettingsTab>("profile");
+  const [trackerTab, setTrackerTab] = createSignal<"tasks" | "habits">("tasks");
   const openSettings = (t: SettingsTab) => {
     setSetTab(t);
     setPage("settings");
@@ -295,6 +296,7 @@ export default function App() {
     if (pg === "kanban") return boardId() ? `#/kanban/${boardId()}` : "#/kanban";
     // khu Bí mật: không đưa tên file/thư mục vào URL + lịch sử trình duyệt
     if (pg === "secret" || pg === "secret-trash" || isSecret(prefix()) || isSecret(open()?.path ?? "")) return "#/secret";
+    if (pg === "tasks") return trackerTab() === "habits" ? "#/tasks/habits" : "#/tasks";
     if (pg !== "files") return `#/${pg}`;
     const o = open();
     if (o) return `#/o/${encP(o.path)}`;
@@ -315,7 +317,8 @@ export default function App() {
       if (m?.[1] === "secret") await openSecret();
       else if (m?.[1] === "f") await load(rest);
       else if (m?.[1] === "o" && rest) await openAt(rest, "");
-      else if (m?.[1] === "notes" || m?.[1] === "trash" || m?.[1] === "tasks" || m?.[1] === "shared") setPage(m[1]);
+      else if (m?.[1] === "notes" || m?.[1] === "trash" || m?.[1] === "shared") setPage(m[1]);
+      else if (m?.[1] === "tasks") { setPage("tasks"); setTrackerTab(rest === "habits" ? "habits" : "tasks"); }
       else if (m?.[1] === "kanban") {
         // deep-link task: #/kanban/<board>#<id task> (id đầy đủ hoặc 8 ký tự đầu)
         const [bid, frag] = rest.split("#");
@@ -1322,7 +1325,7 @@ export default function App() {
                     <button class="icon-btn sm" onClick={() => setErr("")}><Icon name="close" size={14} /></button>
                   </div>
                 </Show>
-                <TrackerPage onOpenBoard={(id, card) => {
+                <TrackerPage tab={trackerTab()} onTab={setTrackerTab} onOpenBoard={(id, card) => {
                   setFlashCard(card ?? null);
                   setBoardId(id);
                   setPage("kanban");

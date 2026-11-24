@@ -10,8 +10,9 @@ const todayStr = () => dayStr(new Date());
 
 const VIEWS: TaskView[] = ["overdue", "today", "week", "all", "done"];
 
-export function TrackerPage(props: { onOpenBoard: (boardId: string, cardId?: string) => void; onError: (m: string) => void }) {
-  const [tab, setTab] = createSignal<"tasks" | "habits">("tasks");
+export function TrackerPage(props: { tab: "tasks" | "habits"; onTab: (t: "tasks" | "habits") => void; onOpenBoard: (boardId: string, cardId?: string) => void; onError: (m: string) => void }) {
+  const tab = () => props.tab;
+  const setTab = props.onTab;
   return (
     <div class="tracker" data-tab={tab()}>
       <div class="toolbar kb-bar">
