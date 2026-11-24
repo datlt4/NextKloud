@@ -13,7 +13,7 @@ const VIEWS: TaskView[] = ["overdue", "today", "week", "all", "done"];
 export function TrackerPage(props: { onOpenBoard: (id: string) => void; onError: (m: string) => void }) {
   const [tab, setTab] = createSignal<"tasks" | "habits">("tasks");
   return (
-    <div class="tracker">
+    <div class="tracker" data-tab={tab()}>
       <div class="toolbar kb-bar">
         <h2 class="tb-title"><Icon name="check" /> {t("tk.title")}</h2>
         <div class="kb-boards">
@@ -21,8 +21,16 @@ export function TrackerPage(props: { onOpenBoard: (id: string) => void; onError:
           <button class="chip" classList={{ on: tab() === "habits" }} onClick={() => setTab("habits")}>{t("tk.habits")}</button>
         </div>
       </div>
-      <Show when={tab() === "tasks"}><TasksView onOpenBoard={props.onOpenBoard} onError={props.onError} /></Show>
-      <Show when={tab() === "habits"}><HabitsView onError={props.onError} /></Show>
+      <div class="tk-cols">
+        <div class="tk-col tk-col-tasks">
+          <h3 class="tk-col-title">{t("tk.tasks")}</h3>
+          <TasksView onOpenBoard={props.onOpenBoard} onError={props.onError} />
+        </div>
+        <div class="tk-col tk-col-habits">
+          <h3 class="tk-col-title">{t("tk.habits")}</h3>
+          <HabitsView onError={props.onError} />
+        </div>
+      </div>
     </div>
   );
 }

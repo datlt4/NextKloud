@@ -1883,7 +1883,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nextkloud-backend"
-version = "0.1.39"
+version = "0.1.40"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -1915,7 +1915,7 @@ dependencies = [
 
 [[package]]
 name = "nextkloud-migrate"
-version = "0.1.39"
+version = "0.1.40"
 dependencies = [
  "serde",
  "serde_json",
