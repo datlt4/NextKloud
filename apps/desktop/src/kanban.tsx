@@ -572,10 +572,18 @@ export function CardDrawer(props: {
   const onKey = (e: KeyboardEvent) => e.key === "Escape" && !(e.target as HTMLElement).closest("textarea, input") && props.onClose();
   document.addEventListener("keydown", onKey);
   onCleanup(() => document.removeEventListener("keydown", onKey));
-  createEffect(on(() => k().id, () => setEditDesc(false)));
-  // không keyed (tránh remount mất scroll khi patch): đổi card thì cuộn lên đầu tay
+  // không keyed (tránh remount mất scroll khi patch). on(k().id) vẫn kích hoạt dù id không đổi
+  // nên tự so prev thủ công: chỉ reset editor + cuộn lên đầu khi đổi sang card khác.
   let aside!: HTMLElement;
-  createEffect(on(() => k().id, () => aside?.scrollTo?.({ top: 0 })));
+  let seenId = k().id;
+  createEffect(() => {
+    const id = k().id;
+    if (id !== seenId) {
+      seenId = id;
+      setEditDesc(false);
+      aside?.scrollTo?.({ top: 0 });
+    }
+  });
   return (
     <div class="kb-drawer-bg" onClick={props.onClose}>
       <aside class="kb-drawer glass" ref={aside} onClick={(e) => e.stopPropagation()}>
