@@ -105,7 +105,8 @@ function BoardView(props: { board: KBoard; flashId?: string | null; onFlashed?: 
     }
   };
   const byId = createMemo(() => new Map(cards().map((c) => [c.id, c])));
-  // Mở từ Due tasks / link #id: mở thẳng drawer của task. Task ở cột done ngoài đợt tải thì tải thêm rồi mở.
+  // Mở từ Due tasks / link #id: mở thẳng drawer của task. Task nằm ngoài đợt tải thì tải thêm
+  // từng đợt 50 tới khi thấy hoặc hết (dò mọi cột còn ẩn, không chỉ cột done).
   const moreTried = new Set<string>();
   const openById = (id: string) => {
     const c = cards().find((x) => x.id === id || x.id.startsWith(id));
@@ -121,9 +122,9 @@ function BoardView(props: { board: KBoard; flashId?: string | null; onFlashed?: 
     const list = cards();
     if (!id || loading() || !list.length) return;
     if (openById(id)) return;
-    const dc = cols().find((c) => c.is_done);
-    const key = `${id}:${dc?.id ?? ""}`;
-    if (dc && dc.total - loadedIn(dc) > 0 && !moreTried.has(key)) {
+    const dc = cols().find((c) => c.total - loadedIn(c) > 0);
+    const key = `${id}:${dc?.id ?? ""}:${dc ? loadedIn(dc) : 0}`;
+    if (dc && !moreTried.has(key)) {
       moreTried.add(key);
       more(dc);
     } else props.onFlashed?.();
