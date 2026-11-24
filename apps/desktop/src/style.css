@@ -805,7 +805,7 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 /* Kanban */
 .kanban { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .tracker { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.tk-cols { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.tk-cols { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 12px; }
 .tk-col { min-width: 0; }
 .tk-col-title { display: none; }
 /* màn bé: tab nào hiện tab đó (như cũ) */
