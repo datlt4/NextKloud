@@ -807,7 +807,10 @@ export default function App() {
 
   /** Chạy hàng đợi upload: lỗi 1 file không dừng cả lô, cuối cùng chỉ liệt kê file lỗi để thử lại. */
   const runUploads = async (jobs: UpJob[]) => {
-    if (!jobs.length) return refresh();
+    if (!jobs.length) {
+      setUpload(null);
+      return refresh();
+    }
     upCancel = false;
     setUpStat({ total: jobs.length, done: 0, ok: 0, fails: [], running: true });
     clearTimeout(upCloseTimer);
@@ -901,12 +904,18 @@ export default function App() {
       setDropping(false);
       if (page() !== "files" || !externalDrag(e)) return;
       e.preventDefault();
+      // liệt kê hàng nghìn file mất vài giây: hiện ngay để user biết đang đọc, không tưởng bị treo
+      setUpload({ name: t("f.dropReading"), pct: 0, left: 0 });
       try {
         const { files, dirs, skipped } = await readDrop(e.dataTransfer!);
-        if (!files.length && !dirs.length) return setErr(t("f.dropEmpty"));
+        if (!files.length && !dirs.length) {
+          setUpload(null);
+          return setErr(t("f.dropEmpty"));
+        }
         if (skipped) flash(t("f.dropSkip", { n: skipped }));
         doUpload(files, dirs);
       } catch (err) {
+        setUpload(null);
         fail(err, t("f.uploadErr"));
       }
     },
