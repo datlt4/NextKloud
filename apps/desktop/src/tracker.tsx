@@ -170,27 +170,58 @@ function HabitMonth(props: {
     for (let d = 1; d <= n; d++) out.push(`${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
     return out;
   });
-  // màn to hiện cả tháng, hẹp hơn hiện 2 tuần, hẹp nữa hiện 1 tuần
+  // ô cố định 30px như bản tiêu chuẩn (không co giãn): màn to hiện cả tháng,
+  // hẹp hơn hiện 2 tuần, hẹp nữa hiện 1 tuần; trang cuối cụt thì gộp cho đủ trang
   const per = () => {
-    const fit = Math.floor(((wrapW() || 1200) - 200) / 32);
+    const fit = Math.floor(((wrapW() || 1200) - 200) / 34);
     const n = days().length;
     if (fit >= n) return n;
     if (fit >= 14) return 14;
     return 7;
   };
-  const pages = () => Math.max(1, Math.ceil(days().length / per()));
+  const ranges = createMemo(() => {
+    const n = days().length, p = per();
+    if (p >= n) return [[1, n] as [number, number]];
+    const r: [number, number][] = [];
+    for (let s = 1; s <= n; s += p) r.push([s, Math.min(n, s + p - 1)]);
+    const last = r[r.length - 1];
+    if (last[1] - last[0] + 1 < Math.ceil(p / 2) && r.length > 1) r[r.length - 1] = [Math.max(1, n - p + 1), n];
+    return r;
+  });
+  const pages = () => ranges().length;
   const isCur = () => vy() === curY && vm() === curM;
   const todayN = nowD.getDate();
-  const autoPage = () => (isCur() ? Math.min(pages() - 1, Math.floor((todayN - 1) / per())) : 0);
+  const autoPage = () => {
+    if (!isCur()) return 0;
+    const i = ranges().findIndex(([s, e]) => todayN >= s && todayN <= e);
+    return Math.max(0, i);
+  };
   const pg = () => (manual() ? Math.min(page(), pages() - 1) : autoPage());
-  const vis = createMemo(() => days().slice(pg() * per(), pg() * per() + per()));
+  const cur = createMemo(() => ranges()[Math.min(pg(), pages() - 1)]);
+  const vis = createMemo(() => days().slice(cur()[0] - 1, cur()[1]));
   const goMonth = (d: number) => {
     const nd = new Date(vy(), vm() + d, 1);
     // không qua tháng hiện tại (ô tương lai không chấm được)
     if (nd.getFullYear() > curY || (nd.getFullYear() === curY && nd.getMonth() > curM)) return;
     setVy(nd.getFullYear());
     setVm(nd.getMonth());
-    setManual(false);
+    const back = nd.getFullYear() === curY && nd.getMonth() === curM;
+    setPage(d < 0 ? 9999 : 0);
+    setManual(!back);
+  };
+  // prev/next cửa sổ ngày: hết trang thì tràn sang tháng trước/sau
+  const stepWin = (d: number) => {
+    const last = pages() - 1;
+    if (d < 0 && pg() === 0) {
+      goMonth(-1);
+      return;
+    }
+    if (d > 0 && pg() === last) {
+      goMonth(1);
+      return;
+    }
+    setPage(pg() + d);
+    setManual(true);
   };
   const goToday = () => {
     setVy(curY);
@@ -257,13 +288,13 @@ function HabitMonth(props: {
       </div>
       <Show when={pages() > 1}>
         <div class="hm-pager">
-          <button class="icon-btn sm" disabled={pg() === 0} onClick={() => { setPage(pg() - 1); setManual(true); }}>‹</button>
-          <span class="muted xs">{pg() * per() + 1}–{Math.min(days().length, pg() * per() + per())}/{days().length}</span>
-          <button class="icon-btn sm" disabled={pg() >= pages() - 1} onClick={() => { setPage(pg() + 1); setManual(true); }}>›</button>
+          <button class="icon-btn sm" onClick={() => stepWin(-1)}>‹</button>
+          <span class="muted xs">{cur()[0]}–{cur()[1]}/{days().length}</span>
+          <button class="icon-btn sm" disabled={isCur() && pg() >= pages() - 1} onClick={() => stepWin(1)}>›</button>
         </div>
       </Show>
       <div class="hm-wrap" ref={wrapEl}>
-        <div class="hm-grid" style={{ "grid-template-columns": `minmax(110px, 170px) repeat(${vis().length}, minmax(0, 1fr))` }}>
+        <div class="hm-grid" style={{ "grid-template-columns": `minmax(110px, 170px) repeat(${vis().length}, 30px)` }}>
           <span class="hm-head-name">{t("tk.myHabits")}</span>
           <For each={groups()}>
             {(g) => (
