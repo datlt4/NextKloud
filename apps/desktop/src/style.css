@@ -196,6 +196,13 @@ input { font: inherit; color: var(--text); }
 .body { flex: 1; min-height: 0; display: flex; gap: 10px; padding: 0 10px 10px; }
 .side { width: 232px; flex-shrink: 0; border-radius: var(--radius); display: flex; flex-direction: column; padding: 8px; }
 .side nav { display: flex; flex-direction: column; gap: 2px; }
+.side-sep { height: 1px; background: var(--line); margin: 8px 12px; flex-shrink: 0; }
+.bm-row { display: flex; align-items: center; }
+.bm-row .nav { flex: 1; min-width: 0; }
+.bm-row .nav span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bm-row .bm-x { opacity: 0; flex-shrink: 0; margin-right: 6px; }
+.bm-row:hover .bm-x, .bm-row:focus-within .bm-x { opacity: 1; }
+@media (hover: none) { .bm-row .bm-x { opacity: 1; } }
 .nav { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 12px; border-radius: 10px; font-weight: 500; text-align: left; }
 .nav:hover { background: var(--hover); }
 .nav.active { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }

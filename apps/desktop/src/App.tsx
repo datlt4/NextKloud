@@ -5,7 +5,7 @@ import { ResetForm } from "./forms";
 import { LookDialog } from "./look";
 import { fmtSize } from "./format";
 import { fmtDate as fdate, fmtNum, t } from "./i18n";
-import { Icon, ext, kindOf } from "./icons";
+import { Icon, VAULTS, ext, kindOf } from "./icons";
 import Settings, { type SettingsTab } from "./Settings";
 import { Avatar } from "./avatar";
 import MarkdownView from "./viewers/MarkdownView";
@@ -317,7 +317,10 @@ export default function App() {
       else if (m?.[1] === "o" && rest) await openAt(rest, "");
       else if (m?.[1] === "notes" || m?.[1] === "trash" || m?.[1] === "tasks" || m?.[1] === "shared") setPage(m[1]);
       else if (m?.[1] === "kanban") {
-        setBoardId(rest || null);
+        // deep-link task: #/kanban/<board>#<id task> (id đầy đủ hoặc 8 ký tự đầu)
+        const [bid, frag] = rest.split("#");
+        setBoardId(bid || null);
+        setFlashCard(frag || null);
         setPage("kanban");
       } else if (m?.[1] === "settings") openSettings((rest || "profile") as SettingsTab);
       else await load("");
@@ -328,8 +331,13 @@ export default function App() {
   };
   onMount(() => {
     const pop = () => authed() && go(location.hash);
+    const onHash = () => authed() && go(location.hash);
     window.addEventListener("popstate", pop);
-    onCleanup(() => window.removeEventListener("popstate", pop));
+    window.addEventListener("hashchange", onHash);
+    onCleanup(() => {
+      window.removeEventListener("popstate", pop);
+      window.removeEventListener("hashchange", onHash);
+    });
   });
 
   const enter = () => {
@@ -338,8 +346,46 @@ export default function App() {
     refreshMe();
     refreshVer();
     syncFromServer();
+    seedBookmarks();
     // app cài đặt: tự kiểm tra cập nhật 1 lần
     checkUpdate(true).catch(() => {});
+  };
+
+  /** Thư mục ghim ở sidebar (lưu máy này): lần đầu tự ghim sẵn "Obsidian Vaults" nếu có. */
+  const BM_KEY = "nk-bookmarks";
+  const BM_SEEDED = "nk-bookmarks-seeded";
+  const loadBookmarks = (): string[] => {
+    try {
+      const v = JSON.parse(localStorage.getItem(BM_KEY) ?? "[]");
+      return Array.isArray(v) ? v.filter((x) => typeof x === "string" && x) : [];
+    } catch {
+      return [];
+    }
+  };
+  const [bookmarks, setBookmarks] = createSignal<string[]>(loadBookmarks());
+  const saveBookmarks = (l: string[]) => {
+    setBookmarks(l);
+    try {
+      localStorage.setItem(BM_KEY, JSON.stringify(l));
+    } catch {}
+  };
+  const toggleBookmark = (p: string) =>
+    saveBookmarks(bookmarks().includes(p) ? bookmarks().filter((x) => x !== p) : [...bookmarks(), p]);
+  const seedBookmarks = () => {
+    try {
+      if (localStorage.getItem(BM_SEEDED)) return;
+    } catch {
+      return;
+    }
+    const done = () => {
+      try {
+        localStorage.setItem(BM_SEEDED, "1");
+      } catch {}
+    };
+    api.exists(VAULTS).then(() => {
+      const cur = loadBookmarks();
+      if (!cur.includes(VAULTS)) saveBookmarks([VAULTS, ...cur]);
+    }).catch(() => {}).finally(done);
   };
 
   onMount(() => {
@@ -979,6 +1025,11 @@ export default function App() {
           <button onClick={() => { closeMenu(); toggleSel(p.f.path, true); lastIdx = -1; }}>
             <Icon name="check" /> {t("f.select")}
           </button>
+          <Show when={p.f.is_dir}>
+            <button onClick={() => { closeMenu(); toggleBookmark(p.f.path); }}>
+              <Icon name="bookmark" /> {bookmarks().includes(p.f.path) ? t("nav.unbookmark") : t("nav.bookmark")}
+            </button>
+          </Show>
           <div class="menu-sep" />
           <button class="danger" onClick={() => { closeMenu(); remove([p.f.path]); }}>
             <Icon name="trash" /> {t("f.delete")}
@@ -1175,6 +1226,28 @@ export default function App() {
                   <Icon name="settings" /> {t("nav.settings")}
                 </button>
               </nav>
+              <Show when={bookmarks().length}>
+                <div class="side-sep" />
+                <nav>
+                  <For each={bookmarks()}>
+                    {(b) => (
+                      <div class="bm-row">
+                        <button
+                          class="nav"
+                          classList={{ active: page() === "files" && !open() && (prefix() === b || prefix().startsWith(b + "/")) }}
+                          onClick={() => { load(b); setSideOpen(false); }}
+                          title={b}
+                        >
+                          <Icon name={b === VAULTS || b.startsWith(VAULTS + "/") ? "obsidian" : "folder"} /> <span>{b.split("/").pop()}</span>
+                        </button>
+                        <button class="icon-btn sm bm-x" title={t("nav.unbookmark")} onClick={() => toggleBookmark(b)}>
+                          <Icon name="close" size={12} />
+                        </button>
+                      </div>
+                    )}
+                  </For>
+                </nav>
+              </Show>
               <div class="side-foot">
                 <Show when={me()}>
                   <div class="quota">
@@ -1241,7 +1314,13 @@ export default function App() {
                     <button class="icon-btn sm" onClick={() => setErr("")}><Icon name="close" size={14} /></button>
                   </div>
                 </Show>
-                <TrackerPage onOpenBoard={(id, card) => { setFlashCard(card ?? null); setBoardId(id); setPage("kanban"); }} onError={setErr} />
+                <TrackerPage onOpenBoard={(id, card) => {
+                  setFlashCard(card ?? null);
+                  setBoardId(id);
+                  setPage("kanban");
+                  const h = card ? `#/kanban/${id}#${card.slice(0, 8)}` : `#/kanban/${id}`;
+                  if (location.hash !== h) history.replaceState(null, "", h);
+                }} onError={setErr} />
               </Show>
               <Show when={page() === "trash"}>
                 <Show when={err()}>

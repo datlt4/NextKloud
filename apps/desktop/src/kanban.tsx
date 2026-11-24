@@ -105,23 +105,34 @@ function BoardView(props: { board: KBoard; flashId?: string | null; onFlashed?: 
     }
   };
   const byId = createMemo(() => new Map(cards().map((c) => [c.id, c])));
-  // Mở từ Due tasks: mở thẳng drawer của task. Task ở cột done ngoài đợt tải thì tải thêm rồi mở.
+  // Mở từ Due tasks / link #id: mở thẳng drawer của task. Task ở cột done ngoài đợt tải thì tải thêm rồi mở.
   const moreTried = new Set<string>();
+  const openById = (id: string) => {
+    const c = cards().find((x) => x.id === id || x.id.startsWith(id));
+    if (c) {
+      setOpenId(c.id);
+      props.onFlashed?.();
+      return true;
+    }
+    return false;
+  };
   createEffect(() => {
     const id = props.flashId;
     const list = cards();
     if (!id || loading() || !list.length) return;
-    if (list.some((c) => c.id === id)) {
-      setOpenId(id);
-      props.onFlashed?.();
-    } else {
-      const dc = cols().find((c) => c.is_done);
-      const key = `${id}:${dc?.id ?? ""}`;
-      if (dc && dc.total - loadedIn(dc) > 0 && !moreTried.has(key)) {
-        moreTried.add(key);
-        more(dc);
-      } else props.onFlashed?.();
-    }
+    if (openById(id)) return;
+    const dc = cols().find((c) => c.is_done);
+    const key = `${id}:${dc?.id ?? ""}`;
+    if (dc && dc.total - loadedIn(dc) > 0 && !moreTried.has(key)) {
+      moreTried.add(key);
+      more(dc);
+    } else props.onFlashed?.();
+  });
+  // Drawer mở/đóng thì URL theo đúng task để copy link, dán link là mở lại đúng task đó.
+  createEffect(() => {
+    const id = openId();
+    const h = id ? `#/kanban/${props.board.id}#${id.slice(0, 8)}` : `#/kanban/${props.board.id}`;
+    if (location.hash !== h) history.replaceState(null, "", h);
   });
   const colCards = (c: KColumn) => {
     const l = cards().filter((k) => k.column_id === c.id && (!hideSub() || !k.parent_id));
