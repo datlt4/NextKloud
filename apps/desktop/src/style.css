@@ -149,6 +149,7 @@ input { font: inherit; color: var(--text); }
 }
 .icon-btn:hover { background: var(--hover); color: var(--text); }
 .icon-btn.sm { width: 24px; height: 24px; border-radius: 6px; }
+.icon-btn > svg { display: block; }
 
 /* brand */
 .brand { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 700; letter-spacing: -.2px; }
@@ -859,12 +860,18 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 .hb-sw { width: 12px; height: 12px; border-radius: 3px; background: var(--hover); border: 1px solid var(--line); }
 .hb-sw.on { background: #16a34a; border-color: #16a34a; }
 /* habit: matrix theo tháng — hàng = habit, cột = ngày, gom theo tuần */
-.hm-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
-.hm-title { display: flex; align-items: center; gap: 6px; font-size: 14px; }
-.hm-stats { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-left: auto; }
+.hm-top { display: grid; gap: 6px 10px; grid-template-columns: minmax(0, 1fr); grid-template-areas: "title" "pager" "stats"; align-items: center; margin-bottom: 8px; }
+.hm-title { grid-area: title; display: flex; align-items: center; gap: 6px; font-size: 14px; min-width: 0; }
+.hm-stats { grid-area: stats; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-self: start; min-width: 0; }
+.hm-pager { grid-area: pager; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tk-col-habits { container-type: inline-size; }
+@container (min-width: 620px) {
+  .hm-top { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "title stats" "pager pager"; }
+  .hm-stats { justify-self: end; }
+}
 .hm-bar { width: 110px; height: 8px; border-radius: 99px; background: var(--hover); border: 1px solid var(--line); overflow: hidden; }
 .hm-bar i { display: block; height: 100%; background: var(--accent); }
-.hm-pager { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.hm-pager { display: flex; align-items: center; gap: 8px; }
 .hm-wrap { overflow-x: auto; scrollbar-width: thin; }
 .hm-grid { display: grid; gap: 4px; align-items: center; width: max-content; min-width: 100%; justify-content: space-between; }
 .hm-head-name { font-size: 12px; font-weight: 700; color: var(--muted); text-align: right; padding-right: 6px; }
@@ -883,7 +890,7 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 .hm-cell:disabled { cursor: default; opacity: .45; }
 .hm-more { display: none; }
 @media (hover: none) {
-  .hm-more { display: inline-flex; }
+  .hm-more { display: inline-grid; }
   .hm-name:focus-within .hm-acts { opacity: 1; }
 }
 /* habit: heatmap tổng cả năm — mỗi ô 1 ngày, đậm dần theo % habit đã chấm (tone cam) */
