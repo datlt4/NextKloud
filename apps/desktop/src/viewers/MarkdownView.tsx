@@ -1,5 +1,11 @@
 import { marked } from "marked";
 import hljs from "highlight.js/lib/common";
+import cmake from "highlight.js/lib/languages/cmake";
+import dockerfile from "highlight.js/lib/languages/dockerfile";
+hljs.registerLanguage("cmake", cmake);
+hljs.registerLanguage("dockerfile", dockerfile);
+// highlight.js không có grammar CUDA: code CUDA là C++ mở rộng nên dùng chung grammar cpp
+hljs.registerAliases(["cuda", "cu"], { languageName: "cpp" });
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import { api, hashText, speak, type Backlink, type VaultOutline } from "../api";
 import { fmtNum, t } from "../i18n";
