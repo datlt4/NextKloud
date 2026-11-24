@@ -14,5 +14,9 @@ export S3_SECRET_KEY=nktest-secret-123
 export STAGING_DIR=/tmp/nk-staging
 export NEXTKLOUD_WEB="$ROOT/apps/desktop/dist"
 export JWT_SECRET=localtest
+# secret that (OnlyOffice...): doc tu scripts/dev.local.env (gitignore), khong commit
+if [ -f "$ROOT/scripts/dev.local.env" ]; then
+  set -a; . "$ROOT/scripts/dev.local.env"; set +a
+fi
 mkdir -p /tmp/nk-staging
 exec "$ROOT/target/debug/nextkloud"
