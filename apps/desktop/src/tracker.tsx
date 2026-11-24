@@ -292,7 +292,7 @@ function HabitMonth(props: {
       </div>
       <div class="hm-wrap" ref={wrapEl}>
         <div class="hm-grid" style={{ "grid-template-columns": `minmax(110px, 170px) repeat(${vis().length}, 30px)` }}>
-          <span class="hm-head-name">{t("tk.myHabits")}</span>
+          <span class="hm-head-name">{t("tk.myHabits")} ({fmtNum(stats().n)})</span>
           <For each={groups()}>
             {(g, i) => (
               <span class="hm-wk" style={{ "grid-column": `span ${g.count}`, background: weekColor(i()) }} title={bandLb(i())}>
@@ -300,10 +300,11 @@ function HabitMonth(props: {
               </span>
             )}
           </For>
-          <span class="hm-count" style={{ "grid-row": "span 2" }}>{t("tk.numHabits")}: <b>{fmtNum(stats().n)}</b></span>
+          <span />
           <For each={vis()}>
             {(ds) => <span class="hm-dw" classList={{ today: ds === todayStr() }}>{dwName(ds)}</span>}
           </For>
+          <span />
           <For each={vis()}>
             {(ds) => <span class="hm-dn" classList={{ today: ds === todayStr() }}>{Number(ds.slice(8, 10))}{ds === todayStr() ? " ●" : ""}</span>}
           </For>
