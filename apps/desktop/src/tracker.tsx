@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createResource, createSignal } from "solid-js";
+import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
 import { api, type Habit, type TaskItem, type TaskView } from "./api";
 import { fmtNum, loc, t } from "./i18n";
 import { errText } from "./fileops";
@@ -114,23 +114,52 @@ function HabitsView(props: { onError: (m: string) => void }) {
   );
 }
 
-/** 12 tuần gần nhất, cột = tuần, ô = ngày (xanh = đã làm). Bấm ô để chấm/bỏ. */
+/** Biểu đồ năm kiểu GitHub: cột = tuần (Thứ 2..Chủ nhật), màu = đã làm.
+ *  Màn rộng hiện cả năm (53 tuần), màn bé tự rút còn vài tháng cho vừa khung.
+ *  Ô 12px + gap 3px đều mọi phía. Bấm ô để chấm/bỏ. */
+const HB_CELL = 12, HB_GAP = 3, HB_DAYW = 30, HB_WEEKS_MIN = 13, HB_WEEKS_MAX = 53;
 function HabitCard(props: { h: Habit; onToggle: (day: string, on: boolean) => void; onPatch: (b: { title?: string; archived?: boolean }) => void; onDelete: () => void }) {
   const done = () => new Set(props.h.days);
-  // 84 ngày: 12 cột × 7 hàng (hàng 0 = Thứ 2)
-  const cells = createMemo(() => {
-    const out: { day: string; label: string; future: boolean }[] = [];
-    const t = new Date();
-    t.setHours(0, 0, 0, 0);
-    const monday = new Date(t);
-    monday.setDate(t.getDate() - ((t.getDay() + 6) % 7) - 7 * 11);
-    for (let i = 0; i < 84; i++) {
-      const d = new Date(monday);
-      d.setDate(monday.getDate() + i);
-      out.push({ day: dayStr(d), label: d.toLocaleDateString(loc(), { day: "2-digit", month: "2-digit" }), future: d.getTime() > t.getTime() });
+  const [wrapW, setWrapW] = createSignal(0);
+  let wrapEl!: HTMLDivElement;
+  onMount(() => {
+    const ro = new ResizeObserver(() => setWrapW(wrapEl.clientWidth));
+    ro.observe(wrapEl);
+    setWrapW(wrapEl.clientWidth);
+    onCleanup(() => ro.disconnect());
+  });
+  const todayMs = () => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  };
+  // số tuần vừa khung hiện tại
+  const weeks = () => Math.max(HB_WEEKS_MIN, Math.min(HB_WEEKS_MAX, Math.floor(((wrapW() || 1200) - HB_DAYW) / (HB_CELL + HB_GAP))));
+  // Thứ 2 của tuần đầu (cột trái nhất)
+  const startMon = createMemo(() => {
+    const m = new Date(todayMs());
+    m.setDate(m.getDate() - ((m.getDay() + 6) % 7) - 7 * (weeks() - 1));
+    return m;
+  });
+  const at = (w: number, r: number) => {
+    const d = new Date(startMon());
+    d.setDate(startMon().getDate() + w * 7 + r);
+    return d;
+  };
+  // nhãn tháng: cột đầu tiên mang tháng mới
+  const monthCells = createMemo(() => {
+    const out: string[] = [];
+    let prev = -1;
+    for (let w = 0; w < weeks(); w++) {
+      const mo = at(w, 0).getMonth();
+      out.push(mo !== prev ? at(w, 0).toLocaleDateString(loc(), { month: "short" }) : "");
+      prev = mo;
     }
     return out;
   });
+  // nhãn Mon/Wed/Fri theo locale (01/01/2024 là Thứ 2)
+  const dayName = (r: number) => new Date(2024, 0, 1 + r).toLocaleDateString(loc(), { weekday: "short" });
+  const yearCount = createMemo(() => [...done()].filter((d) => Date.parse(d) >= todayMs() - 364 * 86400000).length);
   const rename = () => {
     const nn = prompt(t("tk.namePrompt"), props.h.title)?.trim();
     if (nn) props.onPatch({ title: nn });
@@ -149,18 +178,39 @@ function HabitCard(props: { h: Habit; onToggle: (day: string, on: boolean) => vo
         <button class="icon-btn sm" title={props.h.archived ? t("tk.unarchive") : t("tk.archive")} onClick={() => props.onPatch({ archived: !props.h.archived })}><Icon name="archive" size={14} /></button>
         <button class="icon-btn sm danger" title={t("c.delete")} onClick={props.onDelete}><Icon name="trash" size={14} /></button>
       </div>
-      <div class="tk-grid" role="grid" aria-label={t("tk.gridLabel", { name: props.h.title })}>
-        <For each={cells()}>
-          {(c) => (
-            <button
-              class="tk-cell"
-              classList={{ on: done().has(c.day), future: c.future }}
-              title={`${c.label}${done().has(c.day) ? t("tk.cellDone") : ""}`}
-              disabled={c.future}
-              onClick={() => props.onToggle(c.day, !done().has(c.day))}
-            />
-          )}
-        </For>
+      <div class="hb" ref={wrapEl}>
+        <div class="hb-chart" role="grid" aria-label={t("tk.gridLabel", { name: props.h.title })}
+          style={{ "grid-template-columns": `${HB_DAYW}px repeat(${weeks()}, ${HB_CELL}px)` }}>
+          <span />
+          <For each={monthCells()}>{(m) => <span class="hb-mon">{m}</span>}</For>
+          <For each={[0, 1, 2, 3, 4, 5, 6]}>
+            {(r) => (<>
+              <span class="hb-day">{[0, 2, 4].includes(r) ? dayName(r) : ""}</span>
+              <For each={Array.from({ length: weeks() }, (_, w) => w)}>
+                {(w) => {
+                  const dd = at(w, r);
+                  const ds = dayStr(dd);
+                  const fut = dd.getTime() > todayMs();
+                  const on = done().has(ds);
+                  return (
+                    <button
+                      class="hb-cell"
+                      role="gridcell"
+                      classList={{ on, future: fut }}
+                      title={`${dd.toLocaleDateString(loc(), { day: "2-digit", month: "2-digit" })}${on ? t("tk.cellDone") : ""}`}
+                      disabled={fut}
+                      onClick={() => props.onToggle(ds, !on)}
+                    />
+                  );
+                }}
+              </For>
+            </>)}
+          </For>
+        </div>
+        <div class="hb-foot">
+          <span>{t("tk.yearN", { n: fmtNum(yearCount()) })}</span>
+          <span class="hb-legend">{t("tk.less")}<i class="hb-sw" /><i class="hb-sw on" />{t("tk.more")}</span>
+        </div>
       </div>
     </section>
   );
