@@ -121,7 +121,8 @@ function HabitsView(props: { onError: (m: string) => void }) {
         <input class="kb-new tk-add" placeholder={t("tk.addPh")} value={name()} onInput={(e) => setName(e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && add()} />
         <label class="kb-toggle"><input type="checkbox" checked={showArch()} onChange={(e) => setShowArch(e.currentTarget.checked)} /> {t("tk.showArch")}</label>
       </div>
-      <Show when={!list.loading} fallback={<p class="muted pad">{t("c.loading")}</p>}>
+      {/* giữ UI khi refetch (tick tháng cũ không mất tháng đang xem): chỉ loading khi chưa có data */}
+      <Show when={visible().length || !list.loading} fallback={<p class="muted pad">{t("c.loading")}</p>}>
         <Show when={visible().length} fallback={<div class="empty"><Icon name="check" size={48} /><p>{t("tk.emptyHabit")}</p></div>}>
           <HabitMonth habits={visible()} onToggle={toggle} onRename={rename} onPatch={patch} onDelete={del} />
           <HabitYear habits={visible()} />
