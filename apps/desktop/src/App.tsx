@@ -1030,11 +1030,6 @@ export default function App() {
               <Icon name="bookmark" /> {bookmarks().includes(p.f.path) ? t("nav.unbookmark") : t("nav.bookmark")}
             </button>
           </Show>
-          <Show when={p.f.is_dir}>
-            <button onClick={() => { closeMenu(); toggleBookmark(p.f.path); }}>
-              <Icon name="bookmark" /> {bookmarks().includes(p.f.path) ? t("nav.unbookmark") : t("nav.bookmark")}
-            </button>
-          </Show>
           <div class="menu-sep" />
           <button class="danger" onClick={() => { closeMenu(); remove([p.f.path]); }}>
             <Icon name="trash" /> {t("f.delete")}
@@ -1231,28 +1226,6 @@ export default function App() {
                   <Icon name="settings" /> {t("nav.settings")}
                 </button>
               </nav>
-              <Show when={bookmarks().length}>
-                <div class="side-sep" />
-                <nav>
-                  <For each={bookmarks()}>
-                    {(b) => (
-                      <div class="bm-row">
-                        <button
-                          class="nav"
-                          classList={{ active: page() === "files" && !open() && (prefix() === b || prefix().startsWith(b + "/")) }}
-                          onClick={() => { load(b); setSideOpen(false); }}
-                          title={b}
-                        >
-                          <Icon name={b === VAULTS || b.startsWith(VAULTS + "/") ? "obsidian" : "folder"} /> <span>{b.split("/").pop()}</span>
-                        </button>
-                        <button class="icon-btn sm bm-x" title={t("nav.unbookmark")} onClick={() => toggleBookmark(b)}>
-                          <Icon name="close" size={12} />
-                        </button>
-                      </div>
-                    )}
-                  </For>
-                </nav>
-              </Show>
               <Show when={bookmarks().length}>
                 <div class="side-sep" />
                 <nav>

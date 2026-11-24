@@ -100,7 +100,7 @@ pub struct HabitOut {
     pub streak: i64,
     pub total: i64,
     pub done_today: bool,
-    /// các ngày đã làm trong ~12 tuần gần nhất (YYYY-MM-DD), để vẽ lưới
+    /// các ngày đã làm trong ~13 tháng gần nhất (YYYY-MM-DD), để vẽ lưới tháng
     pub days: Vec<String>,
 }
 
@@ -133,7 +133,7 @@ async fn habit_out(db: &PgPool, h: Habit) -> Result<HabitOut, AppError> {
         .await?;
     let set: HashSet<NaiveDate> = rows.iter().filter_map(|(d,)| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()).collect();
     let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM habit_logs WHERE habit_id = $1").bind(h.id).fetch_one(db).await?;
-    let cutoff = (today - chrono::Duration::days(83)).format("%Y-%m-%d").to_string();
+    let cutoff = (today - chrono::Duration::days(400)).format("%Y-%m-%d").to_string();
     let mut days: Vec<String> = set
         .iter()
         .filter(|d| d.format("%Y-%m-%d").to_string() >= cutoff)
