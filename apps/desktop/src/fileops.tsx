@@ -186,7 +186,7 @@ export function MoveDialog(props: {
   );
 }
 
-export function TrashPage(props: { onError: (m: string) => void; onChanged: () => void; secret?: boolean }) {
+export function TrashPage(props: { onError: (m: string) => void; onChanged: () => void; secret?: boolean; view: "list" | "grid"; onView: (v: "list" | "grid") => void }) {
   const [items, { refetch }] = createResource(() => api.trash(props.secret));
   const [cfg] = createResource(() => api.config().catch(() => ({ trash_days: 30 })));
   const [busy, setBusy] = createSignal<string | null>(null);
@@ -206,23 +206,50 @@ export function TrashPage(props: { onError: (m: string) => void; onChanged: () =
   const purge = (it: TrashItem) => {
     if (confirm(t("trash.purgeOne", { name: baseName(it.orig_path) }))) run(it.id, () => api.purge(it.id, props.secret));
   };
+  const sub = (it: TrashItem) => (<>{it.is_dir ? t("f.filesN", { n: fmtNum(it.files) }) + " · " : ""}{fmtSize(it.size)} · {fmtDateTime(it.deleted_at)}</>);
+  const emptyBox = (
+    <Show when={!items.loading}>
+      <div class="empty"><Icon name="trash" size={48} /><p>{t("trash.empty")}</p></div>
+    </Show>
+  );
   return (
     <div class="trash">
       <div class="toolbar">
         <h2 class="tb-title"><Icon name={props.secret ? "lock" : "trash"} /> {props.secret ? t("trash.secretTitle") : t("trash.title")}</h2>
         <span class="muted sm hide-xs">{t("trash.auto", { days: cfg()?.trash_days ?? 30 })}</span>
+        <div class="seg">
+          <button classList={{ on: props.view === "list" }} title={t("f.list")} onClick={() => props.onView("list")}><Icon name="list" /></button>
+          <button classList={{ on: props.view === "grid" }} title={t("f.grid")} onClick={() => props.onView("grid")}><Icon name="grid" /></button>
+        </div>
         <button class="btn danger sm" style={{ "margin-left": "auto" }} disabled={!items()?.length || !!busy()} onClick={() => {
           if (confirm(t("trash.purgeAll", { n: items()!.length, size: fmtSize(total()) }))) run("all", () => api.emptyTrash(props.secret));
         }}>
           {busy() === "all" ? t("trash.cleaning") : t("trash.clean")}
         </button>
       </div>
+      <Show when={props.view === "list"} fallback={
+        <div class="scroll"><div class="grid">
+          <For each={items() ?? []} fallback={emptyBox}>
+            {(it) => (
+              <div class="tile tstatic">
+                <div class="tile-art"><Icon name={it.is_dir ? "folder" : "file"} size={44} /></div>
+                <div class="tile-meta"><span class="fname" title={shown(it.orig_path)}>{baseName(it.orig_path)}</span></div>
+                <span class="tile-sub">{sub(it)}</span>
+                <div class="tile-act">
+                  <button class="btn sm ghost" disabled={!!busy()} onClick={() => run(it.id, () => api.restore(it.id, props.secret))}>
+                    <Icon name="back" /> <span>{t("trash.restore")}</span>
+                  </button>
+                  <button class="btn sm danger" disabled={!!busy()} title={t("trash.delTitle")} onClick={() => purge(it)}>
+                    <Icon name="trash" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </For>
+        </div></div>
+      }>
       <div class="scroll">
-        <For each={items() ?? []} fallback={
-          <Show when={!items.loading}>
-            <div class="empty"><Icon name="trash" size={48} /><p>{t("trash.empty")}</p></div>
-          </Show>
-        }>
+        <For each={items() ?? []} fallback={emptyBox}>
           {(it) => (
             <div class="row trow">
               <span class="c-name">
@@ -231,7 +258,7 @@ export function TrashPage(props: { onError: (m: string) => void; onChanged: () =
                   <span class="fname" title={shown(it.orig_path)}>{baseName(it.orig_path)}</span>
                   <span class="fpath">
                     {shown(it.orig_path).includes("/") ? shown(it.orig_path).split("/").slice(0, -1).join("/") + " · " : ""}
-                    {it.is_dir ? t("f.filesN", { n: fmtNum(it.files) }) + " · " : ""}{fmtSize(it.size)} · {fmtDateTime(it.deleted_at)}
+                    {sub(it)}
                   </span>
                 </span>
               </span>
@@ -247,6 +274,7 @@ export function TrashPage(props: { onError: (m: string) => void; onChanged: () =
           )}
         </For>
       </div>
+      </Show>
       <div class="foot">
         <span>{t("trash.count", { n: (items() ?? []).length })}</span>
         <span>{fmtSize(total())}</span>

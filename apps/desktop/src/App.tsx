@@ -1337,7 +1337,7 @@ export default function App() {
                     <button class="icon-btn sm" onClick={() => setErr("")}><Icon name="close" size={14} /></button>
                   </div>
                 </Show>
-                <TrashPage onError={setErr} onChanged={refreshMe} />
+                <TrashPage onError={setErr} onChanged={refreshMe} view={view()} onView={(v) => { setView(v); localStorage.setItem("nk-view", v); }} />
               </Show>
               <Show when={page() === "shared"}>
                 <Show when={err()}>
@@ -1359,7 +1359,7 @@ export default function App() {
                   </div>
                 </Show>
                 <div class="toolbar"><button class="btn ghost sm" onClick={() => load(SECRET_ROOT)}><Icon name="back" /> {t("c.backToVault")}</button></div>
-                <TrashPage secret onError={setErr} onChanged={refreshMe} />
+                <TrashPage secret onError={setErr} onChanged={refreshMe} view={view()} onView={(v) => { setView(v); localStorage.setItem("nk-view", v); }} />
               </Show>
               <Show when={page() === "files"}>
               <Show when={sel().size}>
