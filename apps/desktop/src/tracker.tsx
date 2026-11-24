@@ -151,10 +151,11 @@ function HabitMonth(props: {
 }) {
   const nowD = new Date();
   const curY = nowD.getFullYear(), curM = nowD.getMonth();
-  const [vy, setVy] = createSignal(curY);
-  const [vm, setVm] = createSignal(curM);
-  const [page, setPage] = createSignal(0);
-  const [manual, setManual] = createSignal(false);
+  // neo cuối cửa sổ (ngày cuối đang xem); tháng suy từ neo
+  const [endDS, setEndDS] = createSignal(dayStr(nowD));
+  const endD = createMemo(() => parseDS(endDS()));
+  const vy = () => endD().getFullYear();
+  const vm = () => endD().getMonth();
   const [wrapW, setWrapW] = createSignal(0);
   let wrapEl!: HTMLDivElement;
   onMount(() => {
@@ -170,64 +171,33 @@ function HabitMonth(props: {
     for (let d = 1; d <= n; d++) out.push(`${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
     return out;
   });
-  // ô cố định 30px như bản tiêu chuẩn (không co giãn): màn to hiện cả tháng,
-  // hẹp hơn hiện 2 tuần, hẹp nữa hiện 1 tuần; trang cuối cụt thì gộp cho đủ trang
-  const per = () => {
-    const fit = Math.floor(((wrapW() || 1200) - 200) / 34);
-    const n = days().length;
-    if (fit >= n) return n;
-    if (fit >= 14) return 14;
-    return 7;
-  };
-  const ranges = createMemo(() => {
-    const n = days().length, p = per();
-    if (p >= n) return [[1, n] as [number, number]];
-    const r: [number, number][] = [];
-    for (let s = 1; s <= n; s += p) r.push([s, Math.min(n, s + p - 1)]);
-    const last = r[r.length - 1];
-    if (last[1] - last[0] + 1 < Math.ceil(p / 2) && r.length > 1) r[r.length - 1] = [Math.max(1, n - p + 1), n];
-    return r;
+  // cửa sổ trượt: ô 30px cố định, hiện vừa khít khung (neo ở cuối, tràn sang tháng trước nếu rộng)
+  const per = () => Math.max(7, Math.floor(((wrapW() || 1200) - 200) / 34));
+  const vis = createMemo(() => {
+    const out: string[] = [];
+    const e = endD();
+    const s = new Date(e);
+    s.setDate(e.getDate() - (per() - 1));
+    for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) out.push(dayStr(d));
+    return out;
   });
-  const pages = () => ranges().length;
   const isCur = () => vy() === curY && vm() === curM;
-  const todayN = nowD.getDate();
-  const autoPage = () => {
-    if (!isCur()) return 0;
-    const i = ranges().findIndex(([s, e]) => todayN >= s && todayN <= e);
-    return Math.max(0, i);
-  };
-  const pg = () => (manual() ? Math.min(page(), pages() - 1) : autoPage());
-  const cur = createMemo(() => ranges()[Math.min(pg(), pages() - 1)]);
-  const vis = createMemo(() => days().slice(cur()[0] - 1, cur()[1]));
   const goMonth = (d: number) => {
     const nd = new Date(vy(), vm() + d, 1);
     // không qua tháng hiện tại (ô tương lai không chấm được)
     if (nd.getFullYear() > curY || (nd.getFullYear() === curY && nd.getMonth() > curM)) return;
-    setVy(nd.getFullYear());
-    setVm(nd.getMonth());
     const back = nd.getFullYear() === curY && nd.getMonth() === curM;
-    setPage(d < 0 ? 9999 : 0);
-    setManual(!back);
+    // tháng hiện tại neo ở hôm nay, tháng cũ neo cuối tháng
+    setEndDS(back ? todayStr() : dayStr(new Date(nd.getFullYear(), nd.getMonth() + 1, 0)));
   };
-  // prev/next cửa sổ ngày: hết trang thì tràn sang tháng trước/sau
-  const stepWin = (d: number) => {
-    const last = pages() - 1;
-    if (d < 0 && pg() === 0) {
-      goMonth(-1);
-      return;
-    }
-    if (d > 0 && pg() === last) {
-      goMonth(1);
-      return;
-    }
-    setPage(pg() + d);
-    setManual(true);
+  // prev/next: dịch neo cuối đi per ngày (tự tràn tháng), chặn tương lai
+  const shiftWin = (d: number) => {
+    const ne = new Date(endD());
+    ne.setDate(ne.getDate() + d * per());
+    if (ne > new Date(curY, curM + 1, 0)) return;
+    setEndDS(dayStr(ne));
   };
-  const goToday = () => {
-    setVy(curY);
-    setVm(curM);
-    setManual(false);
-  };
+  const goToday = () => setEndDS(todayStr());
   const sets = createMemo(() => new Map(props.habits.map((h) => [h.id, new Set(h.days)])));
   const doneOn = (h: Habit, ds: string) => sets().get(h.id)?.has(ds) ?? false;
   const stats = createMemo(() => {
@@ -243,21 +213,43 @@ function HabitMonth(props: {
     return { n: props.habits.length, done, poss, pct: poss ? (done / poss) * 100 : 0 };
   });
   const monthLabel = () => new Date(vy(), vm(), 1).toLocaleDateString(loc(), { month: "long", year: "numeric" });
-  // gộp ngày hiển thị thành nhóm tuần (màn bé 1 tuần có thể chẻ 2 nhóm)
+  // gộp ngày hiển thị thành nhóm (năm, tháng, tuần); màu theo vị trí: phải cùng đậm nhất
   const groups = createMemo(() => {
-    const g: { w: number; count: number }[] = [];
+    const g: { y: number; m: number; w: number; count: number }[] = [];
     for (const ds of vis()) {
-      const w = weekOfMonth(parseDS(ds));
-      if (g.length && g[g.length - 1].w === w) g[g.length - 1].count++;
-      else g.push({ w, count: 1 });
+      const d = parseDS(ds);
+      const k: [number, number, number] = [d.getFullYear(), d.getMonth(), weekOfMonth(d)];
+      const lastG = g[g.length - 1];
+      if (lastG && lastG.y === k[0] && lastG.m === k[1] && lastG.w === k[2]) lastG.count++;
+      else g.push({ y: k[0], m: k[1], w: k[2], count: 1 });
     }
     return g;
   });
-  // màu tuần theo vị trí trong khung nhìn: phải cùng đậm nhất
-  const weekColor = (w: number) => {
-    const G = groups().length;
-    const idx = groups().findIndex((g) => g.w === w);
-    return ORANGE5[5 - G + Math.max(0, idx)];
+  const weekColor = (gi: number) => ORANGE5[5 - groups().length + Math.max(0, gi)];
+  const gIdx = createMemo(() => {
+    const m = new Map<string, number>();
+    let gi = -1, pk = "";
+    for (const ds of vis()) {
+      const d = parseDS(ds);
+      const k = `${d.getFullYear()}-${d.getMonth()}-${weekOfMonth(d)}`;
+      if (k !== pk) {
+        gi++;
+        pk = k;
+      }
+      m.set(ds, gi);
+    }
+    return m;
+  });
+  const bandLb = (gi: number) => {
+    const g = groups()[gi];
+    const wn = t("tk.weekN", { n: g.w + 1 });
+    return g.y === vy() && g.m === vm() ? wn : `T${g.m + 1} · ${wn}`;
+  };
+  const rangeLb = () => {
+    const v = vis();
+    if (!v.length) return "";
+    const a = parseDS(v[0]), b = parseDS(v[v.length - 1]);
+    return `${a.getDate()}/${a.getMonth() + 1} – ${b.getDate()}/${b.getMonth() + 1}`;
   };
   const dwName = (ds: string) => {
     const [y, m, d] = ds.split("-").map(Number);
@@ -275,7 +267,7 @@ function HabitMonth(props: {
           <button class="icon-btn sm" onClick={() => goMonth(-1)} title={t("tk.prevM")}>‹</button>
           <b>{monthLabel()}</b>
           <button class="icon-btn sm" disabled={isCur()} onClick={() => goMonth(1)} title={t("tk.nextM")}>›</button>
-          <Show when={!isCur()}>
+          <Show when={endDS() !== todayStr()}>
             <button class="btn ghost sm" onClick={goToday}>{t("tk.todayBtn")}</button>
           </Show>
         </div>
@@ -286,20 +278,18 @@ function HabitMonth(props: {
           <span class="muted xs"><b>{stats().pct.toFixed(2)}%</b></span>
         </div>
       </div>
-      <Show when={pages() > 1}>
-        <div class="hm-pager">
-          <button class="icon-btn sm" onClick={() => stepWin(-1)}>‹</button>
-          <span class="muted xs">{cur()[0]}–{cur()[1]}/{days().length}</span>
-          <button class="icon-btn sm" disabled={isCur() && pg() >= pages() - 1} onClick={() => stepWin(1)}>›</button>
-        </div>
-      </Show>
+      <div class="hm-pager">
+        <button class="icon-btn sm" onClick={() => shiftWin(-1)}>‹</button>
+        <span class="muted xs">{rangeLb()}</span>
+        <button class="icon-btn sm" disabled={endD() >= new Date(curY, curM + 1, 0)} onClick={() => shiftWin(1)}>›</button>
+      </div>
       <div class="hm-wrap" ref={wrapEl}>
         <div class="hm-grid" style={{ "grid-template-columns": `minmax(110px, 170px) repeat(${vis().length}, 30px)` }}>
           <span class="hm-head-name">{t("tk.myHabits")}</span>
           <For each={groups()}>
-            {(g) => (
-              <span class="hm-wk" style={{ "grid-column": `span ${g.count}`, background: weekColor(g.w) }} title={t("tk.weekN", { n: g.w + 1 })}>
-                {t("tk.weekN", { n: g.w + 1 })}
+            {(g, i) => (
+              <span class="hm-wk" style={{ "grid-column": `span ${g.count}`, background: weekColor(i()) }} title={bandLb(i())}>
+                {bandLb(i())}
               </span>
             )}
           </For>
@@ -327,7 +317,7 @@ function HabitMonth(props: {
                   {(ds) => {
                     const dis = ds > todayStr() || ds < createdDayOf(h);
                     const on = doneOn(h, ds);
-                    const wc = weekColor(weekOfMonth(parseDS(ds)));
+                    const wc = weekColor(gIdx().get(ds) ?? 0);
                     return (
                       <button
                         class="hm-cell"
