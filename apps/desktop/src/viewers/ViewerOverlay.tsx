@@ -52,7 +52,7 @@ export function ViewerOverlay(props: { path: string; onClose: () => void; onErro
             <Show when={kind() === "markdown" && text() !== undefined} fallback={
               <Switch fallback={<p class="muted pad">{t("c.loading")}</p>}>
                 <Match when={kind() === "text"}><TextView path={cur()} /></Match>
-                <Match when={kind() === "image"}><ImageView files={[{ path: cur(), name: name() }]} index={0} /></Match>
+                <Match when={kind() === "image"}><ImageView files={[{ path: cur(), name: name() }]} index={0} startZoom /></Match>
                 <Match when={kind() === "video" || kind() === "audio"}><VideoView path={cur()} /></Match>
                 <Match when={kind() === "pdf"}><PdfView path={cur()} onError={props.onError} /></Match>
                 <Match when={kind() === "zip"}><ZipView path={cur()} /></Match>

@@ -10,11 +10,11 @@ export interface ImgItem {
   name: string;
 }
 
-/** Lightbox ảnh: vuốt/trái-phải + phím mũi tên trong cùng thư mục. */
-export default function ImageView(props: { files: ImgItem[]; index: number }) {
+/** Lightbox ảnh: vuốt/trái-phải + phím mũi tên trong cùng thư mục. startZoom: mở thẳng chế độ zoom (vd từ attachment Deck). */
+export default function ImageView(props: { files: ImgItem[]; index: number; startZoom?: boolean }) {
   const [i, setI] = createSignal(props.index);
   const [err, setErr] = createSignal("");
-  const [zoom, setZoom] = createSignal(false);
+  const [zoom, setZoom] = createSignal(props.startZoom ?? false);
   const n = () => props.files.length;
   const cur = () => props.files[i()];
   const prev = () => setI((i() + n() - 1) % n());
