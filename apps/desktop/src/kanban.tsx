@@ -18,7 +18,7 @@ const checklist = (md: string): [number, number] => {
   return [all.filter((l) => /\[[xX]\]/.test(l)).length, all.length];
 };
 
-export function KanbanPage(props: { boardId: string | null; onBoard: (id: string | null) => void; onError: (m: string) => void; onOpenFile: (path: string) => void }) {
+export function KanbanPage(props: { boardId: string | null; onBoard: (id: string | null) => void; onError: (m: string) => void; onOpenFile: (path: string) => void; flashId?: string | null; onFlashed?: () => void }) {
   const [boards, { refetch }] = createResource(() => api.boards(), { initialValue: [] });
   const [importing, setImporting] = createSignal(false);
   // có file xuất Deck mà user được nhập (admin hoặc chủ dữ liệu) thì mới hiện nút
@@ -66,7 +66,7 @@ export function KanbanPage(props: { boardId: string | null; onBoard: (id: string
         </div>
       </div>
       <Show when={props.boardId ? boards().find((b) => b.id === props.boardId) : undefined} keyed>
-        {(b) => <BoardView board={b} onOpenFile={props.onOpenFile} onError={props.onError} onChanged={refetch} onDeleted={() => { refetch(); props.onBoard(null); }} />}
+        {(b) => <BoardView board={b} flashId={props.flashId} onFlashed={props.onFlashed} onOpenFile={props.onOpenFile} onError={props.onError} onChanged={refetch} onDeleted={() => { refetch(); props.onBoard(null); }} />}
       </Show>
       <Show when={!boards.loading && !boards().length}>
         <div class="empty"><Icon name="kanban" size={48} /><p>{t("kb.emptyBoard")}</p></div>
@@ -78,7 +78,7 @@ export function KanbanPage(props: { boardId: string | null; onBoard: (id: string
   );
 }
 
-function BoardView(props: { board: KBoard; onOpenFile: (path: string) => void; onError: (m: string) => void; onChanged: () => void; onDeleted: () => void }) {
+function BoardView(props: { board: KBoard; flashId?: string | null; onFlashed?: () => void; onOpenFile: (path: string) => void; onError: (m: string) => void; onChanged: () => void; onDeleted: () => void }) {
   const [cols, setCols] = createSignal<KColumn[]>([]);
   const [cards, setCards] = createSignal<KCard[]>([]);
   const [loading, setLoading] = createSignal(true);
@@ -105,6 +105,31 @@ function BoardView(props: { board: KBoard; onOpenFile: (path: string) => void; o
     }
   };
   const byId = createMemo(() => new Map(cards().map((c) => [c.id, c])));
+  // Mở từ Due tasks: cuộn tới đúng thẻ + nháy sáng. Thẻ ở cột done ngoài đợt tải thì tải thêm.
+  const moreTried = new Set<string>();
+  createEffect(() => {
+    const id = props.flashId;
+    const list = cards();
+    if (!id || loading() || !list.length) return;
+    if (list.some((c) => c.id === id)) {
+      requestAnimationFrame(() => {
+        const el = boardEl.querySelector<HTMLElement>(`.kb-card[data-id="${CSS.escape(id)}"]`);
+        if (el) {
+          el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          el.classList.add("flash");
+          setTimeout(() => el.classList.remove("flash"), 1600);
+        }
+        props.onFlashed?.();
+      });
+    } else {
+      const dc = cols().find((c) => c.is_done);
+      const key = `${id}:${dc?.id ?? ""}`;
+      if (dc && dc.total - loadedIn(dc) > 0 && !moreTried.has(key)) {
+        moreTried.add(key);
+        more(dc);
+      } else props.onFlashed?.();
+    }
+  });
   const colCards = (c: KColumn) => {
     const l = cards().filter((k) => k.column_id === c.id && (!hideSub() || !k.parent_id));
     if (c.is_done) return l.sort((a, b) => (b.done_at ?? 0) - (a.done_at ?? 0));

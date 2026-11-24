@@ -106,6 +106,7 @@ export default function App() {
   const [vaultLeft, setVaultLeft] = createSignal(0);
   const inSecret = () => isSecret(prefix()) || page() === "secret-trash";
   const [boardId, setBoardId] = createSignal<string | null>(null);
+  const [flashCard, setFlashCard] = createSignal<string | null>(null);
   type Dlg = { kind: "mkdir" } | { kind: "rename"; f: Entry } | { kind: "move"; paths: string[] } | { kind: "copy"; paths: string[] };
   const [dlg, setDlg] = createSignal<Dlg | null>(null);
   const [sel, setSel] = createSignal<Set<string>>(new Set());
@@ -1228,7 +1229,7 @@ export default function App() {
                     <button class="icon-btn sm" onClick={() => setErr("")}><Icon name="close" size={14} /></button>
                   </div>
                 </Show>
-                <KanbanPage boardId={boardId()} onBoard={setBoardId} onError={setErr} onOpenFile={(p) => openAt(p, "")} />
+                <KanbanPage boardId={boardId()} onBoard={(id) => { setFlashCard(null); setBoardId(id); }} flashId={flashCard()} onFlashed={() => setFlashCard(null)} onError={setErr} onOpenFile={(p) => openAt(p, "")} />
               </Show>
               <Show when={page() === "notes"}>
                 <NotesPage onOpen={openAt} onError={setErr} />
@@ -1240,7 +1241,7 @@ export default function App() {
                     <button class="icon-btn sm" onClick={() => setErr("")}><Icon name="close" size={14} /></button>
                   </div>
                 </Show>
-                <TrackerPage onOpenBoard={(id) => { setBoardId(id); setPage("kanban"); }} onError={setErr} />
+                <TrackerPage onOpenBoard={(id, card) => { setFlashCard(card ?? null); setBoardId(id); setPage("kanban"); }} onError={setErr} />
               </Show>
               <Show when={page() === "trash"}>
                 <Show when={err()}>

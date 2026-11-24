@@ -1048,6 +1048,7 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 .kb-cancel-ic, .kb-x { color: #dc2626; }
 .kb-x { margin-right: 4px; vertical-align: -2px; }
 .kb-card.cancel { opacity: .6; }
+.kb-card.flash { outline: 2px solid var(--accent); background: var(--accent-soft); }
 .kb-card.cancel .kb-title { text-decoration: line-through; font-style: italic; color: var(--muted); }
 .kb-subrow.cancel { opacity: .6; }
 .kb-subrow.cancel .link { text-decoration: line-through; font-style: italic; color: var(--muted); pointer-events: auto; }

@@ -10,7 +10,7 @@ const todayStr = () => dayStr(new Date());
 
 const VIEWS: TaskView[] = ["overdue", "today", "week", "all", "done"];
 
-export function TrackerPage(props: { onOpenBoard: (id: string) => void; onError: (m: string) => void }) {
+export function TrackerPage(props: { onOpenBoard: (boardId: string, cardId?: string) => void; onError: (m: string) => void }) {
   const [tab, setTab] = createSignal<"tasks" | "habits">("tasks");
   return (
     <div class="tracker" data-tab={tab()}>
@@ -35,7 +35,7 @@ export function TrackerPage(props: { onOpenBoard: (id: string) => void; onError:
   );
 }
 
-function TasksView(props: { onOpenBoard: (id: string) => void; onError: (m: string) => void }) {
+function TasksView(props: { onOpenBoard: (boardId: string, cardId?: string) => void; onError: (m: string) => void }) {
   const [view, setView] = createSignal<TaskView>("overdue");
   const [items, { refetch }] = createResource(view, (v) => api.tasks(v).catch((e) => (props.onError(errText(e)), [] as TaskItem[])), { initialValue: [] });
   const groups = createMemo(() => {
@@ -70,7 +70,7 @@ function TasksView(props: { onOpenBoard: (id: string) => void; onError: (m: stri
                         <b>{it.title}</b>
                         <span class="muted xs">{it.column_title}{it.due_at ? ` · ${t("tk.dueAt", { d: fmtDay(it.due_at) })}` : ""}{it.done_at ? ` · ${t("tk.doneAt", { d: fmtDay(it.done_at) })}` : ""}</span>
                       </div>
-                      <button class="btn ghost sm" onClick={() => props.onOpenBoard(it.board_id)}>{t("tk.openBoard")}</button>
+                      <button class="btn ghost sm" onClick={() => props.onOpenBoard(it.board_id, it.id)}>{t("tk.openBoard")}</button>
                     </div>
                   )}
                 </For>
@@ -122,9 +122,24 @@ function HabitsView(props: { onError: (m: string) => void }) {
   );
 }
 
-/** Biểu đồ năm kiểu GitHub: cột = tuần (Thứ 2..Chủ nhật), màu = đã làm.
- *  Màn rộng hiện cả năm (53 tuần), màn bé tự rút còn vài tháng cho vừa khung.
- *  Ô 12px + gap 3px đều mọi phía. Bấm ô để chấm/bỏ. */
+function HabitDayCell(props: { ds: string; days: () => Set<string>; onToggle: (day: string, on: boolean) => void }) {
+  const label = () => {
+    const [y, m, d] = props.ds.split("-").map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(loc(), { day: "2-digit", month: "2-digit" });
+  };
+  const fut = () => props.ds > todayStr();
+  const on = () => props.days().has(props.ds);
+  return (
+    <button
+      class="hb-cell"
+      role="gridcell"
+      classList={{ on: on(), future: fut() }}
+      title={`${label()}${on() ? t("tk.cellDone") : ""}`}
+      disabled={fut()}
+      onClick={() => props.onToggle(props.ds, !on())}
+    />
+  );
+}
 const HB_CELL = 12, HB_GAP = 3, HB_DAYW = 30, HB_WEEKS_MIN = 13, HB_WEEKS_MAX = 260;
 function HabitCard(props: { h: Habit; onToggle: (day: string, on: boolean) => void; onPatch: (b: { title?: string; archived?: boolean }) => void; onDelete: () => void }) {
   const done = () => new Set(props.h.days);
@@ -174,6 +189,18 @@ function HabitCard(props: { h: Habit; onToggle: (day: string, on: boolean) => vo
     }
     return out;
   });
+  // chuỗi ngày (YYYY-MM-DD) từng ô theo hàng — item của For nên đổi là vẽ lại đúng vị trí sau resize
+  const rowDays = (r: number) => {
+    const n = weeks();
+    const s = startMon();
+    const out: string[] = [];
+    for (let w = 0; w < n; w++) {
+      const d = new Date(s);
+      d.setDate(s.getDate() + w * 7 + r);
+      out.push(dayStr(d));
+    }
+    return out;
+  };
   // nhãn Mon/Wed/Fri theo locale (01/01/2024 là Thứ 2)
   const dayName = (r: number) => new Date(2024, 0, 1 + r).toLocaleDateString(loc(), { weekday: "short" });
   const rangeCount = createMemo(() => [...done()].filter((d) => Date.parse(d) >= startMon().getTime()).length);
@@ -204,24 +231,8 @@ function HabitCard(props: { h: Habit; onToggle: (day: string, on: boolean) => vo
           <For each={[0, 1, 2, 3, 4, 5, 6]}>
             {(r) => (<>
               <span class="hb-day">{[0, 2, 4].includes(r) ? dayName(r) : ""}</span>
-              <For each={Array.from({ length: weeks() }, (_, w) => w)}>
-                {(w) => {
-                  // dd/ds chỉ phụ thuộc cột/tuần (đổi khi resize); còn done()/todayMs() phải đọc TRỰC TIẾP
-                  // trong binding để Solid theo dõi — rút ra const ngoài sẽ đóng băng theo lần render đầu
-                  // (header vẫn tươi vì binding thẳng props, còn ô thì kẹt màu cũ: lúc thừa xanh, lúc thiếu xanh).
-                  const dd = at(w, r);
-                  const ds = dayStr(dd);
-                  return (
-                    <button
-                      class="hb-cell"
-                      role="gridcell"
-                      classList={{ on: done().has(ds), future: dd.getTime() > todayMs() }}
-                      title={`${dd.toLocaleDateString(loc(), { day: "2-digit", month: "2-digit" })}${done().has(ds) ? t("tk.cellDone") : ""}`}
-                      disabled={dd.getTime() > todayMs()}
-                      onClick={() => props.onToggle(ds, !done().has(ds))}
-                    />
-                  );
-                }}
+              <For each={rowDays(r)}>
+                {(ds) => <HabitDayCell ds={ds} days={done} onToggle={props.onToggle} />}
               </For>
             </>)}
           </For>
