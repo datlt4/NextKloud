@@ -466,8 +466,8 @@ input { font: inherit; color: var(--text); }
 .toc button { text-align: left; padding: 6px 10px; border-radius: 8px; font-size: 13px; line-height: 1.35; color: var(--text); }
 .toc button:hover { background: var(--hover); }
 .toc button.cur { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
-.bm-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 13px; }
-.bm-row:hover { background: var(--hover); }
+.notes-tab .bm-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+.notes-tab .bm-row:hover { background: var(--hover); }
 .bm-ic { color: var(--accent); flex-shrink: 0; fill: currentColor; }
 .bm-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chips { display: flex; gap: 6px; padding: 0 4px 8px; flex-wrap: wrap; }
