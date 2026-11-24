@@ -300,7 +300,6 @@ function HabitMonth(props: {
               </span>
             )}
           </For>
-          <span />
           <span class="hm-count" style={{ "grid-row": "span 2" }}>{t("tk.numHabits")}: <b>{fmtNum(stats().n)}</b></span>
           <For each={vis()}>
             {(ds) => <span class="hm-dw" classList={{ today: ds === todayStr() }}>{dwName(ds)}</span>}
