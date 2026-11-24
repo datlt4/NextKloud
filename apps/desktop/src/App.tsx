@@ -1572,7 +1572,7 @@ export default function App() {
                 <Show when={upload()}>
                   <div class="toast-row up-cur">
                     <Icon name="upload" size={15} />
-                    <span class="fname">{upload()!.name}</span>
+                    <span class="fname" title={upload()!.name}>{upload()!.name}</span>
                     <span class="muted">{upload()!.pct}%</span>
                   </div>
                   <div class="bar"><i style={{ width: `${upload()!.pct}%` }} /></div>
