@@ -4,7 +4,7 @@
 # Yêu cầu: nk-pg-test (15432), nk-rustfs-dev (19000) đang chạy, bucket nktest đã tạo.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-export BIND=127.0.0.1:18014
+export BIND=0.0.0.0:18014
 export DATABASE_URL=postgres://nk:nk@127.0.0.1:15432/nk
 export STORAGE_DRIVER=s3
 export S3_ENDPOINT=http://127.0.0.1:19000
