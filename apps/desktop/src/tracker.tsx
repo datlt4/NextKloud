@@ -134,8 +134,12 @@ function HabitsView(props: { onError: (m: string) => void }) {
 // Ngày tạo habit (YYYY-MM-DD): các ô trước ngày này bị disable, thêm giữa chừng không ảnh hưởng số liệu cũ.
 const createdDayOf = (h: Habit) => dayStr(new Date(h.created_at * 1000));
 
-const WEEK_COLORS = ["#8b5cf6", "#3b82f6", "#14b8a6", "#ec4899", "#10b981"];
+// tone cam chủ đề: nhạt -> đậm, tuần bên phải (gần hiện tại) luôn đậm nhất
+const ORANGE5 = ["#f3c39d", "#eda46f", "#e07f45", "#cf5c26", "#a8431f"];
 const weekOfMonth = (d: Date) => Math.floor((d.getDate() - 1) / 7);
+const parseDS = (ds: string) => new Date(Number(ds.slice(0, 4)), Number(ds.slice(5, 7)) - 1, Number(ds.slice(8, 10)));
+// tên dài cắt giữa: "Learn ... Agent", giữ title đầy đủ ở tooltip
+const truncMiddle = (s: string, max = 22) => (s.length <= max ? s : `${s.slice(0, 13).trimEnd()}...${s.slice(-6).trimStart()}`);
 
 function HabitMonth(props: {
   habits: Habit[];
@@ -207,6 +211,22 @@ function HabitMonth(props: {
     return { n: props.habits.length, done, poss, pct: poss ? (done / poss) * 100 : 0 };
   });
   const monthLabel = () => new Date(vy(), vm(), 1).toLocaleDateString(loc(), { month: "long", year: "numeric" });
+  // gộp ngày hiển thị thành nhóm tuần (màn bé 1 tuần có thể chẻ 2 nhóm)
+  const groups = createMemo(() => {
+    const g: { w: number; count: number }[] = [];
+    for (const ds of vis()) {
+      const w = weekOfMonth(parseDS(ds));
+      if (g.length && g[g.length - 1].w === w) g[g.length - 1].count++;
+      else g.push({ w, count: 1 });
+    }
+    return g;
+  });
+  // màu tuần theo vị trí trong khung nhìn: phải cùng đậm nhất
+  const weekColor = (w: number) => {
+    const G = groups().length;
+    const idx = groups().findIndex((g) => g.w === w);
+    return ORANGE5[5 - G + Math.max(0, idx)];
+  };
   const dwName = (ds: string) => {
     const [y, m, d] = ds.split("-").map(Number);
     return new Date(y, m - 1, d).toLocaleDateString(loc(), { weekday: "short" });
@@ -242,19 +262,14 @@ function HabitMonth(props: {
         </div>
       </Show>
       <div class="hm-wrap" ref={wrapEl}>
-        <div class="hm-grid" style={{ "grid-template-columns": `minmax(150px, 1fr) repeat(${vis().length}, 30px)` }}>
+        <div class="hm-grid" style={{ "grid-template-columns": `minmax(110px, 170px) repeat(${vis().length}, minmax(0, 1fr))` }}>
           <span class="hm-head-name">{t("tk.myHabits")}</span>
-          <For each={vis()}>
-            {(ds, i) => {
-              const d = new Date(ds.slice(0, 4) + "/" + ds.slice(5, 7) + "/" + ds.slice(8, 10));
-              const w = weekOfMonth(d);
-              const first = i() === 0 || weekOfMonth(new Date(vis()[i() - 1].slice(0, 4) + "/" + vis()[i() - 1].slice(5, 7) + "/" + vis()[i() - 1].slice(8, 10))) !== w;
-              return (
-                <span class="hm-wk" classList={{ today: ds === todayStr() }} style={{ background: WEEK_COLORS[w % 5] }}>
-                  {first ? t("tk.weekN", { n: w + 1 }) : ""}
-                </span>
-              );
-            }}
+          <For each={groups()}>
+            {(g) => (
+              <span class="hm-wk" style={{ "grid-column": `span ${g.count}`, background: weekColor(g.w) }} title={t("tk.weekN", { n: g.w + 1 })}>
+                {t("tk.weekN", { n: g.w + 1 })}
+              </span>
+            )}
           </For>
           <span />
           <For each={vis()}>
@@ -268,7 +283,7 @@ function HabitMonth(props: {
             {(h) => (
               <>
                 <span class="hm-name" title={h.title}>
-                  <span class="hm-name-t">{h.title}</span>
+                  <span class="hm-name-t">{truncMiddle(h.title)}</span>
                   <span class="hm-acts">
                     <button class="icon-btn sm" title={t("c.edit")} onClick={() => props.onRename(h)}><Icon name="edit" size={12} /></button>
                     <button class="icon-btn sm" title={h.archived ? t("tk.unarchive") : t("tk.archive")} onClick={() => props.onPatch(h, { archived: !h.archived })}><Icon name="archive" size={12} /></button>
@@ -279,8 +294,7 @@ function HabitMonth(props: {
                   {(ds) => {
                     const dis = ds > todayStr() || ds < createdDayOf(h);
                     const on = doneOn(h, ds);
-                    const d = new Date(Number(ds.slice(0, 4)), Number(ds.slice(5, 7)) - 1, Number(ds.slice(8, 10)));
-                    const wc = WEEK_COLORS[weekOfMonth(d) % 5];
+                    const wc = weekColor(weekOfMonth(parseDS(ds)));
                     return (
                       <button
                         class="hm-cell"
@@ -312,7 +326,8 @@ function HabitYear(props: { habits: Habit[] }) {
     onCleanup(() => ro.disconnect());
   });
   const CELL = 12, GAP = 3, DAYW = 30;
-  const weeks = () => Math.max(13, Math.min(53, Math.floor(((wrapW() || 1200) - DAYW) / (CELL + GAP))));
+  // rộng bao nhiêu hiện bấy nhiêu tuần (tràn sang năm trước), hẹp thì ẩn tuần cũ đi
+  const weeks = () => Math.max(13, Math.min(260, Math.floor(((wrapW() || 1200) - DAYW) / (CELL + GAP))));
   const todayMs = () => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
