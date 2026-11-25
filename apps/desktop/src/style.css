@@ -318,6 +318,7 @@ input { font: inherit; color: var(--text); }
 .pick-row:disabled { opacity: .4; cursor: not-allowed; }
 .pick-foot { display: flex; justify-content: space-between; gap: 8px; margin-top: 14px; }
 .pad { padding: 10px; margin: 0; }
+.md-shared { height: 100%; overflow: auto; padding: 12px 18px; font-family: var(--font-read); font-size: var(--read-size); line-height: 1.6; overflow-wrap: anywhere; }
 /* thùng rác */
 .trash { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .tb-title { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 17px; }

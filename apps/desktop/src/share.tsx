@@ -3,6 +3,7 @@ import { api, serverOrigin, type Entry, type LinkMeta, type ShareRow, type Share
 import { fmtDate, fmtNum, t } from "./i18n";
 import { errText } from "./fileops";
 import { Icon } from "./icons";
+import { ViewerOverlay } from "./viewers/ViewerOverlay";
 
 const expText = (e: number | null) => (!e ? t("sh.forever") : e * 1000 < Date.now() ? t("sh.expired", { d: fmtDate(e) }) : t("sh.until", { d: fmtDate(e) }));
 
@@ -97,6 +98,7 @@ export function ShareDialog(props: { path: string; onClose: () => void; onError:
 export function SharedPage(props: { onError: (m: string) => void }) {
   const [list, { refetch }] = createResource(() => api.shared().catch((e) => (props.onError(errText(e)), [] as SharedItem[])), { initialValue: [] });
   const [sel, setSel] = createSignal<SharedItem | null>(null);
+  const [view, setView] = createSignal<string | null>(null);
   const [prefix, setPrefix] = createSignal("");
   const abs = () => (prefix() ? `${sel()!.path}/${prefix()}` : sel()!.path);
   const [page, { refetch: refetchFiles }] = createResource(
@@ -192,6 +194,7 @@ export function SharedPage(props: { onError: (m: string) => void }) {
                     <button class="btn ghost sm" onClick={() => setPrefix(prefix() ? `${prefix()}/${e.name}` : e.name)}>{t("c.open")}</button>
                   </Show>
                   <Show when={!e.is_dir}>
+                    <button class="btn ghost sm" onClick={() => setView(e.path)}><Icon name="file" size={14} /> {t("c.open")}</button>
                     <button class="btn ghost sm" onClick={() => dl(e)}><Icon name="download" size={14} /> {t("sh.dl")}</button>
                     <button class="btn ghost sm" onClick={() => saveCopy(e.path)} title={t("sh.saveTip")}><Icon name="copy" size={14} /></button>
                   </Show>
@@ -203,6 +206,9 @@ export function SharedPage(props: { onError: (m: string) => void }) {
             </For>
           </div>
         </Show>
+      </Show>
+      <Show when={view() && sel()}>
+        <ViewerOverlay path={view()!} owner={sel()!.owner_id} onClose={() => setView(null)} onError={props.onError} />
       </Show>
     </div>
   );

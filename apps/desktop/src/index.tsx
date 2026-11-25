@@ -1,5 +1,6 @@
 import { render } from "solid-js/web";
 import "./style.css";
+import "./sanitize";
 import App from "./App";
 
 // Không bao giờ zoom cả trang web: Ctrl/⌘+lăn chuột, Ctrl/⌘ +/-/0, chụm 2 ngón.

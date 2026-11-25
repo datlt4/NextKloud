@@ -1,5 +1,6 @@
 import { Match, Show, Suspense, Switch, createEffect, createResource, createSignal, lazy, on, onCleanup } from "solid-js";
-import { api } from "../api";
+import { marked } from "marked";
+import { api, setViewOwner } from "../api";
 import { onEsc, inField } from "../esc";
 import { t } from "../i18n";
 import { Icon } from "../icons";
@@ -16,11 +17,18 @@ const ExcalidrawView = lazy(() => import("./ExcalidrawView"));
 const OfficeView = lazy(() => import("./OfficeView"));
 const MarkdownView = lazy(() => import("./MarkdownView"));
 
-export function ViewerOverlay(props: { path: string; onClose: () => void; onError?: (m: string) => void }) {
+/** owner: file của người khác chia sẻ -> chỉ xem (md render thuần, Office/zip/drawio tải về). */
+export function ViewerOverlay(props: { path: string; owner?: string; onClose: () => void; onError?: (m: string) => void }) {
   const [cur, setCur] = createSignal(props.path);
   createEffect(on(() => props.path, (p) => setCur(p)));
+  setViewOwner(props.owner ?? null);
+  onCleanup(() => setViewOwner(null));
   const name = () => cur().split("/").pop() ?? cur();
-  const kind = () => viewerKind(name());
+  const SHARED_OK = ["markdown", "text", "image", "video", "audio", "pdf", "epub"];
+  const kind = () => {
+    const k = viewerKind(name());
+    return props.owner && !SHARED_OK.includes(k) ? "other" : k;
+  };
   const [text, { refetch }] = createResource(() => (kind() === "markdown" ? cur() : null), (p) => api.readText(p));
   const [anchor, setAnchor] = createSignal<string | null>(null);
   // [[link]] trong note: tương đối theo thư mục note, thử thêm .md (giống openWikiLink ở App)
@@ -51,7 +59,7 @@ export function ViewerOverlay(props: { path: string; onClose: () => void; onErro
   const downloadOther = async () => {
     try {
       const a = document.createElement("a");
-      a.href = await api.directDownloadUrl(cur());
+      a.href = props.owner ? await api.sharedDirectUrl(props.owner, cur()) : await api.directDownloadUrl(cur());
       a.download = name();
       a.click();
       close();
@@ -88,7 +96,9 @@ export function ViewerOverlay(props: { path: string; onClose: () => void; onErro
                 </Match>
               </Switch>
             }>
-              <MarkdownView path={cur()} text={text()!} anchor={anchor()} onOpenLink={(l, a) => void openLink(l, a)} onError={props.onError} onSaved={() => refetch()} />
+              <Show when={!props.owner} fallback={<div class="md-shared"><div class="md-content" innerHTML={marked.parse(text()!) as string} /></div>}>
+                <MarkdownView path={cur()} text={text()!} anchor={anchor()} onOpenLink={(l, a) => void openLink(l, a)} onError={props.onError} onSaved={() => refetch()} />
+              </Show>
             </Show>
           </Suspense>
         </div>

@@ -222,6 +222,10 @@ export const setVaultToken = (t: string | null) => (t ? sessionStorage.setItem("
 /** Lần cuối gọi API vault (để đếm ngược tự khoá). */
 export let vaultSeen = 0;
 const fileUrl = (path: string) => (isSecret(path) ? `/api/secret/files/${encPath(sRel(path))}` : `/api/files/${encPath(path)}`);
+// Đang xem file người khác chia sẻ (ViewerOverlay trong "Được chia sẻ"): đọc file kèm ?owner=
+let viewOwner: string | null = null;
+export const setViewOwner = (o: string | null) => (viewOwner = o);
+const ownQ = (path: string, sep: "?" | "&") => (viewOwner && !isSecret(path) ? `${sep}owner=${encodeURIComponent(viewOwner)}` : "");
 const vtQ = (path: string) => (isSecret(path) ? `&vt=${encodeURIComponent(vaultToken() ?? "")}` : "");
 const noSecret = (path: string, what: string) => {
   if (isSecret(path)) throw new Error(`${what} không dùng được với file Bí mật`);
@@ -386,7 +390,7 @@ export const api = {
   /** URL stream trực tiếp (kèm ?t= cho <video>/<audio>/<img> không gửi được Bearer). */
   streamUrl(path: string) {
     const t = token();
-    return `${serverOrigin()}${fileUrl(path)}?t=${encodeURIComponent(t ?? "")}${vtQ(path)}`;
+    return `${serverOrigin()}${fileUrl(path)}?t=${encodeURIComponent(t ?? "")}${vtQ(path)}${ownQ(path, "&")}`;
   },
   thumbUrl(path: string, s = 256) {
     const t = token();
@@ -632,7 +636,7 @@ export const api = {
   },
   /** Ném lỗi nếu file không tồn tại (HEAD, không tải nội dung). */
   async exists(path: string) {
-    await req(fileUrl(path), { method: "HEAD" });
+    await req(fileUrl(path) + ownQ(path, "?"), { method: "HEAD" });
   },
   /** Bản cũ của file (mới nhất trước), ts = mtime bản cũ. */
   async versions(path: string) {
@@ -645,7 +649,7 @@ export const api = {
     await req("/api/versions/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, ts }) });
   },
   async readBlob(path: string) {
-    return (await req(fileUrl(path))).blob();
+    return (await req(fileUrl(path) + ownQ(path, "?"))).blob();
   },
   /** Upload đang dở của chính mình (để resume): cùng vùng, path và size. */
   async uploadActive(path: string, size: number, mtime: number, owner?: string) {
@@ -716,7 +720,7 @@ export const api = {
     await req(`${up}/${id}/complete`, { method: "POST" });
   },
   async readText(path: string) {
-    const r = await req(fileUrl(path));
+    const r = await req(fileUrl(path) + ownQ(path, "?"));
     return r.text();
   },
   /** Link tải cả thư mục thành zip (stream trực tiếp, không qua RAM). */

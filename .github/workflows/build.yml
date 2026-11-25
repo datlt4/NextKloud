@@ -35,6 +35,36 @@ jobs:
           workspaces: crates/backend -> target
       - run: cargo test --locked -p nextkloud-backend
 
+  # Test backend với Postgres + RustFS thật (test tự bỏ qua khi thiếu NK_TEST_DB/NK_TEST_S3).
+  # Job riêng, không chặn build Docker. Credential dưới đây chỉ dùng trong CI, không phải secret.
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: nk, POSTGRES_PASSWORD: nk, POSTGRES_DB: nk }
+        ports: ["15432:5432"]
+        options: --health-cmd "pg_isready -U nk" --health-interval 5s --health-retries 20
+      rustfs:
+        image: rustfs/rustfs:1.0.4
+        env: { RUSTFS_ACCESS_KEY: citest, RUSTFS_SECRET_KEY: citest-secret-123, RUSTFS_ADDRESS: ":9000", RUSTFS_VOLUMES: /data }
+        ports: ["19000:9000"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create test bucket
+        env: { AWS_ACCESS_KEY_ID: citest, AWS_SECRET_ACCESS_KEY: citest-secret-123, AWS_DEFAULT_REGION: us-east-1 }
+        run: |
+          for i in $(seq 1 30); do aws --endpoint-url http://127.0.0.1:19000 s3 mb s3://nktest && break; sleep 2; done
+          aws --endpoint-url http://127.0.0.1:19000 s3 ls
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/backend -> target
+      - run: cargo test --locked -p nextkloud-backend
+        env:
+          NK_TEST_DB: postgres://nk:nk@127.0.0.1:15432/nk
+          NK_TEST_S3: http://127.0.0.1:19000,nktest,citest,citest-secret-123
+
   tauri-check:
     runs-on: ubuntu-22.04
     steps:
@@ -105,10 +135,25 @@ jobs:
           docker buildx imagetools create -t $I:latest -t $I:$V $(printf "$I@sha256:%s " *)
           docker buildx imagetools inspect $I:latest
 
+  # Chỉ build lại image TTS khi docker/tts đổi: bớt push/pull Docker Hub (tránh 429).
+  changes:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      tts: ${{ steps.f.outputs.tts }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: f
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            tts:
+              - 'docker/tts/**'
+
   # TTS voice service (edge-tts + LibreTranslate detect). Same flow, own image.
   tts:
-    needs: check
-    if: github.event_name == 'push'
+    needs: [check, changes]
+    if: github.event_name == 'push' && needs.changes.outputs.tts == 'true'
     strategy:
       matrix:
         include:
