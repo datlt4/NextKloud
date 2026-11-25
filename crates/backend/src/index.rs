@@ -116,6 +116,33 @@ pub async fn search(db: &PgPool, user: Uuid, q: &str, limit: i64) -> Result<Vec<
     .await
 }
 
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct SyncRow {
+    pub path: String,
+    pub size: i64,
+    pub mtime: i64,
+    pub is_dir: bool,
+}
+
+/// Cả cây dưới `prefix` cho client đồng bộ, phân trang theo path (keyset, đi index text_pattern_ops).
+/// Bỏ `.nextkloud/` (thư mục hệ thống). Trả về (trang, cursor tiếp theo).
+pub async fn sync_list(db: &PgPool, user: Uuid, prefix: &str, cursor: &str, limit: i64) -> Result<(Vec<SyncRow>, Option<String>), sqlx::Error> {
+    let like = if prefix.is_empty() { "%".to_string() } else { format!("{}/%", like_escape(prefix)) };
+    let rows: Vec<SyncRow> = sqlx::query_as(
+        "SELECT path, size, modified AS mtime, is_dir FROM files
+         WHERE user_id = $1 AND path LIKE $2 AND path ~>~ $3 AND path <> '.nextkloud' AND path NOT LIKE '.nextkloud/%'
+         ORDER BY path USING ~<~ LIMIT $4",
+    )
+    .bind(user)
+    .bind(like)
+    .bind(cursor)
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
+    let next = (rows.len() as i64 == limit).then(|| rows.last().map(|r| r.path.clone())).flatten();
+    Ok((rows, next))
+}
+
 const UPSERT_DIR: &str = "INSERT INTO files (user_id, path, parent, name, is_dir, size, modified)
      VALUES ($1, $2, $3, $4, TRUE, 0, $5)
      ON CONFLICT (user_id, path) DO UPDATE SET modified = GREATEST(files.modified, EXCLUDED.modified)";
@@ -335,6 +362,35 @@ mod tests {
         assert_eq!(hits[0].path, "d10/y/z.txt");
         assert!(search(&db, u, "settings", 10).await.unwrap().is_empty()); // dotfolder ẩn
         assert!(search(&db, u, "%", 10).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn sync_list_pages_subtree() {
+        let Some(db) = test_db().await else { return };
+        let u = new_user(&db).await;
+        for p in ["a/x.txt", "a/b/y.txt", "a/b/z.txt", "a_b/no.txt", "ab/no.txt", "top.txt", ".nextkloud/settings.json", "a/.obsidian/app.json"] {
+            add_file(&db, u, p, 3, 42).await.unwrap();
+        }
+        let mut all = vec![];
+        let mut cur = String::new();
+        loop {
+            let (rows, next) = sync_list(&db, u, "a", &cur, 2).await.unwrap();
+            assert!(rows.len() <= 2);
+            all.extend(rows);
+            match next {
+                Some(n) => cur = n,
+                None => break,
+            }
+        }
+        let paths: Vec<_> = all.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(paths, ["a/.obsidian", "a/.obsidian/app.json", "a/b", "a/b/y.txt", "a/b/z.txt", "a/x.txt"]);
+        assert!(all.iter().any(|r| r.path == "a/b" && r.is_dir));
+        assert!(all.iter().any(|r| r.path == "a/x.txt" && !r.is_dir && r.size == 3 && r.mtime == 42));
+        // gốc: mọi thứ trừ .nextkloud
+        let (rows, next) = sync_list(&db, u, "", "", 1000).await.unwrap();
+        assert!(next.is_none());
+        assert_eq!(rows.len(), 12);
+        assert!(rows.iter().all(|r| !r.path.starts_with(".nextkloud")));
     }
 
     #[tokio::test]

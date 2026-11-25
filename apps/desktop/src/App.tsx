@@ -53,6 +53,7 @@ import { checkUpdate, installUpdate, restartApp, updateState } from "./updater";
 import { PublicPage, ShareDialog, SharedPage } from "./share";
 import { VersionsDialog } from "./versions";
 import { SecretGate, SecretSettings } from "./secret";
+import { syncAuth } from "./foldersync";
 
 type SortKey = "name" | "size" | "modified";
 
@@ -419,6 +420,9 @@ export default function App() {
       window.removeEventListener("hashchange", pop);
     });
   });
+
+  // app desktop: báo phiên đăng nhập cho engine đồng bộ thư mục (đăng xuất -> dừng)
+  createEffect(() => syncAuth(authed() ? (me()?.id ?? null) : null));
 
   const enter = () => {
     setAuthed(true);

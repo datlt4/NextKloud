@@ -1,8 +1,17 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "desktop",
-  "description": "Tự cập nhật app desktop",
+  "description": "Tự cập nhật app desktop, đồng bộ thư mục",
   "platforms": ["linux", "macOS", "windows"],
   "windows": ["main"],
-  "permissions": ["updater:default", "process:default"]
+  "permissions": [
+    "updater:default",
+    "process:default",
+    "allow-sync-auth",
+    "allow-sync-get",
+    "allow-sync-add",
+    "allow-sync-remove",
+    "allow-sync-pause",
+    "allow-sync-now"
+  ]
 }
