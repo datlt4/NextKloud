@@ -1,6 +1,7 @@
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { api } from "../api";
 import { loc, t } from "../i18n";
+import { Icon } from "../icons";
 
 /**
  * Sửa draw.io (.drawio) qua editor nhúng. Lưu ngược lại file trên NextKloud.
@@ -9,6 +10,8 @@ import { loc, t } from "../i18n";
 export default function DrawioView(props: { path: string }) {
   const [err, setErr] = createSignal("");
   const [saved, setSaved] = createSignal<string | null>(null);
+  // "Full màn hình" = lấp đầy khung trình duyệt (giữ chrome/nút điều hướng), KHÔNG dùng Fullscreen API.
+  const [wide, setWide] = createSignal(false);
   let frame!: HTMLIFrameElement;
   let dead = false;
   let timer: any = null;
@@ -53,16 +56,24 @@ export default function DrawioView(props: { path: string }) {
   };
 
   onMount(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && wide() && !(e.target as HTMLElement).closest("input, textarea, select")) setWide(false);
+    };
+    document.addEventListener("keydown", onKey);
     window.addEventListener("message", onMsg);
     onCleanup(() => {
       dead = true;
       clearTimeout(timer);
+      document.removeEventListener("keydown", onKey);
       window.removeEventListener("message", onMsg);
     });
   });
 
   return (
-    <div class="drawio-wrap">
+    <div class="drawio-wrap" classList={{ "vw-wide": wide() }}>
+      <button class="fs-btn" onClick={() => setWide((w) => !w)} title={wide() ? t("vw.fsExit") : t("vw.fsEnter")}>
+        <Icon name={wide() ? "compress" : "expand"} size={17} />
+      </button>
       <Show when={err()}><p class="err">{err()}</p></Show>
       <Show when={saved()}><p class="muted sm">{saved()}</p></Show>
       <iframe

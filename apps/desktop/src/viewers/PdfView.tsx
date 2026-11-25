@@ -150,7 +150,8 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
   const [scale, setScale] = createSignal(1.4);
   const [ratio, setRatio] = createSignal(1.294); // tỉ lệ cao/rộng trang đầu, dùng cho khung chờ
   const [w1, setW1] = createSignal(612); // bề rộng trang đầu ở zoom 100%
-  const [fs, setFs] = createSignal(false);
+  // "Full màn hình" = lấp đầy khung trình duyệt (giữ chrome/nút điều hướng), KHÔNG dùng Fullscreen API.
+  const [wide, setWide] = createSignal(false);
   const [layout, setLayoutSig] = createSignal<Layout>(savedLayout());
   const [tone, setToneSig] = createSignal<Tone>(savedTone());
   const setTone = (t: Tone) => {
@@ -205,7 +206,7 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
 
   // Cuộn liên tục: trang hiện tại = trang đầu tiên còn thấy dưới thanh công cụ.
   const onScroll = () => {
-    const sc = document.fullscreenElement === host ? host : scroller; // toàn màn hình thì chính host cuộn
+    const sc = wide() ? host : scroller; // lấp đầy khung thì chính host cuộn
     if (touchUi && sc) {
       if (sc.scrollTop > lastTop + 12) setBarHidden(true);
       lastTop = sc.scrollTop;
@@ -234,7 +235,11 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
     });
     ro.observe(host);
     onCleanup(() => ro.disconnect());
-    document.addEventListener("fullscreenchange", onFs);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && wide() && !(e.target as HTMLElement).closest("input, textarea, select")) setWide(false);
+    };
+    document.addEventListener("keydown", onKey);
+    onCleanup(() => document.removeEventListener("keydown", onKey));
     try {
       const buf = await (await api.readBlob(props.path)).arrayBuffer();
       if (cancelled) return;
@@ -255,7 +260,6 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
   onCleanup(() => {
     cancelled = true;
     scroller?.removeEventListener("scroll", onScroll);
-    document.removeEventListener("fullscreenchange", onFs);
     try {
       task?.destroy();
     } catch {}
@@ -268,13 +272,7 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
     if (scrolling()) scrollToPage(n);
   };
   const go = (d: number) => jump(`p${Math.min(Math.max(1, (spread() ? shown()[0] : page()) + d * step()), pages() || 1)}`);
-  const toggleFs = async () => {
-    try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await host.requestFullscreen();
-    } catch {}
-  };
-  const onFs = () => !cancelled && setFs(!!document.fullscreenElement);
+  const toggleWide = () => setWide((w) => !w);
   const zoom = (d: number) => setScale((s) => Math.min(3, Math.max(0.4, +(s + d).toFixed(1))));
 
   // Chụm 2 ngón / Ctrl(⌘)+lăn chuột: xem trước bằng CSS scale, thả tay mới render lại ở zoom mới.
@@ -294,7 +292,7 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
   const commit = () => {
     clearTimeout(commitT);
     if (gf === 1) return;
-    const sc = document.fullscreenElement === host ? host : scroller;
+    const sc = wide() ? host : scroller;
     const r = sc?.getBoundingClientRect();
     const k = gf;
     gf = 1;
@@ -368,7 +366,7 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
 
   return (
     <ReaderLayout r={reader} toc={toc()} current={toc().filter((t) => +t.anchor.slice(1) <= page()).pop()?.anchor ?? ""} onJump={jump} anchorOf={() => here()}>
-    <div class="pdf-wrap" ref={host}>
+    <div class="pdf-wrap" ref={host} classList={{ "vw-wide": wide() }}>
       <div class="pdf-bar" classList={{ hide: barHidden() }}>
         <button class="icon-btn" onClick={() => go(-1)} disabled={page() <= 1} title={t("vw.prevPage")}><Icon name="back" /></button>
         <span class="pdf-num muted sm">
@@ -427,8 +425,8 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
           %
         </span>
         <button class="icon-btn" onClick={() => zoom(0.2)} title={t("vw.zin")}>+</button>
-        <button class="icon-btn" onClick={toggleFs} title={fs() ? t("vw.fsExit") : t("vw.fsEnter")}>
-          <Icon name="expand" size={17} />
+        <button class="icon-btn" onClick={toggleWide} title={wide() ? t("vw.fsExit") : t("vw.fsEnter")}>
+          <Icon name={wide() ? "compress" : "expand"} size={17} />
         </button>
       </div>
       <Show when={err()}><p class="err">{err()}</p></Show>

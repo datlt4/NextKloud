@@ -1,8 +1,10 @@
-import { Show, createSignal, onCleanup } from "solid-js";
+import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Excalidraw, getSceneVersion, serializeAsJSON } from "@excalidraw/excalidraw";
 import { api } from "../api";
+import { Icon } from "../icons";
+import { t } from "../i18n";
 
 /**
  * Sửa .excalidraw bằng editor chính chủ (component React, mount vào 1 root React riêng
@@ -11,6 +13,8 @@ import { api } from "../api";
 export default function ExcalidrawView(props: { path: string }) {
   const [err, setErr] = createSignal("");
   const [ready, setReady] = createSignal(false);
+  // "Full màn hình" = lấp đầy khung trình duyệt (giữ chrome/nút điều hướng), KHÔNG dùng Fullscreen API.
+  const [wide, setWide] = createSignal(false);
   let host!: HTMLDivElement;
   let root: Root | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -51,9 +55,19 @@ export default function ExcalidrawView(props: { path: string }) {
     clearTimeout(timer);
     root?.unmount();
   });
+  onMount(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && wide() && !(e.target as HTMLElement).closest("input, textarea, select")) setWide(false);
+    };
+    document.addEventListener("keydown", onKey);
+    onCleanup(() => document.removeEventListener("keydown", onKey));
+  });
 
   return (
-    <div class="excali-wrap">
+    <div class="excali-wrap" classList={{ "vw-wide": wide() }}>
+      <button class="fs-btn excali-fs" onClick={() => setWide((w) => !w)} title={wide() ? t("vw.fsExit") : t("vw.fsEnter")}>
+        <Icon name={wide() ? "compress" : "expand"} size={17} />
+      </button>
       <Show when={err()}><p class="err">{err()}</p></Show>
       <Show when={!ready() && !err()}><p class="muted">Đang mở Excalidraw…</p></Show>
       <div ref={host} class="excali-host" />

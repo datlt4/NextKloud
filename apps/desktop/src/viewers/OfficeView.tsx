@@ -34,23 +34,21 @@ function loadDocsApi(): Promise<void> {
  */
 export default function OfficeView(props: { path: string }) {
   const [err, setErr] = createSignal("");
-  const [fs, setFs] = createSignal(false);
+  // "Full màn hình" = lấp đầy khung trình duyệt (giữ chrome/nút điều hướng), KHÔNG dùng Fullscreen API.
+  const [wide, setWide] = createSignal(false);
   let wrap!: HTMLDivElement;
   let box!: HTMLDivElement;
   let editor: any = null;
   let dead = false;
 
-  const toggleFs = async () => {
-    try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await wrap.requestFullscreen();
-    } catch {}
-  };
+  const toggleWide = () => setWide((w) => !w);
 
   onMount(async () => {
-    const onFs = () => !dead && setFs(!!document.fullscreenElement);
-    document.addEventListener("fullscreenchange", onFs);
-    onCleanup(() => document.removeEventListener("fullscreenchange", onFs));
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && wide() && !(e.target as HTMLElement).closest("input, textarea, select")) setWide(false);
+    };
+    document.addEventListener("keydown", onKey);
+    onCleanup(() => document.removeEventListener("keydown", onKey));
     try {
       await loadDocsApi();
       if (dead) return;
@@ -82,10 +80,10 @@ export default function OfficeView(props: { path: string }) {
   });
 
   return (
-    <div class="office-wrap" ref={wrap!}>
+    <div class="office-wrap" ref={wrap!} classList={{ "vw-wide": wide() }}>
       <Show when={err()}><p class="err">{err()}</p></Show>
-      <button class="fs-btn" onClick={toggleFs} title={fs() ? t("vw.fsExit") : t("vw.fsEnter")}>
-        <Icon name="expand" size={17} />
+      <button class="fs-btn" onClick={toggleWide} title={wide() ? t("vw.fsExit") : t("vw.fsEnter")}>
+        <Icon name={wide() ? "compress" : "expand"} size={17} />
       </button>
       <div class="office-box" ref={box!} />
     </div>

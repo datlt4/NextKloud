@@ -789,9 +789,16 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 .fs-btn { position: absolute; top: 8px; right: 8px; z-index: 5; display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); box-shadow: var(--shadow); }
 .fs-btn:hover { color: var(--text); }
 /* fullscreen: nền + lấp đầy, nội dung cuộn được */
-.office-wrap:fullscreen, .pdf-wrap:fullscreen { background: var(--surface); padding: 10px; height: 100%; }
-.pdf-wrap:fullscreen { overflow-y: auto; }
-.office-wrap:fullscreen .office-box { height: 100%; }
+/* "full màn hình" = lấp đầy khung trình duyệt (giữ chrome/nút điều hướng), KHÔNG dùng Fullscreen API */
+.pdf-wrap.vw-wide, .office-wrap.vw-wide, .drawio-wrap.vw-wide, .excali-wrap.vw-wide {
+  position: fixed; inset: 0; z-index: 90; background: var(--surface);
+  height: 100dvh; max-height: none; min-height: 0; margin: 0; padding: 10px;
+  border: 0; border-radius: 0;
+}
+.pdf-wrap.vw-wide { overflow-y: auto; }
+.office-wrap.vw-wide .office-box, .drawio-wrap.vw-wide iframe { height: 100%; flex: 1; min-height: 0; }
+.excali-wrap.vw-wide .excali-host { flex: 1; min-height: 0; }
+.excali-wrap .fs-btn, .drawio-wrap .fs-btn { z-index: 50; }
 
 /* Mục lục dạng cây: đường kẻ cha-con, thu gọn/mở rộng */
 .tt-bar { display: flex; gap: 4px; padding: 2px 4px 6px; }
