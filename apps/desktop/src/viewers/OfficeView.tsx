@@ -1,4 +1,5 @@
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
+import { onEsc, inField } from "../esc";
 import { api, serverOrigin } from "../api";
 import { Icon } from "../icons";
 import { t } from "../i18n";
@@ -44,11 +45,7 @@ export default function OfficeView(props: { path: string }) {
   const toggleWide = () => setWide((w) => !w);
 
   onMount(async () => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && wide() && !(e.target as HTMLElement).closest("input, textarea, select")) setWide(false);
-    };
-    document.addEventListener("keydown", onKey);
-    onCleanup(() => document.removeEventListener("keydown", onKey));
+    onEsc((e) => wide() && !inField(e) && (setWide(false), true));
     try {
       await loadDocsApi();
       if (dead) return;

@@ -67,6 +67,23 @@ pub fn verify_dl_token(token: &str, dec: &DecodingKey) -> Result<DlClaims, Strin
     decode::<DlClaims>(token, dec, &Validation::default()).map(|d| d.claims).map_err(|e| e.to_string())
 }
 
+/// Vé mở SSE (EventSource không gửi được header): sống 1 phút, không dùng thay login/download được.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvClaims {
+    pub sub: Uuid,
+    pub ev: bool,
+    pub exp: usize,
+}
+
+pub fn create_ev_ticket(user: Uuid, enc: &EncodingKey) -> Result<String, String> {
+    let exp = (chrono::Utc::now() + chrono::Duration::minutes(1)).timestamp() as usize;
+    encode(&Header::default(), &EvClaims { sub: user, ev: true, exp }, enc).map_err(|e| e.to_string())
+}
+
+pub fn verify_ev_ticket(token: &str, dec: &DecodingKey) -> Result<Uuid, String> {
+    decode::<EvClaims>(token, dec, &Validation::default()).map(|d| d.claims.sub).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,6 +98,10 @@ mod tests {
         assert!(verify_jwt(&t, &dec).is_err()); // không dùng làm token đăng nhập được
         let login = create_jwt(u, true, &enc).unwrap();
         assert!(verify_dl_token(&login, &dec).is_err());
+        let ev = create_ev_ticket(u, &enc).unwrap();
+        assert_eq!(verify_ev_ticket(&ev, &dec).unwrap(), u);
+        assert!(verify_ev_ticket(&login, &dec).is_err() && verify_ev_ticket(&t, &dec).is_err());
+        assert!(verify_jwt(&ev, &dec).is_err() && verify_dl_token(&ev, &dec).is_err());
     }
 
     #[test]

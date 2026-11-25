@@ -2,6 +2,7 @@ import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Excalidraw, getSceneVersion, serializeAsJSON } from "@excalidraw/excalidraw";
+import { onEsc, inField } from "../esc";
 import { api } from "../api";
 import { Icon } from "../icons";
 import { t } from "../i18n";
@@ -56,11 +57,7 @@ export default function ExcalidrawView(props: { path: string }) {
     root?.unmount();
   });
   onMount(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && wide() && !(e.target as HTMLElement).closest("input, textarea, select")) setWide(false);
-    };
-    document.addEventListener("keydown", onKey);
-    onCleanup(() => document.removeEventListener("keydown", onKey));
+    onEsc((e) => wide() && !inField(e) && (setWide(false), true));
   });
 
   return (

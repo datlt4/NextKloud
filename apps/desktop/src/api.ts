@@ -361,6 +361,10 @@ export const api = {
   async avatarBlob(id: string, v: number) {
     return (await req(`/api/users/${id}/avatar?v=${v}`)).blob();
   },
+  /** Vé 1 phút để mở SSE (không để JWT đăng nhập trong URL). */
+  async eventsTicket() {
+    return ((await (await req("/api/events/ticket", { method: "POST" })).json()) as { ticket: string }).ticket;
+  },
   async me() {
     const r = await req("/api/me");
     return r.json() as Promise<Me>;

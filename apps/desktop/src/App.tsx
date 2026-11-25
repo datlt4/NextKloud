@@ -324,22 +324,43 @@ export default function App() {
     if (!routing && location.hash !== h && !(h === "#/" && !location.hash)) history.pushState(null, "", h);
   });
   // SSE: nhắc task đến hạn + báo được chia sẻ (toast + notification hệ thống).
-  // EventSource không gửi được header Authorization nên token đi theo ?token=.
+  // EventSource không gửi được header Authorization nên dùng vé 1 phút qua ?token=; vé hết hạn khi
+  // reconnect -> server 401 -> EventSource đóng hẳn -> xin vé mới sau 5s.
   let es: EventSource | null = null;
-  createEffect(() => {
-    if (!authed() || !routed()) {
-      es?.close();
-      es = null;
+  let esRetry: number | undefined;
+  const esStop = () => {
+    clearTimeout(esRetry);
+    esRetry = undefined;
+    es?.close();
+    es = null;
+  };
+  const esConnect = async () => {
+    esRetry = undefined;
+    let tk: string;
+    try {
+      tk = await api.eventsTicket();
+    } catch {
+      if (authed()) esRetry = window.setTimeout(esConnect, 30_000);
       return;
     }
-    if (es) return;
-    const tok = localStorage.getItem("nk-token");
-    if (!tok) return;
+    if (!authed() || es) return;
+    const src = (es = new EventSource(`${serverOrigin()}/api/events?token=${encodeURIComponent(tk)}`));
+    src.onerror = () => {
+      if (src.readyState !== EventSource.CLOSED || es !== src) return;
+      es = null;
+      esRetry = window.setTimeout(esConnect, 5000);
+    };
+    src.onmessage = onPush;
+  };
+  createEffect(() => {
+    if (!authed() || !routed()) return esStop();
+    if (es || esRetry) return;
     try {
       if ("Notification" in window && Notification.permission === "default") void Notification.requestPermission().catch(() => {});
     } catch {}
-    es = new EventSource(`${serverOrigin()}/api/events?token=${encodeURIComponent(tok)}`);
-    es.onmessage = (m) => {
+    void esConnect();
+  });
+  function onPush(m: MessageEvent) {
       try {
         const e = JSON.parse(m.data) as { type: string; title?: string; due_at?: number; path?: string; from?: string };
         const dl = e.due_at ? fdate(e.due_at) : "";
@@ -356,9 +377,8 @@ export default function App() {
           if ("Notification" in window && Notification.permission === "granted") void new Notification(title, { body });
         } catch {}
       } catch {}
-    };
-  });
-  onCleanup(() => es?.close());
+  }
+  onCleanup(esStop);
   const go = async (h: string) => {
     routing = true;
     try {
@@ -383,13 +403,18 @@ export default function App() {
     }
   };
   onMount(() => {
-    const pop = () => authed() && go(location.hash);
-    const onHash = () => authed() && go(location.hash);
+    // Back/Forward bắn cả popstate lẫn hashchange: chỉ route 1 lần cho mỗi hash
+    let last = "";
+    const pop = () => {
+      if (!authed() || (routing && location.hash === last)) return;
+      last = location.hash;
+      void go(location.hash);
+    };
     window.addEventListener("popstate", pop);
-    window.addEventListener("hashchange", onHash);
+    window.addEventListener("hashchange", pop);
     onCleanup(() => {
       window.removeEventListener("popstate", pop);
-      window.removeEventListener("hashchange", onHash);
+      window.removeEventListener("hashchange", pop);
     });
   });
 

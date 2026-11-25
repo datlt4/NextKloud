@@ -56,7 +56,15 @@ async fn reindex(db: &PgPool, store: &Store, username: Option<&str>) {
 async fn main() {
     tracing_subscriber::fmt().with_env_filter("info").init();
     // Cố tình KHÔNG check Host header (khác Nextcloud trusted_domains).
-    let cors = CorsLayer::permissive(); // thu hẹp ở reverse proxy khi deploy
+    // ALLOWED_ORIGINS: "*" (mặc định) hoặc danh sách cách nhau dấu phẩy; app desktop Tauri luôn được phép
+    let cors = match std::env::var("ALLOWED_ORIGINS").unwrap_or_default().trim() {
+        "" | "*" => CorsLayer::permissive(),
+        list => {
+            let mut origins: Vec<axum::http::HeaderValue> = list.split(',').filter_map(|o| o.trim().parse().ok()).collect();
+            origins.extend(["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"].map(axum::http::HeaderValue::from_static));
+            CorsLayer::permissive().allow_origin(tower_http::cors::AllowOrigin::list(origins))
+        }
+    };
 
     let db = PgPool::connect(&std::env::var("DATABASE_URL").expect("DATABASE_URL required"))
         .await
@@ -126,6 +134,13 @@ async fn main() {
                 }
                 if let Err(e) = nextkloud_backend::secret::purge_expired(&db, &store, days).await {
                     tracing::error!("secret trash purge: {e:?}");
+                }
+                // upload bỏ dở > 7 ngày: xoá file staging + dòng resume
+                let n = store.sweep_staging(std::time::Duration::from_secs(7 * 86400));
+                let cutoff = chrono::Utc::now().timestamp() - 7 * 86400;
+                let _ = sqlx::query("DELETE FROM uploads WHERE created_at < $1").bind(cutoff).execute(&db).await;
+                if n > 0 {
+                    tracing::info!("staging: removed {n} stale files");
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
             }

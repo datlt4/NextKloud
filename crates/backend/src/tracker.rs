@@ -248,20 +248,26 @@ pub async fn check_habit(State(s): State<AppState>, user: AuthUser, Path(id): Pa
     Ok(Json(habit_out(&s.db, h).await?))
 }
 
-/// Quét card đến hạn trong 24h tới (kể cả đã quá hạn) mà chưa nhắc: bắn SSE + đánh dấu reminded_at.
+/// Quét card đến hạn trong 24h tới (hoặc mới quá hạn trong 24h) mà chưa nhắc: bắn SSE + đánh dấu reminded_at.
+/// Chỉ nhắc user đang mở SSE; user offline giữ nguyên để nhắc khi họ mở app (trong cửa sổ 24h).
 pub async fn check_due_once(db: &PgPool) -> usize {
     let now = now();
     let rows: Vec<(Uuid, Uuid, String, i64, Uuid)> = sqlx::query_as(
         "SELECT c.id, c.board_id, c.title, c.due_at, b.owner FROM cards c JOIN boards b ON b.id = c.board_id JOIN board_columns k ON k.id = c.column_id
-         WHERE c.done_at IS NULL AND NOT c.archived AND NOT k.is_cancel AND c.due_at IS NOT NULL AND c.due_at <= $1 AND c.reminded_at IS NULL
-         LIMIT 200",
+         WHERE c.done_at IS NULL AND NOT c.archived AND NOT k.is_cancel AND c.due_at IS NOT NULL AND c.due_at <= $1 AND c.due_at >= $2
+           AND c.reminded_at IS NULL
+         ORDER BY c.due_at LIMIT 200",
     )
     .bind(now + 86_400)
+    .bind(now - 86_400)
     .fetch_all(db)
     .await
     .unwrap_or_default();
     let mut n = 0;
     for (id, board, title, due, owner) in rows {
+        if !crate::events::is_online(owner) {
+            continue;
+        }
         let ev = if due < now {
             crate::events::Ev::TaskOverdue { card: id, board, title, due_at: due }
         } else {
@@ -363,6 +369,12 @@ mod tests {
             }
             hit
         };
+        // user offline: không nhắc, không đánh dấu
+        check_due_once(&db).await;
+        assert!(!mine(&mut rx), "offline mà vẫn nhắc");
+        let r: (Option<i64>,) = sqlx::query_as("SELECT reminded_at FROM cards WHERE id = $1").bind(cid).fetch_one(&db).await.unwrap();
+        assert!(r.0.is_none(), "offline mà đã đánh dấu");
+        let _online = crate::events::OnlineGuard::new(u);
         check_due_once(&db).await;
         assert!(mine(&mut rx), "thiếu event nhắc card của mình");
         let r: (Option<i64>,) = sqlx::query_as("SELECT reminded_at FROM cards WHERE id = $1").bind(cid).fetch_one(&db).await.unwrap();

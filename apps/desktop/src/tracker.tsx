@@ -246,7 +246,7 @@ function HabitMonth(props: {
     }
     return g;
   });
-  const weekColor = (gi: number) => ORANGE5[5 - groups().length + Math.max(0, gi)];
+  const weekColor = (gi: number) => ORANGE5[Math.max(0, 5 - groups().length + Math.max(0, gi))];
   const gIdx = createMemo(() => {
     const m = new Map<string, number>();
     let gi = -1, pk = "";
@@ -457,13 +457,13 @@ function HabitYear(props: { habits: Habit[] }) {
               <span class="hb-day">{[0, 2, 4].includes(r) ? dayName(r) : ""}</span>
               <For each={rowDays(r)}>
                 {(ds) => {
-                  const { lv } = info(ds);
+                  const lv = () => info(ds).lv; // đọc trong binding để đổi màu ngay khi tick
                   const fut = ds > todayStr();
                   return (
                     <span
                       class="hb-cell hy"
                       role="img"
-                      classList={{ [`lv${lv}`]: lv > 0, future: fut }}
+                      classList={{ lv1: lv() === 1, lv2: lv() === 2, lv3: lv() === 3, lv4: lv() === 4, future: fut }}
                       title={cellTitle(ds)}
                     />
                   );

@@ -134,6 +134,22 @@ impl Store {
         self.staging.join(user.to_string()).join(format!("{id}.part"))
     }
 
+    /// Xoá file tạm trong staging không động tới quá `max_age` (upload bỏ dở). Trả về số file đã xoá.
+    pub fn sweep_staging(&self, max_age: std::time::Duration) -> usize {
+        let mut n = 0;
+        let Ok(users) = std::fs::read_dir(&self.staging) else { return 0 };
+        for d in users.flatten() {
+            let Ok(files) = std::fs::read_dir(d.path()) else { continue };
+            for f in files.flatten() {
+                let old = f.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|e| e > max_age);
+                if old && std::fs::remove_file(f.path()).is_ok() {
+                    n += 1;
+                }
+            }
+        }
+        n
+    }
+
     pub fn write_chunk(&self, user: Uuid, id: &str, offset: u64, data: &[u8]) -> Result<u64, StoreError> {
         let tmp = self.stage_path(user, id);
         std::fs::create_dir_all(tmp.parent().unwrap())?;

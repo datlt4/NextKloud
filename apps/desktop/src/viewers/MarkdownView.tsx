@@ -11,6 +11,7 @@ import { api, hashText, speak, type Backlink, type VaultOutline } from "../api";
 import { fmtNum, t } from "../i18n";
 import { Portal } from "solid-js/web";
 import { Icon } from "../icons";
+import { ui } from "../background";
 import Lightbox from "./Lightbox";
 import { ReaderLayout, STATE_UI, type TocItem, createReader, topState } from "../annot";
 
@@ -379,6 +380,9 @@ function dirOf2(p: string) {
 }
 
 const RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+// chọn tốc độ trên player: giữ cho các đoạn sau đến khi reload; null = theo mặc định trong Settings
+const [pickedRate, setPickedRate] = createSignal<number | null>(null);
+const curRate = () => pickedRate() ?? ui().ttsRate;
 const fmtT = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 // chỉ 1 đoạn phát tại 1 thời điểm: nút mới bấm thì dừng nút đang phát
 let activeStop: (() => void) | null = null;
@@ -391,7 +395,6 @@ function VoiceButton(props: { text: string; onPlay: () => void }) {
   const [st, setSt] = createSignal<"idle" | "busy" | "play" | "paused">("idle");
   const [pos, setPos] = createSignal(0);
   const [dur, setDur] = createSignal(0);
-  const [rate, setRate] = createSignal(Number(localStorage.getItem("nk-tts-rate") ?? 1) || 1);
   let audio: HTMLAudioElement | null = null;
   const stop = () => {
     audio?.pause();
@@ -423,7 +426,7 @@ function VoiceButton(props: { text: string; onPlay: () => void }) {
       const url = await speak(props.text);
       stopActiveVoice();
       audio = new Audio(url);
-      audio.playbackRate = rate();
+      audio.playbackRate = curRate();
       audio.onloadedmetadata = () => setDur(audio?.duration || 0);
       audio.ontimeupdate = () => setPos(audio?.currentTime || 0);
       audio.onended = () => {
@@ -446,10 +449,7 @@ function VoiceButton(props: { text: string; onPlay: () => void }) {
   };
   const changeRate = (e: Event) => {
     const v = +(e.currentTarget as HTMLSelectElement).value;
-    setRate(v);
-    try {
-      localStorage.setItem("nk-tts-rate", String(v));
-    } catch {}
+    setPickedRate(v);
     if (audio) audio.playbackRate = v;
   };
   return (
@@ -480,8 +480,8 @@ function VoiceButton(props: { text: string; onPlay: () => void }) {
           onInput={seek}
         />
         <span class="muted xs">{fmtT(dur())}</span>
-        <select class="voice-rate" value={rate()} title={t("vw.speed")} onChange={changeRate}>
-          <For each={RATES}>{(r) => <option value={r}>{r}×</option>}</For>
+        <select class="voice-rate" value={curRate()} title={t("vw.speed")} onChange={changeRate}>
+          <For each={[...new Set([...RATES, curRate()])].sort((a, b) => a - b)}>{(r) => <option value={r}>{r}×</option>}</For>
         </select>
       </div>
     </Show>
@@ -617,6 +617,7 @@ export default function MarkdownView(props: {
         const url = await speak(stripForSpeech(b.text));
         await new Promise<void>((res) => {
           const a = new Audio(url);
+          a.playbackRate = curRate();
           a.onended = () => res();
           a.onerror = () => res();
           a.play().catch(() => res());

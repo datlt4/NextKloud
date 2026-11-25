@@ -1,4 +1,5 @@
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
+import { onEsc } from "../esc";
 import { Icon } from "../icons";
 import { t } from "../i18n";
 
@@ -67,13 +68,13 @@ export default function Lightbox(props: { src: string; alt?: string; onClose: ()
   const tend = () => (pd = 0);
   const key = (e: KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && ["+", "=", "-", "0"].includes(e.key)) e.preventDefault(); // không zoom cả trang
-    if (e.key === "Escape") props.onClose();
-    else if (e.key === "ArrowLeft" && props.onPrev) props.onPrev();
+    if (e.key === "ArrowLeft" && props.onPrev) props.onPrev();
     else if (e.key === "ArrowRight" && props.onNext) props.onNext();
     else if (e.key === "+" || e.key === "=") zoomAt(1.25);
     else if (e.key === "-") zoomAt(0.8);
     else if (e.key === "0") reset(fit);
   };
+  onEsc(() => (props.onClose(), true));
   onMount(() => {
     document.addEventListener("keydown", key);
     // wheel cần passive:false để chặn cuộn trang

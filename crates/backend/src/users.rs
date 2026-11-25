@@ -22,17 +22,37 @@ pub struct LoginOut {
     pub is_admin: bool,
 }
 
+/// username -> (số lần đăng nhập sai, lần sai gần nhất)
+static LOGIN_FAILS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, (u32, i64)>>> =
+    std::sync::LazyLock::new(Default::default);
+const LOGIN_MAX_FAILS: u32 = 10;
+const LOGIN_LOCK_SECS: i64 = 900;
+
 pub async fn login(State(s): State<AppState>, Json(b): Json<LoginBody>) -> Result<Json<LoginOut>, AppError> {
+    let name = b.username.trim().to_string();
+    // chống dò mật khẩu: sai 10 lần thì khoá username 15 phút
+    let now = chrono::Utc::now().timestamp();
+    if LOGIN_FAILS.lock().unwrap().get(&name).is_some_and(|&(n, at)| n >= LOGIN_MAX_FAILS && now - at < LOGIN_LOCK_SECS) {
+        return Err(AppError::TooMany("too many failed logins, try again in 15 minutes".into()));
+    }
+    let fail = || {
+        let mut m = LOGIN_FAILS.lock().unwrap();
+        m.retain(|_, &mut (_, at)| now - at < LOGIN_LOCK_SECS);
+        let e = m.entry(name.clone()).or_insert((0, now));
+        *e = (e.0 + 1, now);
+        AppError::Auth("bad credentials".into())
+    };
     let row = sqlx::query_as::<_, UserRow>("SELECT * FROM users WHERE username = $1")
-        .bind(b.username.trim())
+        .bind(&name)
         .fetch_optional(&s.db)
         .await?;
     let Some(row) = row else {
-        return Err(AppError::Auth("bad credentials".into()));
+        return Err(fail());
     };
     if !verify_password(&b.password, &row.pass_hash) {
-        return Err(AppError::Auth("bad credentials".into()));
+        return Err(fail());
     }
+    LOGIN_FAILS.lock().unwrap().remove(&name);
     let token = create_jwt(row.id, row.is_admin, &s.enc).map_err(AppError::Internal)?;
     Ok(Json(LoginOut { token, must_reset: row.must_reset, is_admin: row.is_admin }))
 }
@@ -433,6 +453,32 @@ mod tests {
         (st, serde_json::from_slice(&b).unwrap_or(Value::Null))
     }
 
+    #[tokio::test]
+    async fn admin_from_db_and_login_lockout() {
+        let Some((app, s, _tok, _admin)) = setup().await else { return };
+        let id = Uuid::new_v4();
+        let name = format!("lk-{id}");
+        sqlx::query("INSERT INTO users (id, username, pass_hash) VALUES ($1, $2, $3)")
+            .bind(id).bind(&name).bind(hash_password("right-pass-123").unwrap()).execute(&s.db).await.unwrap();
+        // JWT ghi adm=true nhưng DB không phải admin -> bị chặn
+        let fake = create_jwt(id, true, &s.enc).unwrap();
+        assert_eq!(call(&app, "GET", "/api/admin/stats", &fake, None).await.0, StatusCode::FORBIDDEN);
+        let login = |pw: &'static str| {
+            let (app, name) = (app.clone(), name.clone());
+            async move {
+                let req = Request::builder().method("POST").uri("/api/auth/login").header("content-type", "application/json")
+                    .body(Body::from(json!({"username": name, "password": pw}).to_string())).unwrap();
+                app.oneshot(req).await.unwrap().status()
+            }
+        };
+        for _ in 0..LOGIN_MAX_FAILS {
+            assert_eq!(login("wrong").await, StatusCode::UNAUTHORIZED);
+        }
+        assert_eq!(login("right-pass-123").await, StatusCode::TOO_MANY_REQUESTS);
+        LOGIN_FAILS.lock().unwrap().remove(&name);
+        assert_eq!(login("right-pass-123").await, StatusCode::OK);
+    }
+
     #[test]
     fn image_magic() {
         assert_eq!(image_type(b"RIFF\0\0\0\0WEBPVP8 "), Some("image/webp"));
@@ -454,7 +500,9 @@ mod tests {
         let (st, u) = put_bytes(&app, "/api/me/avatar", &tok, b"RIFF\0\0\0\0WEBPVP8 data").await;
         assert_eq!((st, u["avatar_v"].as_i64()), (StatusCode::OK, Some(1)));
         // user khác cũng xem được avatar
-        let other = create_jwt(Uuid::new_v4(), false, &s.enc).unwrap();
+        let oid = Uuid::new_v4();
+        sqlx::query("INSERT INTO users (id, username, pass_hash) VALUES ($1, $2, 'x')").bind(oid).bind(format!("o-{oid}")).execute(&s.db).await.unwrap();
+        let other = create_jwt(oid, false, &s.enc).unwrap();
         let req = Request::builder().uri(format!("/api/users/{admin}/avatar")).header("authorization", format!("Bearer {other}")).body(Body::empty()).unwrap();
         let res = app.clone().oneshot(req).await.unwrap();
         assert_eq!(res.status(), StatusCode::OK);

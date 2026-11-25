@@ -1,4 +1,5 @@
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
+import { onEsc, inField } from "../esc";
 import { api } from "../api";
 import { loc, t } from "../i18n";
 import { Icon } from "../icons";
@@ -56,15 +57,11 @@ export default function DrawioView(props: { path: string }) {
   };
 
   onMount(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && wide() && !(e.target as HTMLElement).closest("input, textarea, select")) setWide(false);
-    };
-    document.addEventListener("keydown", onKey);
+    onEsc((e) => wide() && !inField(e) && (setWide(false), true));
     window.addEventListener("message", onMsg);
     onCleanup(() => {
       dead = true;
       clearTimeout(timer);
-      document.removeEventListener("keydown", onKey);
       window.removeEventListener("message", onMsg);
     });
   });

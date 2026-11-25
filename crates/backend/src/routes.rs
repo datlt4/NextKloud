@@ -163,6 +163,7 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/cards/:id/subtasks", get(crate::kanban::subtasks))
         .route("/api/tasks", get(crate::tracker::tasks))
         .route("/api/events", get(crate::events::stream))
+        .route("/api/events/ticket", post(crate::events::ticket))
         .route("/api/shares", get(crate::shares::list_shares).post(crate::shares::share_with))
         .route("/api/shares/link", post(crate::shares::create_link))
         .route("/api/shares/:id", axum::routing::delete(crate::shares::unshare))

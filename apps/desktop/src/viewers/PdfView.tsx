@@ -1,6 +1,7 @@
 import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import * as pdfjs from "pdfjs-dist";
 import PdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?worker";
+import { onEsc, inField } from "../esc";
 import { api } from "../api";
 import { fmtNum, t } from "../i18n";
 import { Icon } from "../icons";
@@ -235,11 +236,7 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
     });
     ro.observe(host);
     onCleanup(() => ro.disconnect());
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && wide() && !(e.target as HTMLElement).closest("input, textarea, select")) setWide(false);
-    };
-    document.addEventListener("keydown", onKey);
-    onCleanup(() => document.removeEventListener("keydown", onKey));
+    onEsc((e) => wide() && !inField(e) && (setWide(false), true));
     try {
       const buf = await (await api.readBlob(props.path)).arrayBuffer();
       if (cancelled) return;

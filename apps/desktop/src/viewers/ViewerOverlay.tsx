@@ -1,5 +1,6 @@
 import { Match, Show, Suspense, Switch, createEffect, createResource, createSignal, lazy, on, onCleanup } from "solid-js";
 import { api } from "../api";
+import { onEsc, inField } from "../esc";
 import { t } from "../i18n";
 import { Icon } from "../icons";
 import { viewerKind } from "./kinds";
@@ -21,12 +22,32 @@ export function ViewerOverlay(props: { path: string; onClose: () => void; onErro
   const name = () => cur().split("/").pop() ?? cur();
   const kind = () => viewerKind(name());
   const [text, { refetch }] = createResource(() => (kind() === "markdown" ? cur() : null), (p) => api.readText(p));
-  const close = () => props.onClose();
-  const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Escape" && !(e.target as HTMLElement).closest("textarea, input")) close();
+  const [anchor, setAnchor] = createSignal<string | null>(null);
+  // [[link]] trong note: tương đối theo thư mục note, thử thêm .md (giống openWikiLink ở App)
+  const openLink = async (target: string, a?: string) => {
+    const tt = target.trim();
+    if (!tt) return a && setAnchor(a);
+    const dir = cur().includes("/") ? cur().slice(0, cur().lastIndexOf("/")) : "";
+    const norm = (segs: string[]) => {
+      const out: string[] = [];
+      for (const x of segs) x === ".." ? out.pop() : x && x !== "." && out.push(x);
+      return out.join("/");
+    };
+    const base = tt.startsWith("/") ? norm(tt.slice(1).split("/")) : norm([...dir.split("/"), ...tt.split("/")]);
+    const cands = /\.[a-zA-Z0-9]{1,5}$/.test(base) ? [base] : [base, `${base}.md`];
+    for (const c of cands) {
+      try {
+        await api.exists(c);
+        setAnchor(a ?? null);
+        return setCur(c);
+      } catch {
+        /* thử ứng viên kế */
+      }
+    }
+    props.onError?.(`${t("c.notFound")}: ${tt}`);
   };
-  document.addEventListener("keydown", onKey);
-  onCleanup(() => document.removeEventListener("keydown", onKey));
+  const close = () => props.onClose();
+  onEsc((e) => !inField(e) && (close(), true));
   const downloadOther = async () => {
     try {
       const a = document.createElement("a");
@@ -67,7 +88,7 @@ export function ViewerOverlay(props: { path: string; onClose: () => void; onErro
                 </Match>
               </Switch>
             }>
-              <MarkdownView path={cur()} text={text()!} onOpenLink={(l) => setCur(l.replace(/^\//, ""))} onError={props.onError} onSaved={() => refetch()} />
+              <MarkdownView path={cur()} text={text()!} anchor={anchor()} onOpenLink={(l, a) => void openLink(l, a)} onError={props.onError} onSaved={() => refetch()} />
             </Show>
           </Suspense>
         </div>

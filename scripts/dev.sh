@@ -13,7 +13,8 @@ export S3_ACCESS_KEY=nktest
 export S3_SECRET_KEY=nktest-secret-123
 export STAGING_DIR=/tmp/nk-staging
 export NEXTKLOUD_WEB="$ROOT/apps/desktop/dist"
-export JWT_SECRET=localtest
+# bind 0.0.0.0 (LAN) nên JWT secret không được công khai: ngẫu nhiên mỗi lần chạy, hoặc đặt trong dev.local.env
+export JWT_SECRET="${JWT_SECRET:-$(head -c 24 /dev/urandom | base64)}"
 # secret that (OnlyOffice...): doc tu scripts/dev.local.env (gitignore), khong commit
 if [ -f "$ROOT/scripts/dev.local.env" ]; then
   set -a; . "$ROOT/scripts/dev.local.env"; set +a

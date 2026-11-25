@@ -36,11 +36,12 @@ export interface UiSettings {
   readFont: string; // phông khi đọc md: "" = giống giao diện
   readSize: number; // cỡ chữ khi đọc (px)
   lang: Lang; // ngôn ngữ giao diện, đồng bộ mọi thiết bị
+  ttsRate: number; // tốc độ đọc TTS mặc định
 }
 
 const SETTINGS = ".nextkloud/settings.json";
 const IMAGE = ".nextkloud/background.webp";
-const DEFAULT: UiSettings = { bg: "cream", dim: 0.2, v: 0, theme: "auto", font: "system", readFont: "", readSize: 15, lang: "vi" };
+const DEFAULT: UiSettings = { bg: "cream", dim: 0.2, v: 0, theme: "auto", font: "system", readFont: "", readSize: 15, lang: "vi", ttsRate: 1 };
 
 function cached(): UiSettings {
   try {
@@ -141,6 +142,8 @@ export const setPreset = (id: string) => save({ ...ui(), bg: id });
 /** Kéo slider: chỉ preview; thả tay mới lưu (tránh upload mỗi pixel). */
 export const previewDim = (dim: number) => setUi({ ...ui(), dim });
 export const setDim = (dim: number) => save({ ...ui(), dim });
+export const setTtsRate = (ttsRate: number) => save({ ...ui(), ttsRate });
+export const previewTtsRate = (ttsRate: number) => setUi({ ...ui(), ttsRate });
 export const setFonts = (f: Partial<Pick<UiSettings, "font" | "readFont" | "readSize">>) => save({ ...ui(), ...f });
 export const previewReadSize = (readSize: number) => {
   setUi({ ...ui(), readSize });

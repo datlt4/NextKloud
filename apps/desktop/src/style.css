@@ -457,7 +457,7 @@ input { font: inherit; color: var(--text); }
 .voice-seek::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; border: 2px solid var(--accent); }
 .voice-seek::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 2px solid var(--accent); }
 .voice-seek:disabled { opacity: .5; cursor: default; }
-.voice-rate { height: 28px; border-radius: 8px; border: 1px solid var(--line); background: var(--input); color: var(--text); font-size: 12px; }
+.voice-rate { height: 28px; min-width: 52px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--input); color: var(--text); font-size: 12px; -webkit-appearance: none; appearance: none; text-align: center; text-align-last: center; cursor: pointer; }
 @keyframes voice-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 .md-bar .btn svg, .md-bar button svg { vertical-align: -3px; }
 .wiki-link { color: var(--accent-text); text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
@@ -803,6 +803,8 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
   border: 0; border-radius: 0;
 }
 .pdf-wrap.vw-wide { overflow-y: auto; }
+/* backdrop-filter tạo containing block cho position:fixed -> tắt blur ở tổ tiên khi đang full khung */
+.glass:has(.vw-wide) { backdrop-filter: none; -webkit-backdrop-filter: none; }
 .office-wrap.vw-wide .office-box, .drawio-wrap.vw-wide iframe { height: 100%; flex: 1; min-height: 0; }
 .excali-wrap.vw-wide .excali-host { flex: 1; min-height: 0; }
 .excali-wrap .fs-btn, .drawio-wrap .fs-btn { z-index: 50; }

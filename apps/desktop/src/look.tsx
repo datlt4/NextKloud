@@ -1,5 +1,5 @@
 import { For, Show, createSignal } from "solid-js";
-import { FONTS, PRESETS, previewDim, previewReadSize, setDim, setFonts, setImage, setLang, setPreset, setTheme, ui } from "./background";
+import { FONTS, PRESETS, previewDim, previewReadSize, setDim, setFonts, setImage, setLang, setPreset, setTheme, setTtsRate, previewTtsRate, ui } from "./background";
 import { LANGS, lang, t } from "./i18n";
 import { Icon } from "./icons";
 
@@ -65,6 +65,18 @@ export function LookPanel(props: { onError: (m: string) => void }) {
           value={ui().readSize}
           onInput={(e) => previewReadSize(+e.currentTarget.value)}
           onChange={(e) => run(() => setFonts({ readSize: +e.currentTarget.value }))}
+        />
+      </label>
+      <label class="slider">
+        <span>{t("look.ttsRate", { rate: ui().ttsRate.toFixed(1) })}</span>
+        <input
+          type="range"
+          min="0.1"
+          max="2"
+          step="0.1"
+          value={ui().ttsRate}
+          onInput={(e) => previewTtsRate(+e.currentTarget.value)}
+          onChange={(e) => run(() => setTtsRate(+e.currentTarget.value))}
         />
       </label>
       <p class="font-sample">Tiếng Việt có dấu: Hệ thống 1 tư duy nhanh, trực giác — ABC xyz 0123.</p>

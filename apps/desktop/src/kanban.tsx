@@ -1,4 +1,5 @@
 import { marked } from "marked";
+import { onEsc, inField } from "./esc";
 import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup } from "solid-js";
 import { api, type DeckPreview, type KBoard, type KCard, type KCardPatch, type KColumn } from "./api";
 import { fmtNum, loc, t } from "./i18n";
@@ -510,6 +511,7 @@ export function CardDrawer(props: {
   const attach = async (list: FileList | null) => {
     if (!list?.length) return;
     setAttaching(true);
+    const cid = k().id; // drawer không keyed: chốt card trước khi await, tránh gắn nhầm sang card mở sau
     try {
       const added: string[] = [];
       for (const f of Array.from(list)) {
@@ -520,7 +522,8 @@ export function CardDrawer(props: {
         await api.upload(p, f);
         added.push(p);
       }
-      props.onPatch({ attachments: [...k().attachments, ...added] });
+      const cur = props.cards.find((c) => c.id === cid) ?? (await api.card(cid));
+      props.onPut(await api.updateCard(cid, { attachments: [...cur.attachments, ...added] }));
     } catch (e) {
       props.onError(errText(e));
     } finally {
@@ -554,24 +557,26 @@ export function CardDrawer(props: {
     run(async () => {
       const col = done ? props.firstDone : props.firstOpen;
       if (!col) return props.onError(done ? t("kb.noDoneCol") : t("kb.noOpenCol"));
+      const pid = k().id;
       const u = await api.updateCard(s.id, { column_id: col.id });
-      setSubs((l) => l.map((x) => (x.id === s.id ? u : x)));
+      if (k().id === pid) setSubs((l) => l.map((x) => (x.id === s.id ? u : x)));
       props.onPut(u);
-      props.onPut({ ...k(), sub_done: k().sub_done + (done ? 1 : -1) });
+      const p = props.cards.find((c) => c.id === pid);
+      if (p) props.onPut({ ...p, sub_done: p.sub_done + (done ? 1 : -1) });
     });
   const addSub = (title: string) =>
     run(async () => {
       if (!props.firstOpen) return;
-      const c = await api.createCard(props.firstOpen.id, title, k().id);
+      const pid = k().id;
+      const c = await api.createCard(props.firstOpen.id, title, pid);
       props.onPut(c);
-      props.onPut({ ...k(), sub_total: k().sub_total + 1 });
-      refetchSubs();
+      const p = props.cards.find((x) => x.id === pid);
+      if (p) props.onPut({ ...p, sub_total: p.sub_total + 1 });
+      if (k().id === pid) refetchSubs();
     });
   /** Subtask đã huỷ: task cha (card này) ở cột huỷ, hoặc chính subtask ở cột huỷ. */
   const subX = (s: KCard) => props.cancelled || !!props.cols.find((c) => c.id === s.column_id)?.is_cancel;
-  const onKey = (e: KeyboardEvent) => e.key === "Escape" && !(e.target as HTMLElement).closest("textarea, input") && props.onClose();
-  document.addEventListener("keydown", onKey);
-  onCleanup(() => document.removeEventListener("keydown", onKey));
+  onEsc((e) => !inField(e) && (props.onClose(), true));
   // không keyed (tránh remount mất scroll khi patch). on(k().id) vẫn kích hoạt dù id không đổi
   // nên tự so prev thủ công: chỉ reset editor + cuộn lên đầu khi đổi sang card khác.
   let aside!: HTMLElement;

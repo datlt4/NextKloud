@@ -59,6 +59,7 @@ pub enum AppError {
     NotFound(String),
     Conflict(String),
     BadRequest(String),
+    TooMany(String),
     Store(crate::files::StoreError),
     Db(sqlx::Error),
     Internal(String),
@@ -96,6 +97,7 @@ impl IntoResponse for AppError {
             Self::NotFound(m) => (StatusCode::NOT_FOUND, m),
             Self::Conflict(m) => (StatusCode::CONFLICT, m),
             Self::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
+            Self::TooMany(m) => (StatusCode::TOO_MANY_REQUESTS, m),
             Self::Store(e) => return AppError::from(e).into_response(),
             Self::Db(e) => {
                 tracing::error!("db: {e}");
@@ -126,7 +128,10 @@ impl FromRequestParts<AppState> for AuthUser {
             .ok_or_else(|| AppError::Auth("missing bearer token".into()))?;
         let tok = hdr.strip_prefix("Bearer ").ok_or_else(|| AppError::Auth("bad auth scheme".into()))?;
         let claims = verify_jwt(tok, &state.dec).map_err(AppError::Auth)?;
-        Ok(Self { id: claims.sub, admin: claims.adm })
+        // quyền admin đọc từ DB (JWT cũ không giữ quyền sau khi bị hạ/xoá user)
+        let admin: Option<bool> = sqlx::query_scalar("SELECT is_admin FROM users WHERE id = $1").bind(claims.sub).fetch_optional(&state.db).await?;
+        let admin = admin.ok_or_else(|| AppError::Auth("user gone".into()))?;
+        Ok(Self { id: claims.sub, admin })
     }
 }
 
