@@ -43,6 +43,14 @@ export interface ListOpts {
   limit: number;
 }
 
+/** Đích đã có: file trùng thì ghi đè / bỏ qua / giữ cả hai. */
+export type OnConflict = "overwrite" | "skip" | "keep_both";
+export interface XferOpts {
+  /** hỏi cách xử lý khi đích đã có; null = huỷ */
+  ask?: (name: string) => Promise<OnConflict | null>;
+  progress?: (done: number, total: number) => void;
+}
+
 export interface TrashItem {
   id: string;
   orig_path: string;
@@ -412,19 +420,41 @@ export const api = {
     return `${serverOrigin()}/api/zip/file?path=${encodeURIComponent(path)}&entry=${encodeURIComponent(entry)}&t=${encodeURIComponent(t ?? "")}`;
   },
   /** Đổi tên hoặc di chuyển (file/thư mục). owner: di chuyển trong vùng được chia sẻ. */
-  async move(from: string, to: string, owner?: string) {
-    return this.xfer(from, to, false, owner);
+  async move(from: string, to: string, owner?: string, o?: XferOpts) {
+    return this.xfer(from, to, false, owner, o);
   },
-  async copy(from: string, to: string, owner?: string) {
-    return this.xfer(from, to, true, owner);
+  async copy(from: string, to: string, owner?: string, o?: XferOpts) {
+    return this.xfer(from, to, true, owner, o);
   },
   /** Chuyển/sao chép; qua lại giữa file thường và Bí mật thì server mã hoá/giải mã. */
-  async xfer(from: string, to: string, keep: boolean, owner?: string) {
+  async xfer(from: string, to: string, keep: boolean, owner?: string, o?: XferOpts) {
     const [a, b] = [isSecret(from), isSecret(to)];
     const url = a && b ? (keep ? "/api/secret/copy" : "/api/secret/move") : !a && !b ? (keep ? "/api/copy" : "/api/move") : a ? "/api/secret/export" : "/api/secret/import";
     const body = { from: a ? sRel(from) : from, to: b ? sRel(to) : to, keep, ...(owner && !a && !b ? { owner } : {}) };
-    const r = await req(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    return r.json() as Promise<{ files: number }>;
+    const send = (on_conflict?: OnConflict) =>
+      req(url, { method: "POST", headers: JSON_H, body: JSON.stringify(on_conflict ? { ...body, on_conflict } : body) });
+    let r: Response;
+    try {
+      r = await send();
+    } catch (e) {
+      // đích đã có: hỏi cách gộp rồi gửi lại
+      if (!o?.ask || !String((e as Error)?.message).includes('"code":"exists"')) throw e;
+      const pol = await o.ask(to.split("/").pop() ?? to);
+      if (!pol) return { files: 0 };
+      r = await send(pol);
+    }
+    const j = (await r.json()) as { files?: number; job?: string };
+    return j.job ? this.waitJob(j.job, o?.progress) : { files: j.files ?? 0 };
+  },
+  /** Chờ job chạy nền (chuyển/chép thư mục lớn) xong, báo tiến độ. */
+  async waitJob(id: string, progress?: (done: number, total: number) => void) {
+    for (;;) {
+      await new Promise((ok) => setTimeout(ok, 1000));
+      const s = (await (await req(`/api/jobs/${id}`)).json()) as { state: "running" | "done" | "error"; done: number; total: number; files?: number; error?: string };
+      progress?.(s.done, s.total);
+      if (s.state === "done") return { files: s.files ?? 0 };
+      if (s.state === "error") throw new Error(s.error ?? "error");
+    }
   },
   // --- bookmark + ghi chú ---
   async annotations(path: string) {

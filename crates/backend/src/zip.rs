@@ -8,7 +8,7 @@ use axum::{
     Json,
     body::Body,
     extract::{Query, State},
-    http::{HeaderMap, header},
+    http::{HeaderMap, StatusCode, header},
     response::Response,
 };
 use crc32fast::Hasher;
@@ -304,14 +304,14 @@ pub async fn download_dir(
     let raw = q.get("path").cloned().unwrap_or_default();
     let prefix = if raw.trim().is_empty() { String::new() } else { crate::ops::user_path(&raw)? };
     let like = format!("{}/%", crate::index::like_escape(&prefix));
-    let files: Vec<(String, i64)> = if prefix.is_empty() {
-        sqlx::query_as("SELECT path, size FROM files WHERE user_id = $1 AND NOT is_dir AND path NOT LIKE '.nextkloud/%' ORDER BY path LIMIT 200001")
+    let files: Vec<(String, i64, i64)> = if prefix.is_empty() {
+        sqlx::query_as("SELECT path, size, modified FROM files WHERE user_id = $1 AND NOT is_dir AND path NOT LIKE '.nextkloud/%' ORDER BY path LIMIT 200001")
             .bind(user.id)
             .fetch_all(&s.db)
             .await?
     } else {
         sqlx::query_as(
-            "SELECT path, size FROM files WHERE user_id = $1 AND NOT is_dir AND path NOT LIKE '.nextkloud/%'
+            "SELECT path, size, modified FROM files WHERE user_id = $1 AND NOT is_dir AND path NOT LIKE '.nextkloud/%'
              AND (path = $2 OR path LIKE $3) ORDER BY path LIMIT 200001",
         )
         .bind(user.id)
@@ -346,7 +346,7 @@ pub async fn download_dir(
     };
     // thư mục (kể cả rỗng): suy từ đường dẫn file
     let mut dirs = std::collections::BTreeSet::new();
-    for (p, _) in &files {
+    for (p, _, _) in &files {
         let r = rel(p);
         let mut d = String::new();
         for part in r.split('/').take(r.split('/').count().saturating_sub(1)) {
@@ -357,27 +357,51 @@ pub async fn download_dir(
             dirs.insert(format!("{d}/"));
         }
     }
-    let mut entries: Vec<Ze> = dirs.into_iter().map(|name| Ze { name, full: String::new(), size: 0, is_dir: true }).collect();
-    for (p, sz) in &files {
-        entries.push(Ze { name: rel(p), full: p.clone(), size: (*sz).max(0) as u64, is_dir: false });
+    let mut entries: Vec<Ze> = dirs.into_iter().map(|name| Ze { name, full: String::new(), size: 0, modified: 0, is_dir: true }).collect();
+    for (p, sz, m) in &files {
+        entries.push(Ze { name: rel(p), full: p.clone(), size: (*sz).max(0) as u64, modified: *m, is_dir: false });
     }
+    // thứ tự + giờ cố định -> cùng nội dung chỉ mục thì cùng byte, phục vụ Range được
     entries.sort_by(|a, b| a.name.cmp(&b.name));
     let need64 = total as u64 >= 0xFFFF_FFFF || files.iter().any(|f| f.1 as u64 >= 0xFFFF_FFFF);
+    let lay = layout(&entries, need64);
+    let size = lay.total;
+    let etag = etag(&entries);
+    // If-Range lệch (thư mục đã đổi) -> trả cả file. Đổi nội dung mà giữ nguyên size/mtime thì không phát hiện được.
+    let fresh = headers.get(header::IF_RANGE).and_then(|v| v.to_str().ok()).is_none_or(|v| v == etag);
+    let range = headers.get(header::RANGE).and_then(|v| v.to_str().ok()).filter(|_| fresh).map(|h| crate::file_handlers::parse_range(h, size));
+    let (a, b) = match range {
+        Some(Some(r)) => r,
+        Some(None) => {
+            return Ok(Response::builder()
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .header(header::CONTENT_RANGE, format!("bytes */{size}"))
+                .body(Body::empty())
+                .unwrap());
+        }
+        None => (0, size),
+    };
 
     let (tx, rx) = futures::channel::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(8);
     let op = s.store.op.clone();
     let uid = user.id;
     tokio::spawn(async move {
-        if let Err(e) = zip_stream(&op, uid, &entries, need64, tx.clone()).await {
+        if let Err(e) = zip_range(&op, uid, &entries, &lay, a, b, tx.clone()).await {
             let _ = tx.clone().try_send(Err(std::io::Error::new(std::io::ErrorKind::Other, format!("{e:?}"))));
         }
     });
     let fname = if prefix.is_empty() { "files".to_string() } else { prefix.rsplit('/').next().unwrap_or("files").to_string() };
-    Ok(Response::builder()
+    let mut res = Response::builder()
+        .status(if range.is_some() { StatusCode::PARTIAL_CONTENT } else { StatusCode::OK })
         .header(header::CONTENT_TYPE, "application/zip")
         .header(header::CONTENT_DISPOSITION, format!("attachment; filename*=UTF-8''{}.zip", pct(&fname)))
-        .body(Body::from_stream(rx))
-        .unwrap())
+        .header(header::CONTENT_LENGTH, b - a)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::ETAG, etag);
+    if range.is_some() {
+        res = res.header(header::CONTENT_RANGE, format!("bytes {a}-{}/{size}", b - 1));
+    }
+    Ok(res.body(Body::from_stream(rx)).unwrap())
 }
 
 #[derive(Clone)]
@@ -387,6 +411,8 @@ struct Ze {
     /// path đầy đủ trong cây user (để đọc bytes)
     full: String,
     size: u64,
+    /// chỉ để làm khoá cache CRC / ETag
+    modified: i64,
     is_dir: bool,
 }
 
@@ -406,175 +432,309 @@ pub(crate) fn pct(s: &str) -> String {
         .collect()
 }
 
-/// Ghi zip store-method qua channel: local header + data + descriptor từng file, rồi central directory.
-async fn zip_stream(
+// date cố định 2020-01-01 (tránh phụ thuộc múi giờ server, giữ zip giống hệt giữa các request)
+const TIME: u16 = 0;
+const DATE: u16 = ((2020 - 1980) << 9) | (1 << 5) | 1;
+
+/// Vị trí từng phần trong zip: tính trước được vì kiểu store + size lấy từ chỉ mục.
+struct Layout {
+    /// offset local header từng entry
+    off: Vec<u64>,
+    z64: Vec<bool>,
+    cd_off: u64,
+    cd_len: u64,
+    z64end: bool,
+    total: u64,
+}
+
+fn ver(z64: bool) -> u16 {
+    if z64 { 45 } else { 20 }
+}
+fn hdr_len(e: &Ze, z64: bool) -> u64 {
+    30 + e.name.len() as u64 + if z64 { 28 } else { 0 }
+}
+fn desc_len(z64: bool) -> u64 {
+    if z64 { 24 } else { 16 }
+}
+fn rec_len(e: &Ze, z64: bool) -> u64 {
+    46 + e.name.len() as u64 + if z64 { 28 } else { 0 }
+}
+
+fn layout(entries: &[Ze], need64: bool) -> Layout {
+    let (mut off, mut offs, mut z64s, mut cd_len) = (0u64, vec![], vec![], 0u64);
+    for e in entries {
+        let z = need64 || e.size >= 0xFFFF_FFFF || off >= 0xFFFF_FFFF;
+        offs.push(off);
+        z64s.push(z);
+        off += hdr_len(e, z) + e.size + desc_len(z);
+        cd_len += rec_len(e, z);
+    }
+    let z64end = need64 || entries.len() >= 0xFFFF || cd_len >= 0xFFFF_FFFF || off >= 0xFFFF_FFFF;
+    let total = off + cd_len + if z64end { 56 + 20 } else { 0 } + 22;
+    Layout { off: offs, z64: z64s, cd_off: off, cd_len, z64end, total }
+}
+
+/// Local header (bit 3: CRC/size nằm ở descriptor sau data).
+fn local_header(e: &Ze, off: u64, z64: bool) -> Vec<u8> {
+    let name = e.name.as_bytes();
+    let mut h = Vec::with_capacity(hdr_len(e, z64) as usize);
+    w32(0x04034b50, &mut h);
+    w16(ver(z64), &mut h);
+    w16(0x0808, &mut h); // bit 3 descriptor + bit 11 UTF-8
+    w16(0, &mut h); // store
+    w16(TIME, &mut h);
+    w16(DATE, &mut h);
+    w32(0, &mut h); // crc (xem descriptor)
+    if z64 {
+        w32(0xFFFF_FFFF, &mut h);
+        w32(0xFFFF_FFFF, &mut h);
+    } else {
+        w32(e.size as u32, &mut h);
+        w32(e.size as u32, &mut h);
+    }
+    w16(name.len() as u16, &mut h);
+    w16(if z64 { 28 } else { 0 }, &mut h);
+    h.extend_from_slice(name);
+    if z64 {
+        w16(0x0001, &mut h);
+        w16(24, &mut h);
+        w64(e.size, &mut h);
+        w64(e.size, &mut h);
+        w64(off, &mut h);
+    }
+    h
+}
+
+fn descriptor(e: &Ze, crc: u32, z64: bool) -> Vec<u8> {
+    let mut d = Vec::with_capacity(desc_len(z64) as usize);
+    w32(0x08074b50, &mut d);
+    w32(crc, &mut d);
+    if z64 {
+        w64(e.size, &mut d);
+        w64(e.size, &mut d);
+    } else {
+        w32(e.size as u32, &mut d);
+        w32(e.size as u32, &mut d);
+    }
+    d
+}
+
+fn central(e: &Ze, crc: u32, local_off: u64, z64: bool) -> Vec<u8> {
+    let name = e.name.as_bytes();
+    let mut c = Vec::with_capacity(rec_len(e, z64) as usize);
+    w32(0x02014b50, &mut c);
+    w16(63 << 8 | ver(z64), &mut c);
+    w16(ver(z64), &mut c);
+    w16(0x0808, &mut c);
+    w16(0, &mut c);
+    w16(TIME, &mut c);
+    w16(DATE, &mut c);
+    w32(crc, &mut c);
+    if z64 {
+        w32(0xFFFF_FFFF, &mut c);
+        w32(0xFFFF_FFFF, &mut c);
+    } else {
+        w32(e.size as u32, &mut c);
+        w32(e.size as u32, &mut c);
+    }
+    w16(name.len() as u16, &mut c);
+    w16(if z64 { 28 } else { 0 }, &mut c);
+    w16(0, &mut c); // comment
+    w16(0, &mut c); // disk
+    w16(0, &mut c); // int attr
+    w32(if e.is_dir { 0x10 << 16 } else { 0 }, &mut c);
+    w32(if z64 { 0xFFFF_FFFF } else { local_off as u32 }, &mut c);
+    c.extend_from_slice(name);
+    if z64 {
+        w16(0x0001, &mut c);
+        w16(24, &mut c);
+        w64(e.size, &mut c);
+        w64(e.size, &mut c);
+        w64(local_off, &mut c);
+    }
+    c
+}
+
+/// Zip64 EOCD + locator (nếu cần) + EOCD.
+fn tail(n: u64, lay: &Layout) -> Vec<u8> {
+    let (cd_off, cd_len) = (lay.cd_off, lay.cd_len);
+    let mut t = Vec::with_capacity(98);
+    if lay.z64end {
+        w32(0x06064b50, &mut t);
+        w64(44, &mut t);
+        w16(45, &mut t);
+        w16(45, &mut t);
+        w32(0, &mut t);
+        w32(0, &mut t);
+        w64(n, &mut t);
+        w64(n, &mut t);
+        w64(cd_len, &mut t);
+        w64(cd_off, &mut t);
+        w32(0x07064b50, &mut t);
+        w32(0, &mut t);
+        w64(cd_off + cd_len, &mut t);
+        w32(1, &mut t);
+    }
+    w32(0x06054b50, &mut t);
+    w16(0, &mut t);
+    w16(0, &mut t);
+    w16(n.min(0xFFFF) as u16, &mut t);
+    w16(n.min(0xFFFF) as u16, &mut t);
+    w32(cd_len.min(0xFFFF_FFFF) as u32, &mut t);
+    w32(cd_off.min(0xFFFF_FFFF) as u32, &mut t);
+    w16(0, &mut t);
+    t
+}
+
+/// ETag theo danh sách entry (tên, size, mtime): thư mục đổi thì tải tiếp phải bắt đầu lại.
+fn etag(entries: &[Ze]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for e in entries {
+        h.update(e.name.as_bytes());
+        h.update([0]);
+        h.update(e.size.to_le_bytes());
+        h.update(e.modified.to_le_bytes());
+    }
+    let d = h.finalize();
+    format!("\"z{}\"", d[..12].iter().map(|b| format!("{b:02x}")).collect::<String>())
+}
+
+/// CRC các file đã đọc qua khi tải zip: request Range sau (tải tiếp) khỏi đọc lại từ đầu.
+/// Khoá (user, path, size, mtime): nội dung đổi mà giữ nguyên size/mtime thì CRC cũ sẽ sai.
+type CrcKey = (uuid::Uuid, String, u64, i64);
+static CRCS: std::sync::LazyLock<std::sync::Mutex<HashMap<CrcKey, u32>>> = std::sync::LazyLock::new(Default::default);
+const CRC_CACHE_MAX: usize = 500_000;
+
+fn crc_key(user: uuid::Uuid, e: &Ze) -> CrcKey {
+    (user, e.full.clone(), e.size, e.modified)
+}
+
+/// Gom các mảnh nằm trong [a, b) rồi gửi qua channel.
+struct Sink {
+    tx: futures::channel::mpsc::Sender<Result<Vec<u8>, std::io::Error>>,
+    a: u64,
+    b: u64,
+    buf: Vec<u8>,
+}
+
+impl Sink {
+    fn hits(&self, s: u64, e: u64) -> bool {
+        s < e && s < self.b && e > self.a
+    }
+    /// false = client đã huỷ tải
+    async fn put(&mut self, start: u64, bytes: &[u8]) -> bool {
+        let end = start + bytes.len() as u64;
+        if !self.hits(start, end) {
+            return true;
+        }
+        let (i, j) = (self.a.max(start) - start, self.b.min(end) - start);
+        self.buf.extend_from_slice(&bytes[i as usize..j as usize]);
+        self.buf.len() < 1 << 20 || self.flush().await
+    }
+    async fn flush(&mut self) -> bool {
+        use futures::SinkExt as _;
+        // send chờ (không try_send): channel đầy thì producer dừng theo, không mất chunk
+        self.buf.is_empty() || self.tx.send(Ok(std::mem::take(&mut self.buf))).await.is_ok()
+    }
+}
+
+/// Ghi byte [a, b) của zip store-method. CRC lấy từ cache; thiếu mà descriptor/central record
+/// nằm trong range thì đọc cả file để tính (tải tiếp lúc server vừa khởi động lại sẽ chậm).
+async fn zip_range(
     op: &opendal::Operator,
     user: uuid::Uuid,
     entries: &[Ze],
-    need64: bool,
-    mut tx: futures::channel::mpsc::Sender<Result<Vec<u8>, std::io::Error>>,
+    lay: &Layout,
+    a: u64,
+    b: u64,
+    tx: futures::channel::mpsc::Sender<Result<Vec<u8>, std::io::Error>>,
 ) -> Result<(), AppError> {
-    use futures::{SinkExt as _, TryStreamExt as _};
-    // date cố định 2020-01-01 (tránh phụ thuộc múi giờ server)
-    const TIME: u16 = 0;
-    const DATE: u16 = ((2020 - 1980) << 9) | (1 << 5) | 1;
-    // send chờ (không try_send): channel đầy thì producer dừng theo, không mất chunk
-    macro_rules! emit {
-        ($b:expr) => {
+    use futures::TryStreamExt as _;
+    let mut s = Sink { tx, a, b, buf: Vec::new() };
+    macro_rules! put {
+        ($at:expr, $b:expr) => {
             // client đã huỷ tải -> dừng, khỏi đọc tiếp cả thư mục từ S3
-            if tx.send(Ok($b)).await.is_err() {
+            if !s.put($at, $b).await {
                 return Ok(());
             }
         };
     }
-    let mut central: Vec<u8> = Vec::new();
-    let mut off: u64 = 0;
-    for e in entries {
-        let name = e.name.as_bytes();
-        let z64 = need64 || e.size >= 0xFFFF_FFFF || off >= 0xFFFF_FFFF;
-        let ver: u16 = if z64 { 45 } else { 20 };
-        // --- local header (bit 3: CRC/size nằm ở descriptor sau data)
-        let mut h = Vec::with_capacity(30 + 28 + name.len());
-        w32(0x04034b50, &mut h);
-        w16(ver, &mut h);
-        w16(0x0808, &mut h); // bit 3 descriptor + bit 11 UTF-8
-        w16(0, &mut h); // store
-        w16(TIME, &mut h);
-        w16(DATE, &mut h);
-        w32(0, &mut h); // crc (xem descriptor)
-        if z64 {
-            w32(0xFFFF_FFFF, &mut h);
-            w32(0xFFFF_FFFF, &mut h);
-        } else {
-            w32(e.size as u32, &mut h);
-            w32(e.size as u32, &mut h);
+    let mut crcs: Vec<Option<u32>> = {
+        let c = CRCS.lock().unwrap();
+        entries.iter().map(|e| if e.size == 0 { Some(0) } else { c.get(&crc_key(user, e)).copied() }).collect()
+    };
+    // entry nào cần CRC: descriptor hoặc central record của nó nằm trong range
+    let mut need = Vec::with_capacity(entries.len());
+    let mut rec = lay.cd_off;
+    for (i, e) in entries.iter().enumerate() {
+        let z = lay.z64[i];
+        let d = lay.off[i] + hdr_len(e, z) + e.size;
+        let rl = rec_len(e, z);
+        need.push(s.hits(d, d + desc_len(z)) || s.hits(rec, rec + rl));
+        rec += rl;
+    }
+    for (i, e) in entries.iter().enumerate() {
+        let (off, z) = (lay.off[i], lay.z64[i]);
+        if off >= b {
+            break;
         }
-        w16(name.len() as u16, &mut h);
-        w16(if z64 { 28 } else { 0 }, &mut h);
-        h.extend_from_slice(name);
-        if z64 {
-            w16(0x0001, &mut h);
-            w16(24, &mut h);
-            w64(e.size, &mut h);
-            w64(e.size, &mut h);
-            w64(off, &mut h);
-        }
-        let hlen = h.len() as u64;
-        emit!(h);
-        off += hlen;
-        // --- data (vừa stream vừa tính CRC)
-        let mut hasher = Hasher::new();
-        if !e.is_dir && e.size > 0 {
+        put!(off, &local_header(e, off, z));
+        let d0 = off + hdr_len(e, z);
+        let d1 = d0 + e.size;
+        // cần CRC, hoặc cả file nằm trong range (đọc hết thì tính CRC luôn)
+        let full = crcs[i].is_none() && (need[i] || (d0 >= a && d1 <= b));
+        if full || s.hits(d0, d1) {
+            let (r0, r1) = if full { (0, e.size) } else { (a.max(d0) - d0, b.min(d1) - d0) };
             let key = format!("{user}/{}", e.full);
-            let mut s = op
+            let mut st = op
                 .reader_with(&key)
                 .chunk(4 * 1024 * 1024)
                 .await
                 .map_err(|er| AppError::Internal(format!("đọc {key}: {er}")))?
-                .into_bytes_stream(0..e.size)
+                .into_bytes_stream(r0..r1)
                 .await
                 .map_err(|er| AppError::Internal(format!("đọc {key}: {er}")))?;
-            let mut got = 0u64;
-            while let Some(b) = s.try_next().await.map_err(|er| AppError::Internal(format!("đọc {key}: {er}")))? {
-                hasher.update(&b);
-                got += b.len() as u64;
-                emit!(b.to_vec());
+            let mut hasher = Hasher::new();
+            let mut pos = r0;
+            while let Some(c) = st.try_next().await.map_err(|er| AppError::Internal(format!("đọc {key}: {er}")))? {
+                if full {
+                    hasher.update(&c);
+                }
+                put!(d0 + pos, &c);
+                pos += c.len() as u64;
             }
-            if got != e.size {
+            if pos != r1 {
                 return Err(AppError::Internal(format!("file đổi giữa chừng: {}", e.full)));
             }
+            if full {
+                let crc = hasher.finalize();
+                crcs[i] = Some(crc);
+                let mut c = CRCS.lock().unwrap();
+                if c.len() >= CRC_CACHE_MAX {
+                    c.clear();
+                }
+                c.insert(crc_key(user, e), crc);
+            }
         }
-        // --- descriptor
-        let crc = hasher.finalize();
-        let mut d = Vec::with_capacity(if z64 { 24 } else { 16 });
-        w32(0x08074b50, &mut d);
-        w32(crc, &mut d);
-        if z64 {
-            w64(e.size, &mut d);
-            w64(e.size, &mut d);
-        } else {
-            w32(e.size as u32, &mut d);
-            w32(e.size as u32, &mut d);
+        if s.hits(d1, d1 + desc_len(z)) {
+            let crc = crcs[i].ok_or_else(|| AppError::Internal("thiếu CRC".into()))?;
+            put!(d1, &descriptor(e, crc, z));
         }
-        let dlen = d.len() as u64;
-        emit!(d);
-        // --- central
-        let local_off = off - hlen;
-        w32(0x02014b50, &mut central);
-        w16(63 << 8 | ver, &mut central);
-        w16(ver, &mut central);
-        w16(0x0808, &mut central);
-        w16(0, &mut central);
-        w16(TIME, &mut central);
-        w16(DATE, &mut central);
-        w32(crc, &mut central);
-        if z64 {
-            w32(0xFFFF_FFFF, &mut central);
-            w32(0xFFFF_FFFF, &mut central);
-        } else {
-            w32(e.size as u32, &mut central);
-            w32(e.size as u32, &mut central);
-        }
-        w16(name.len() as u16, &mut central);
-        let xlen: u16 = if z64 { 28 } else { 0 };
-        w16(xlen, &mut central);
-        w16(0, &mut central); // comment
-        w16(0, &mut central); // disk
-        w16(0, &mut central); // int attr
-        w32(if e.is_dir { 0x10 << 16 } else { 0 }, &mut central);
-        if z64 {
-            w32(0xFFFF_FFFF, &mut central);
-        } else {
-            w32(local_off as u32, &mut central);
-        }
-        central.extend_from_slice(name);
-        if z64 {
-            w16(0x0001, &mut central);
-            w16(24, &mut central);
-            w64(e.size, &mut central);
-            w64(e.size, &mut central);
-            w64(local_off, &mut central);
-        }
-        off += dlen + e.size;
     }
-    let cd_off = off;
-    let cd_len = central.len() as u64;
-    emit!(std::mem::take(&mut central));
-    off += cd_len;
-    let n = entries.len() as u64;
-    let z64end = need64 || n >= 0xFFFF || cd_len >= 0xFFFF_FFFF || cd_off >= 0xFFFF_FFFF;
-    if z64end {
-        let mut z = Vec::with_capacity(56);
-        w32(0x06064b50, &mut z);
-        w64(44, &mut z);
-        w16(45, &mut z);
-        w16(45, &mut z);
-        w32(0, &mut z);
-        w32(0, &mut z);
-        w64(n, &mut z);
-        w64(n, &mut z);
-        w64(cd_len, &mut z);
-        w64(cd_off, &mut z);
-        emit!(z);
-        let mut l = Vec::with_capacity(20);
-        w32(0x07064b50, &mut l);
-        w32(0, &mut l);
-        w64(off, &mut l);
-        w32(1, &mut l);
-        emit!(l);
-        off += 56 + 20;
+    if b > lay.cd_off {
+        let mut rec = lay.cd_off;
+        for (i, e) in entries.iter().enumerate() {
+            let rl = rec_len(e, lay.z64[i]);
+            if s.hits(rec, rec + rl) {
+                let crc = crcs[i].ok_or_else(|| AppError::Internal("thiếu CRC".into()))?;
+                put!(rec, &central(e, crc, lay.off[i], lay.z64[i]));
+            }
+            rec += rl;
+        }
+        put!(rec, &tail(entries.len() as u64, lay));
     }
-    let mut e = Vec::with_capacity(22);
-    w32(0x06054b50, &mut e);
-    w16(0, &mut e);
-    w16(0, &mut e);
-    w16((n.min(0xFFFF)) as u16, &mut e);
-    w16((n.min(0xFFFF)) as u16, &mut e);
-    w32(cd_len.min(0xFFFF_FFFF) as u32, &mut e);
-    w32(cd_off.min(0xFFFF_FFFF) as u32, &mut e);
-    w16(0, &mut e);
-    emit!(e);
-    let _ = off;
+    s.flush().await;
     Ok(())
 }
 fn inflate(comp: &[u8], want: u64) -> std::io::Result<Vec<u8>> {
@@ -733,34 +893,145 @@ mod tests {
         assert!(cd_of(data).is_empty());
     }
 
-    #[tokio::test]
-    async fn stream_roundtrip_verifies_crc() {
+    async fn run(op: &opendal::Operator, u: uuid::Uuid, entries: &[Ze], lay: &Layout, a: u64, b: u64) -> Vec<u8> {
         use futures::StreamExt as _;
-        let (store, u) = crate::files::tests::tmp_store("zipdl");
-        store.op.write(&format!("{u}/d/a.txt"), "hello".as_bytes().to_vec()).await.unwrap();
-        let entries = vec![
-            Ze { name: "d/".into(), full: String::new(), size: 0, is_dir: true },
-            Ze { name: "d/a.txt".into(), full: "d/a.txt".into(), size: 5, is_dir: false },
-        ];
         let (tx, mut rx) = futures::channel::mpsc::channel(32);
-        zip_stream(&store.op, u, &entries, false, tx).await.unwrap();
+        zip_range(op, u, entries, lay, a, b, tx).await.unwrap();
         let mut out = Vec::new();
         while let Some(r) = rx.next().await {
             out.extend_from_slice(&r.unwrap());
         }
-        // central directory có đủ 2 entry, CRC đúng (đi qua descriptor bit 3)
+        out
+    }
+
+    fn forget_crcs(u: uuid::Uuid) {
+        CRCS.lock().unwrap().retain(|k, _| k.0 != u);
+    }
+
+    async fn sample(tag: &str) -> (Store, uuid::Uuid, Vec<Ze>) {
+        let (store, u) = crate::files::tests::tmp_store(tag);
+        let big: Vec<u8> = (0..300_000u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
+        let files: Vec<(&str, Vec<u8>)> =
+            vec![("d/a.txt", b"hello".to_vec()), ("d/empty.txt", vec![]), ("d/big.bin", big), ("ư/tên.md", "xin chào".as_bytes().to_vec())];
+        let mut entries = vec![
+            Ze { name: "d/".into(), full: String::new(), size: 0, modified: 0, is_dir: true },
+            Ze { name: "ư/".into(), full: String::new(), size: 0, modified: 0, is_dir: true },
+        ];
+        for (p, b) in files {
+            store.op.write(&format!("{u}/{p}"), b.clone()).await.unwrap();
+            entries.push(Ze { name: p.into(), full: p.into(), size: b.len() as u64, modified: 7, is_dir: false });
+        }
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        (store, u, entries)
+    }
+
+    #[tokio::test]
+    async fn stream_roundtrip_verifies_crc() {
+        let (store, u, entries) = sample("zipdl").await;
+        let lay = layout(&entries, false);
+        let out = run(&store.op, u, &entries, &lay, 0, lay.total).await;
+        assert_eq!(out.len() as u64, lay.total);
+        // central directory đủ entry, CRC đúng (đi qua descriptor bit 3), data nằm sau local header
         let cd = cd_of(&out);
-        assert_eq!(cd.len(), 2);
-        let f = cd.iter().find(|e| e.name == "d/a.txt").unwrap();
-        let mut h = Hasher::new();
-        h.update(b"hello");
-        assert_eq!(f.crc, h.finalize());
-        assert_eq!(f.uncomp_size, 5);
-        // data nằm sau local header (30 + tên, không extra vì need64=false)
-        let start = f.local_offset as usize + 30 + "d/a.txt".len();
-        assert_eq!(&out[start..start + 5], b"hello");
+        assert_eq!(cd.len(), entries.len());
+        for e in entries.iter().filter(|e| !e.is_dir) {
+            let c = cd.iter().find(|c| c.name == e.name).unwrap();
+            let body = store.op.read(&format!("{u}/{}", e.full)).await.unwrap().to_vec();
+            let mut h = Hasher::new();
+            h.update(&body);
+            assert_eq!((c.crc, c.uncomp_size), (h.finalize(), e.size));
+            let start = c.local_offset as usize + 30 + e.name.len();
+            assert_eq!(&out[start..start + body.len()], &body[..]);
+        }
         // EOCD classic (không zip64)
-        let tail = &out[out.len() - 22..];
-        assert!(tail.starts_with(&[0x50, 0x4b, 0x05, 0x06]));
+        assert!(out[out.len() - 22..].starts_with(&[0x50, 0x4b, 0x05, 0x06]));
+        // lần 2 giống hệt từng byte
+        assert_eq!(run(&store.op, u, &entries, &lay, 0, lay.total).await, out);
+    }
+
+    #[tokio::test]
+    async fn ranges_equal_slices_of_full() {
+        let (store, u, entries) = sample("ziprange").await;
+        for need64 in [false, true] {
+            let lay = layout(&entries, need64);
+            forget_crcs(u);
+            let full = run(&store.op, u, &entries, &lay, 0, lay.total).await;
+            assert_eq!(full.len() as u64, lay.total);
+            let t = lay.total;
+            let big = entries.iter().position(|e| e.name == "d/big.bin").unwrap();
+            let d0 = lay.off[big] + hdr_len(&entries[big], lay.z64[big]);
+            let mut ranges = vec![(0, 1), (t - 1, t), (0, t), (t - 22, t), (lay.cd_off, t), (lay.cd_off + 7, lay.cd_off + 60)];
+            ranges.push((lay.cd_off - 10, lay.cd_off + 10)); // descriptor cuối -> central directory
+            ranges.push((d0 + 1000, d0 + 5000)); // giữa data
+            ranges.push((d0 + 299_990, d0 + 300_030)); // đuôi data -> descriptor -> header kế
+            ranges.push((d0 + 150_000, t)); // tải tiếp tới hết
+            for i in 1..entries.len() {
+                ranges.push((lay.off[i] - 5, lay.off[i] + 5)); // vắt qua ranh giới entry
+            }
+            for (k, &(a, b)) in ranges.iter().enumerate() {
+                // nửa số lần xoá cache: phải tự đọc lại file để tính CRC
+                if k % 2 == 0 {
+                    forget_crcs(u);
+                }
+                let got = run(&store.op, u, &entries, &lay, a, b).await;
+                assert_eq!(got, &full[a as usize..b as usize], "range {a}-{b} need64={need64}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn download_dir_http_range() {
+        use axum::http::HeaderValue;
+        let Some((db, u)) = crate::kanban::tests::db_user().await else { return };
+        let (store, _) = crate::files::tests::tmp_store("ziphttp");
+        for (p, b) in [("z/a.txt", &b"hello"[..]), ("z/s/b.bin", &[3u8; 5000][..])] {
+            store.op.write(&format!("{u}/{p}"), b.to_vec()).await.unwrap();
+            crate::index::add_file(&db, u, p, b.len() as u64, 1).await.unwrap();
+        }
+        let s = AppState {
+            db,
+            store,
+            enc: jsonwebtoken::EncodingKey::from_secret(b"t"),
+            dec: jsonwebtoken::DecodingKey::from_secret(b"t"),
+            uploads: Default::default(),
+            http: reqwest::Client::new(),
+            tts_url: String::new(),
+            vaults: Default::default(),
+        };
+        let tok = crate::auth::create_jwt(u, false, &s.enc).unwrap();
+        let get = |h: Vec<(header::HeaderName, String)>| {
+            let s = s.clone();
+            let tok = tok.clone();
+            async move {
+                let mut hm = HeaderMap::new();
+                hm.insert(header::AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {tok}")).unwrap());
+                for (k, v) in h {
+                    hm.insert(k, HeaderValue::from_str(&v).unwrap());
+                }
+                let q = HashMap::from([("path".to_string(), "z".to_string())]);
+                let r = download_dir(State(s), hm, Query(q)).await.unwrap();
+                let (st, hd) = (r.status(), r.headers().clone());
+                let body = axum::body::to_bytes(r.into_body(), 1 << 24).await.unwrap().to_vec();
+                (st, hd, body)
+            }
+        };
+        let (st, hd, full) = get(vec![]).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(hd[header::CONTENT_LENGTH].to_str().unwrap(), full.len().to_string());
+        assert_eq!(hd[header::ACCEPT_RANGES], "bytes");
+        let tag = hd[header::ETAG].to_str().unwrap().to_string();
+        let n = full.len();
+        let (st, hd, part) = get(vec![(header::RANGE, "bytes=40-5100".into())]).await;
+        assert_eq!(st, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(hd[header::CONTENT_RANGE].to_str().unwrap(), format!("bytes 40-5100/{n}"));
+        assert_eq!(part, &full[40..5101]);
+        let (_, _, part) = get(vec![(header::RANGE, "bytes=-30".into()), (header::IF_RANGE, tag.clone())]).await;
+        assert_eq!(part, &full[n - 30..]);
+        // If-Range lệch -> trả cả file
+        let (st, _, all) = get(vec![(header::RANGE, "bytes=10-20".into()), (header::IF_RANGE, "\"khac\"".into())]).await;
+        assert_eq!((st, all.len()), (StatusCode::OK, n));
+        let (st, hd, _) = get(vec![(header::RANGE, format!("bytes={n}-"))]).await;
+        assert_eq!(st, StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(hd[header::CONTENT_RANGE].to_str().unwrap(), format!("bytes */{n}"));
     }
 }

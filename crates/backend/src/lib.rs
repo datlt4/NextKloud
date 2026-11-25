@@ -7,6 +7,7 @@ pub mod files;
 pub mod fulltext;
 pub mod git;
 pub mod index;
+pub mod jobs;
 pub mod tracker;
 pub mod kanban;
 pub mod linkpreview;

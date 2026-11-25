@@ -1,5 +1,5 @@
 import { For, Show, createResource, createSignal, onMount } from "solid-js";
-import { SECRET_ROOT, api, isSecret, type TrashItem } from "./api";
+import { SECRET_ROOT, api, isSecret, type OnConflict, type TrashItem } from "./api";
 import { fmtSize } from "./format";
 import { fmtDateTime, fmtNum, t } from "./i18n";
 import { Icon } from "./icons";
@@ -84,6 +84,21 @@ export function NameDialog(props: {
           {busy() ? t("f.saving") : props.ok}
         </button>
       </form>
+    </div>
+  );
+}
+
+/** Đích đã có: chọn 1 cách xử lý file trùng cho cả lượt chuyển/chép. */
+export function ConflictDialog(props: { name: string; onPick: (p: OnConflict | null) => void }) {
+  return (
+    <div class="modal-bg" onClick={() => props.onPick(null)}>
+      <div class="modal glass form" onClick={(e) => e.stopPropagation()}>
+        <Head title={t("f.conflictTitle")} onClose={() => props.onPick(null)} />
+        <p>{t("f.conflictMsg", { name: props.name })}</p>
+        <button class="btn primary block" onClick={() => props.onPick("keep_both")}>{t("f.conflictKeepBoth")}</button>
+        <button class="btn block" onClick={() => props.onPick("overwrite")}>{t("f.conflictOverwrite")}</button>
+        <button class="btn ghost block" onClick={() => props.onPick("skip")}>{t("f.conflictSkip")}</button>
+      </div>
     </div>
   );
 }

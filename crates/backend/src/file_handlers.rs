@@ -6,7 +6,7 @@ use axum::{
     body::Body,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode, header},
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -249,32 +249,48 @@ pub struct MoveBody {
     /// di chuyển trong vùng được chia sẻ (from/to cùng 1 chủ, cần quyền sửa)
     #[serde(default)]
     pub owner: Option<Uuid>,
+    /// đích đã có: gộp, file trùng thì overwrite | skip | keep_both
+    #[serde(default)]
+    pub on_conflict: Option<ops::OnConflict>,
 }
 
-/// Đổi tên + di chuyển. Trả về số file đã chuyển.
-pub async fn move_entry(
-    State(s): State<AppState>,
-    user: AuthUser,
-    Json(b): Json<MoveBody>,
-) -> Result<Json<serde_json::Value>, AppError> {
+/// Đổi tên + di chuyển. Trả về {files} hoặc {job} nếu thư mục lớn (chạy nền).
+pub async fn move_entry(State(s): State<AppState>, user: AuthUser, Json(b): Json<MoveBody>) -> Result<Response, AppError> {
+    xfer(s, user, b, false).await
+}
+
+/// Sao chép file/thư mục. Trả về {files} hoặc {job}.
+pub async fn copy_entry(State(s): State<AppState>, user: AuthUser, Json(b): Json<MoveBody>) -> Result<Response, AppError> {
+    xfer(s, user, b, true).await
+}
+
+async fn xfer(s: AppState, user: AuthUser, b: MoveBody, copy: bool) -> Result<Response, AppError> {
     let (from, to) = (ops::user_path(&b.from)?, ops::user_path(&b.to)?);
     let oid = crate::shares::resolve(&s.db, user.id, b.owner, &from, true).await?;
     crate::shares::resolve(&s.db, user.id, b.owner, &to, true).await?;
-    let n = ops::move_path(&s.db, &s.store, oid, &from, &to).await?;
-    Ok(Json(serde_json::json!({ "files": n })))
-}
-
-/// Sao chép file/thư mục. Trả về số file đã chép.
-pub async fn copy_entry(
-    State(s): State<AppState>,
-    user: AuthUser,
-    Json(b): Json<MoveBody>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let (from, to) = (ops::user_path(&b.from)?, ops::user_path(&b.to)?);
-    let oid = crate::shares::resolve(&s.db, user.id, b.owner, &from, true).await?;
-    crate::shares::resolve(&s.db, user.id, b.owner, &to, true).await?;
-    let n = ops::copy_path(&s.db, &s.store, oid, &from, &to).await?;
-    Ok(Json(serde_json::json!({ "files": n })))
+    let pol = b.on_conflict;
+    // đích đã có mà chưa chọn cách xử lý: 409 kèm code để client hỏi rồi gửi lại
+    match ops::check_dest(&s.db, oid, &from, &to, pol).await {
+        Err(AppError::Conflict(m)) if m == ops::EXISTS => {
+            let body = serde_json::json!({ "error": m, "code": "exists" }).to_string();
+            return Ok((StatusCode::CONFLICT, [(header::CONTENT_TYPE, "application/json")], body).into_response());
+        }
+        r => r?,
+    };
+    let big = ops::count_files(&s.db, oid, &from).await? > crate::jobs::MIN_FILES;
+    let run = move |db: sqlx::PgPool, store: crate::files::Store, prog: std::sync::Arc<crate::jobs::Progress>| async move {
+        if copy {
+            ops::copy_with(&db, &store, oid, &from, &to, pol, &prog).await
+        } else {
+            ops::move_with(&db, &store, oid, &from, &to, pol, &prog).await
+        }
+    };
+    if !big {
+        let n = run(s.db.clone(), s.store.clone(), Default::default()).await?;
+        return Ok(Json(serde_json::json!({ "files": n })).into_response());
+    }
+    let id = crate::jobs::spawn(user.id, move |p| run(s.db.clone(), s.store.clone(), p));
+    Ok(Json(serde_json::json!({ "job": id })).into_response())
 }
 
 pub async fn list_trash(State(s): State<AppState>, user: AuthUser) -> Result<Json<Vec<ops::TrashItem>>, AppError> {
@@ -593,5 +609,55 @@ mod tests {
         q2.insert("path".to_string(), "r.bin".to_string());
         assert!(upload_active(State(s.clone()), auth, Query(q2)).await.unwrap().0.is_null());
         let _ = pending(&s, u, &id).await;
+    }
+
+    #[tokio::test]
+    async fn big_move_runs_as_job_and_conflict_has_code() {
+        let Some((db, u)) = crate::kanban::tests::db_user().await else { return };
+        let (store, _) = crate::files::tests::tmp_store("movejob");
+        let n = crate::jobs::MIN_FILES as usize + 1;
+        for i in 0..n {
+            let p = format!("big/{i}.txt");
+            store.op.write(&format!("{u}/{p}"), b"x".to_vec()).await.unwrap();
+            crate::index::add_file(&db, u, &p, 1, 1).await.unwrap();
+        }
+        sqlx::query("UPDATE users SET quota_used = $2 WHERE id = $1").bind(u).bind(n as i64).execute(&db).await.unwrap();
+        crate::ops::mkdir(&db, u, "dst/big").await.unwrap();
+        let s = AppState {
+            db,
+            store,
+            enc: jsonwebtoken::EncodingKey::from_secret(b"t"),
+            dec: jsonwebtoken::DecodingKey::from_secret(b"t"),
+            uploads: Default::default(),
+            http: reqwest::Client::new(),
+            tts_url: String::new(),
+            vaults: Default::default(),
+        };
+        let auth = AuthUser { id: u, admin: false };
+        let body = |pol: Option<&str>| {
+            serde_json::from_value::<super::MoveBody>(serde_json::json!({ "from": "big", "to": "dst/big", "on_conflict": pol })).unwrap()
+        };
+        let json = |r: axum::response::Response| async move {
+            let st = r.status();
+            (st, serde_json::from_slice::<serde_json::Value>(&axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap()).unwrap())
+        };
+        // đích đã có -> 409 kèm code để client hỏi
+        let (st, v) = json(super::move_entry(State(s.clone()), auth.clone(), axum::Json(body(None))).await.unwrap()).await;
+        assert_eq!((st.as_u16(), v["code"].as_str()), (409, Some("exists")));
+        // chọn gộp -> thư mục lớn chạy nền, trả job id
+        let (_, v) = json(super::move_entry(State(s.clone()), auth.clone(), axum::Json(body(Some("skip")))).await.unwrap()).await;
+        let id: uuid::Uuid = v["job"].as_str().unwrap().parse().unwrap();
+        let done = loop {
+            let r = crate::jobs::status(auth.clone(), Path(id)).await.unwrap().0;
+            if r["state"] != "running" {
+                break r;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        };
+        assert_eq!((done["state"].as_str(), done["files"].as_u64(), done["total"].as_u64()), (Some("done"), Some(n as u64), Some(n as u64)));
+        assert_eq!(crate::ops::count_files(&s.db, u, "dst/big").await.unwrap(), n as i64);
+        assert!(crate::ops::kind(&s.db, u, "big").await.unwrap().is_none());
+        // user khác không đọc được job
+        assert!(crate::jobs::status(AuthUser { id: uuid::Uuid::new_v4(), admin: false }, Path(id)).await.is_err());
     }
 }
