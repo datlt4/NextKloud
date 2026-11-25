@@ -7,6 +7,7 @@ import { fmtSize } from "./format";
 import { fmtDate as fdate, fmtNum, t } from "./i18n";
 import { Icon, VAULTS, ext, kindOf } from "./icons";
 import { buildOffice } from "./ooxml";
+import { upCancel, upClose, upEnqueue, upHooks, upPause, upPauseAll, upReselect, upRestore, upResume, upResumeAll, upRetryFails, upStopAll, upView } from "./upqueue";
 import Settings, { type SettingsTab } from "./Settings";
 import { Avatar } from "./avatar";
 import MarkdownView from "./viewers/MarkdownView";
@@ -147,12 +148,8 @@ export default function App() {
   };
   const shownName = () => me()?.display_name || me()?.username || "";
   const [upload, setUpload] = createSignal<{ name: string; pct: number; left: number } | null>(null);
-  type UpJob = { file: File; rel: string; base: string };
-  const [upStat, setUpStat] = createSignal<{ total: number; done: number; ok: number; fails: (UpJob & { err: string })[]; running: boolean } | null>(null);
-  let upCancel = false;
-  const [upRate, setUpRate] = createSignal<{ speed: number; eta: number } | null>(null);
+  const upStat = createMemo(upView);
   const fmtEta = (s: number) => (s >= 3600 ? t("f.etaHMS", { h: Math.floor(s / 3600), m: Math.round((s % 3600) / 60) }) : s >= 60 ? t("f.etaMS", { m: Math.floor(s / 60), s: Math.round(s % 60) }) : t("f.etaS", { s: Math.max(1, Math.round(s)) }));
-  let upCloseTimer: number | undefined;
   let fileInput!: HTMLInputElement;
   let dirInput!: HTMLInputElement;
   const [dropping, setDropping] = createSignal(false);
@@ -245,6 +242,10 @@ export default function App() {
   };
 
   const refreshMe = () => api.me().then(setMe).catch(() => {});
+  // hàng đợi upload: xong thì tải lại danh sách + quota; nạp lại hàng đợi còn dở sau F5
+  upHooks({ drain: () => (refresh(), refreshMe()), authFail: (e) => fail(e, t("f.uploadErr")) });
+  const meId = createMemo(() => me()?.id);
+  createEffect(() => meId() && upRestore(meId()!));
   const [srvVer, setSrvVer] = createSignal("");
   const refreshVer = () => api.config().then((c) => setSrvVer(c.version ?? "")).catch(() => {});
 
@@ -947,61 +948,9 @@ export default function App() {
     if (!items.length && !dirs.length) return;
     const base = prefix();
     for (const d of dirs) await api.mkdir(joinPath(base, d)).catch(() => {}); // đã có thì thôi
-    await runUploads(items.map((x) => ({ ...x, base })));
-  };
-
-  /** Chạy hàng đợi upload: lỗi 1 file không dừng cả lô, cuối cùng chỉ liệt kê file lỗi để thử lại. */
-  const runUploads = async (jobs: UpJob[]) => {
-    if (!jobs.length) {
-      setUpload(null);
-      return refresh();
-    }
-    upCancel = false;
-    setUpStat({ total: jobs.length, done: 0, ok: 0, fails: [], running: true });
-    clearTimeout(upCloseTimer);
-    // 3 file song song (lô ảnh nhỏ nhanh hơn nhiều); tiến độ + tốc độ tính theo byte cả lô
-    const bytes = jobs.reduce((a, j) => a + j.file.size, 0);
-    const t0 = Date.now();
-    const partial = new Map<UpJob, number>();
-    let doneBytes = 0;
-    let next = 0;
-    const tick = () => {
-      const cur = doneBytes + [...partial.values()].reduce((a, b) => a + b, 0);
-      const speed = cur / Math.max((Date.now() - t0) / 1000, 0.5);
-      setUpload({ name: [...partial.keys()].map((j) => j.rel).join(" · "), pct: bytes ? Math.round((cur / bytes) * 100) : 100, left: 0 });
-      setUpRate({ speed, eta: speed > 0 ? (bytes - cur) / speed : 0 });
-    };
-    const worker = async () => {
-      while (!upCancel && next < jobs.length) {
-        const j = jobs[next++];
-        partial.set(j, 0);
-        tick();
-        try {
-          await api.upload(joinPath(j.base, j.rel), j.file, (d) => {
-            partial.set(j, d);
-            tick();
-          });
-          setUpStat((s) => s && { ...s, ok: s.ok + 1 });
-        } catch (e) {
-          if (String((e as Error)?.message).includes("unauthorized")) {
-            upCancel = true;
-            fail(e, t("f.uploadErr"));
-          } else setUpStat((s) => s && { ...s, fails: [...s.fails, { ...j, err: errText(e) }] });
-        }
-        partial.delete(j);
-        doneBytes += j.file.size;
-        setUpStat((s) => s && { ...s, done: s.done + 1 });
-        tick();
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(3, jobs.length) }, worker));
-    setUpRate(null);
     setUpload(null);
-    setUpStat((s) => s && { ...s, running: false });
-    // xong hết, không lỗi: tự đóng sau vài giây
-    if (!upStat()?.fails.length && !upCancel) upCloseTimer = window.setTimeout(() => setUpStat(null), 4000);
-    refresh();
-    refreshMe();
+    if (!items.length) return refresh();
+    upEnqueue(items.map((x) => ({ file: x.file, rel: x.rel, path: joinPath(base, x.rel) })));
   };
 
   /** Kéo file/thư mục từ máy vào: duyệt cây thư mục (webkitGetAsEntry), giữ đường dẫn con.
@@ -1781,43 +1730,88 @@ export default function App() {
               <div class="toast glass up-panel">
                 <div class="up-head">
                   <div>
-                    <b>{u().running ? t("f.upRunning", { left: fmtNum(u().total - u().done), done: fmtNum(u().done), total: fmtNum(u().total) }) : upCancel ? t("f.upStopped") : t("f.upFinished", { done: fmtNum(u().done), total: fmtNum(u().total) })}</b>
+                    <b>
+                      {u().running
+                        ? t("f.upRunning", { left: fmtNum(u().pending), done: fmtNum(u().ok + u().fails), total: fmtNum(u().total) })
+                        : u().pending
+                          ? t("f.upPausedN", { n: fmtNum(u().pending) })
+                          : u().stopped
+                            ? t("f.upStopped")
+                            : t("f.upFinished", { done: fmtNum(u().ok + u().fails), total: fmtNum(u().total) })}
+                    </b>
                     <div class="sm">
-                      <span class="up-ok">{t("f.upOk", { ok: fmtNum(u().ok) })}</span> · <span classList={{ "up-bad": u().fails.length > 0 }}>{t("f.upErr", { n: fmtNum(u().fails.length) })}</span>
-                      <Show when={u().running && upRate()}>
-                        {(r) => <> · {fmtSize(r().speed)}/s · ~{fmtEta(r().eta)}</>}
+                      <span class="up-ok">{t("f.upOk", { ok: fmtNum(u().ok) })}</span> · <span classList={{ "up-bad": u().fails > 0 }}>{t("f.upErr", { n: fmtNum(u().fails) })}</span>
+                      <Show when={u().running && u().speed > 0}>
+                        <> · {fmtSize(u().speed)}/s · ~{fmtEta(u().eta)}</>
                       </Show>
                     </div>
                   </div>
-                  <Show when={u().running} fallback={
-                    <button class="icon-btn sm" title={t("f.upClose")} onClick={() => setUpStat(null)}><Icon name="close" size={15} /></button>
-                  }>
-                    <button class="btn ghost sm" title={t("f.upStop")} onClick={() => (upCancel = true)}>{t("f.upStopBtn")}</button>
-                  </Show>
-                </div>
-                <Show when={upload()}>
-                  <div class="toast-row up-cur">
-                    <Icon name="upload" size={15} />
-                    <span class="fname" title={upload()!.name}>{upload()!.name}</span>
-                    <span class="muted">{upload()!.pct}%</span>
+                  <div class="up-acts">
+                    <Show when={u().running}>
+                      <button class="icon-btn sm" title={t("f.upPauseAll")} onClick={upPauseAll}><Icon name="pause" size={15} /></button>
+                    </Show>
+                    <Show when={u().paused}>
+                      <button class="icon-btn sm" title={t("f.upResumeAll")} onClick={upResumeAll}><Icon name="play" size={15} /></button>
+                    </Show>
+                    <Show when={u().pending} fallback={
+                      <button class="icon-btn sm" title={t("f.upClose")} onClick={upClose}><Icon name="close" size={15} /></button>
+                    }>
+                      <button class="btn ghost sm" title={t("f.upStop")} onClick={upStopAll}>{t("f.upStopBtn")}</button>
+                    </Show>
                   </div>
-                  <div class="bar"><i style={{ width: `${upload()!.pct}%` }} /></div>
+                </div>
+                <Show when={upload() || (u().running && { name: u().cur, pct: u().pct })}>
+                  {(c) => (
+                    <>
+                      <div class="toast-row up-cur">
+                        <Icon name="upload" size={15} />
+                        <span class="fname" title={c().name}>{c().name}</span>
+                        <span class="muted">{c().pct}%</span>
+                      </div>
+                      <div class="bar"><i style={{ width: `${c().pct}%` }} /></div>
+                    </>
+                  )}
                 </Show>
-                <Show when={u().fails.length}>
+                <Show when={u().missing}>
+                  <button
+                    class="btn sm block"
+                    onClick={() => upReselect().then(([n, m]) => flash(t("f.upReselected", { n: fmtNum(n), m: fmtNum(m) })))}
+                  >
+                    <Icon name="upload" size={14} /> {t("f.upReselect", { n: fmtNum(u().missing) })}
+                  </button>
+                </Show>
+                <Show when={u().rows.length}>
                   <div class="up-fails">
-                    <For each={u().fails}>
+                    <Index each={u().rows}>
                       {(f) => (
-                        <div class="up-fail" title={f.err}>
-                          <span class="fname">{f.rel}</span>
-                          <span class="muted xs">{f.err}</span>
-                          <button class="icon-btn sm" title={t("c.skip")} onClick={() => setUpStat((s) => s && { ...s, fails: s.fails.filter((x) => x !== f) })}><Icon name="close" size={13} /></button>
+                        <div class="up-fail" title={f().err ?? f().rel}>
+                          <span class="fname">{f().rel}</span>
+                          <span class="muted xs">
+                            {f().state === "error"
+                              ? f().err
+                              : f().state === "missing"
+                                ? t("f.upMissing")
+                                : `${f().state === "paused" ? t("f.upPaused") : f().state === "queued" ? t("f.upQueued") : fmtSize(f().sent)} · ${fmtSize(f().size)}`}
+                          </span>
+                          <span class="up-btns">
+                            <Show when={f().pausable}>
+                              <button class="icon-btn sm" title={t("f.upPause")} onClick={() => upPause(f())}><Icon name="pause" size={13} /></button>
+                            </Show>
+                            <Show when={(f().state === "paused" || f().state === "error") && f().file}>
+                              <button class="icon-btn sm" title={t("f.upResume")} onClick={() => upResume(f())}><Icon name="play" size={13} /></button>
+                            </Show>
+                            <button class="icon-btn sm" title={t("c.skip")} onClick={() => upCancel(f())}><Icon name="close" size={13} /></button>
+                          </span>
                         </div>
                       )}
-                    </For>
+                    </Index>
+                    <Show when={u().more}>
+                      <span class="muted xs">{t("f.upMore", { n: fmtNum(u().more) })}</span>
+                    </Show>
                   </div>
-                  <Show when={!u().running}>
-                    <button class="btn primary sm block" onClick={() => runUploads(u().fails.map(({ err: _e, ...j }) => j))}>{t("f.upRetryFails", { n: u().fails.length })}</button>
-                  </Show>
+                </Show>
+                <Show when={u().fails && !u().running}>
+                  <button class="btn primary sm block" onClick={upRetryFails}>{t("f.upRetryFails", { n: u().fails })}</button>
                 </Show>
               </div>
             )}

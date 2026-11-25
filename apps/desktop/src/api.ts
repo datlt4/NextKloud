@@ -692,7 +692,7 @@ export const api = {
     return r.json() as Promise<{ id: string; received: number; size: number } | null>;
   },
   /** Chunked upload 8MB tuần tự + resume: rớt mạng/F5 xong gửi lại cùng file là chạy tiếp từ chỗ dở. */
-  async upload(path: string, data: Blob, onProgress?: (done: number) => void, owner?: string) {
+  async upload(path: string, data: Blob, onProgress?: (done: number) => void, owner?: string, signal?: AbortSignal) {
     const json = { "Content-Type": "application/json" };
     const up = isSecret(path) ? "/api/secret/uploads" : "/api/files/uploads";
     const rel = isSecret(path) ? sRel(path) : path;
@@ -726,13 +726,14 @@ export const api = {
     const CHUNK = 8 * 1024 * 1024;
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     for (; off < data.size; ) {
+      signal?.throwIfAborted();
       try {
-        await req(`${up}/${id}?offset=${off}`, { method: "PUT", body: data.slice(off, off + CHUNK) });
+        await req(`${up}/${id}?offset=${off}`, { method: "PUT", body: data.slice(off, off + CHUNK), signal });
         off = Math.min(off + CHUNK, data.size);
         onProgress?.(off);
       } catch (e) {
         const msg = String((e as Error)?.message ?? e);
-        if (msg.includes("unauthorized")) throw e;
+        if (msg.includes("unauthorized") || signal?.aborted) throw e;
         // lệch offset hoặc lỗi mạng: hỏi server đang nhận tới đâu rồi gửi tiếp (tối đa 5 lần)
         let waited = 0;
         for (let i = 0; i < 5; i++) {
@@ -751,7 +752,21 @@ export const api = {
         if (waited >= 5) throw e;
       }
     }
+    signal?.throwIfAborted();
     await req(`${up}/${id}/complete`, { method: "POST" });
+  },
+  /** Nhiều file nhỏ (≤1MB) trong 1 request: [u32 LE độ dài header][header JSON][bytes nối liền]. Kết quả theo thứ tự. */
+  async uploadBatch(files: { path: string; data: Blob }[], owner?: string) {
+    const head = new TextEncoder().encode(
+      JSON.stringify({
+        owner,
+        files: files.map((f) => ({ path: f.path, size: f.data.size, mtime: f.data instanceof File ? Math.floor(f.data.lastModified / 1000) : undefined })),
+      }),
+    );
+    const len = new Uint8Array(4);
+    new DataView(len.buffer).setUint32(0, head.length, true);
+    const r = await req("/api/files/uploads/batch", { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: new Blob([len, head, ...files.map((f) => f.data)]) });
+    return (await r.json()) as { path: string; ok: boolean; error?: string }[];
   },
   async readText(path: string) {
     const r = await req(fileUrl(path) + ownQ(path, "?"));

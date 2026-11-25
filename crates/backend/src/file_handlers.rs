@@ -549,6 +549,121 @@ pub async fn complete_upload(
     Ok(StatusCode::CREATED)
 }
 
+/// Giới hạn upload theo lô (nhiều file nhỏ trong 1 request).
+pub const BATCH_MAX_FILE: u64 = 1024 * 1024;
+pub const BATCH_MAX_FILES: usize = 500;
+pub const BATCH_MAX_BYTES: u64 = 32 * 1024 * 1024;
+
+#[derive(Deserialize)]
+pub struct BatchFile {
+    pub path: String,
+    pub size: u64,
+    pub mtime: Option<i64>,
+}
+
+#[derive(Deserialize)]
+pub struct BatchHead {
+    pub files: Vec<BatchFile>,
+    /// ghi vào thư mục được chia sẻ (cần quyền sửa, quota tính cho chủ file)
+    #[serde(default)]
+    pub owner: Option<Uuid>,
+}
+
+#[derive(Serialize)]
+pub struct BatchResult {
+    pub path: String,
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+fn err_text(e: AppError) -> String {
+    match e {
+        AppError::Auth(m) | AppError::Forbidden(m) | AppError::NotFound(m) | AppError::Conflict(m) | AppError::BadRequest(m) | AppError::TooMany(m) | AppError::Internal(m) => m,
+        AppError::Store(e) => err_text(e.into()),
+        AppError::Db(e) => {
+            tracing::error!("db: {e}");
+            "database error".into()
+        }
+    }
+}
+
+/// Body: [u32 LE độ dài header][header JSON][bytes các file nối liền theo thứ tự]. Trả kết quả từng file.
+pub async fn batch_upload(
+    State(s): State<AppState>,
+    user: AuthUser,
+    body: axum::body::Bytes,
+) -> Result<Json<Vec<BatchResult>>, AppError> {
+    let bad = |m: &str| AppError::BadRequest(m.into());
+    let hl = body.get(..4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize).ok_or_else(|| bad("missing header"))?;
+    let start = 4usize.checked_add(hl).filter(|&e| e <= body.len()).ok_or_else(|| bad("bad header length"))?;
+    let head: BatchHead = serde_json::from_slice(&body[4..start]).map_err(|e| AppError::BadRequest(format!("bad header: {e}")))?;
+    if head.files.len() > BATCH_MAX_FILES {
+        return Err(bad("too many files (max 500)"));
+    }
+    if head.files.iter().any(|f| f.size > BATCH_MAX_FILE) {
+        return Err(bad("file too large for batch (max 1MiB)"));
+    }
+    let total: u64 = head.files.iter().map(|f| f.size).sum();
+    if total > BATCH_MAX_BYTES || total != (body.len() - start) as u64 {
+        return Err(bad("body size mismatch"));
+    }
+    let (owner, mut off) = (head.owner, start);
+    let jobs: Vec<_> = head
+        .files
+        .into_iter()
+        .map(|f| {
+            let data = body.slice(off..off + f.size as usize);
+            off += f.size as usize;
+            (f, data)
+        })
+        .collect();
+    // vài file song song, giữ thứ tự kết quả
+    use futures::StreamExt;
+    let out = futures::stream::iter(jobs)
+        .map(|(f, data)| {
+            let s = &s;
+            async move {
+                let r = batch_one(s, user.id, owner, &f, &data).await;
+                BatchResult { path: f.path, ok: r.is_ok(), error: r.err().map(err_text) }
+            }
+        })
+        .buffered(8)
+        .collect()
+        .await;
+    Ok(Json(out))
+}
+
+/// 1 file của lô: giống complete_upload (quota, version, chỉ mục, fulltext).
+async fn batch_one(s: &AppState, me: Uuid, owner: Option<Uuid>, f: &BatchFile, data: &[u8]) -> Result<(), AppError> {
+    ops::upload_path(&f.path)?;
+    let oid = crate::shares::resolve(&s.db, me, owner, &f.path, true).await?;
+    let row = load_user(&s.db, oid).await?;
+    let mut q = Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64);
+    if let Err(e) = crate::versions::snapshot(&s.store, oid, &f.path).await {
+        tracing::warn!("version snapshot {}: {e}", f.path);
+    }
+    // qua staging như upload thường rồi complete (tính quota, ghi mtime)
+    let id = format!("batch-{}", Uuid::new_v4());
+    let r = match s.store.write_chunk(oid, &id, 0, data) {
+        Ok(_) => s.store.complete(oid, &id, &f.path, f.size, f.mtime, &mut q).await,
+        Err(e) => Err(e),
+    };
+    if r.is_err() {
+        let _ = std::fs::remove_file(s.store.stage_path(oid, &id));
+    }
+    let mtime = r?;
+    sqlx::query("UPDATE users SET quota_used = GREATEST(0, quota_used + $1) WHERE id = $2")
+        .bind(q.used_bytes as i64 - row.quota_used.max(0))
+        .bind(oid)
+        .execute(&s.db)
+        .await?;
+    let p = clean_path(&f.path)?;
+    index::add_file(&s.db, oid, &p, f.size, mtime).await?;
+    crate::fulltext::put_from_store(&s.db, &s.store, oid, &p, f.size).await;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::parse_range;
@@ -683,5 +798,85 @@ mod tests {
         assert!(crate::ops::kind(&s.db, u, "big").await.unwrap().is_none());
         // user khác không đọc được job
         assert!(crate::jobs::status(AuthUser { id: uuid::Uuid::new_v4(), admin: false }, Path(id)).await.is_err());
+    }
+
+    /// Đóng gói body lô: [u32 LE độ dài header][header JSON][bytes].
+    fn batch_body(owner: Option<uuid::Uuid>, files: &[(&str, &[u8])]) -> axum::body::Bytes {
+        let fs: Vec<_> = files.iter().map(|(p, d)| serde_json::json!({ "path": p, "size": d.len(), "mtime": 1000 })).collect();
+        let head = serde_json::to_vec(&serde_json::json!({ "owner": owner, "files": fs })).unwrap();
+        let mut b = (head.len() as u32).to_le_bytes().to_vec();
+        b.extend(head);
+        files.iter().for_each(|(_, d)| b.extend_from_slice(d));
+        b.into()
+    }
+
+    async fn used(s: &AppState, u: uuid::Uuid) -> i64 {
+        sqlx::query_as::<_, (i64,)>("SELECT quota_used FROM users WHERE id = $1").bind(u).fetch_one(&s.db).await.unwrap().0
+    }
+
+    #[tokio::test]
+    async fn batch_writes_and_reports_per_file() {
+        let Some((s, u)) = up_state().await else { return };
+        let auth = AuthUser { id: u, admin: false };
+        let body = batch_body(None, &[("a/x.txt", b"hello"), (".nextkloud/evil", b"no"), ("empty.bin", b""), ("b.md", b"# t")]);
+        let r = super::batch_upload(State(s.clone()), auth.clone(), body).await.unwrap().0;
+        let ok: Vec<bool> = r.iter().map(|x| x.ok).collect();
+        assert_eq!(ok, [true, false, true, true]); // path hệ thống bị chặn, file khác vẫn ghi
+        assert!(r[1].error.is_some());
+        let got = s.store.op.read(&s.store.key(u, "a/x.txt").unwrap()).await.unwrap().to_vec();
+        assert_eq!(got, b"hello");
+        let n: (i64,) = sqlx::query_as("SELECT count(*) FROM files WHERE user_id = $1 AND NOT is_dir").bind(u).fetch_one(&s.db).await.unwrap();
+        assert_eq!(n.0, 3);
+        assert_eq!(used(&s, u).await, 8);
+        // ghi đè: quota tính phần chênh + giữ bản cũ
+        super::batch_upload(State(s.clone()), auth.clone(), batch_body(None, &[("a/x.txt", b"hi")])).await.unwrap();
+        assert_eq!(used(&s, u).await, 5);
+        let v = crate::versions::list(State(s.clone()), auth.clone(), Query(crate::versions::VQuery { path: "a/x.txt".into(), ts: None })).await.unwrap();
+        assert_eq!(v.0.len(), 1);
+        // vượt quota: file đó lỗi
+        sqlx::query("UPDATE users SET quota_limit = 6 WHERE id = $1").bind(u).execute(&s.db).await.unwrap();
+        let r = super::batch_upload(State(s.clone()), auth.clone(), batch_body(None, &[("big.bin", b"0123456789")])).await.unwrap().0;
+        assert!(!r[0].ok);
+        assert_eq!(used(&s, u).await, 5);
+    }
+
+    #[tokio::test]
+    async fn batch_rejects_bad_framing() {
+        let Some((s, u)) = up_state().await else { return };
+        let auth = AuthUser { id: u, admin: false };
+        let mut b = batch_body(None, &[("a.txt", b"abc")]).to_vec();
+        b.pop(); // thiếu 1 byte
+        assert!(super::batch_upload(State(s.clone()), auth.clone(), b.into()).await.is_err());
+        assert!(super::batch_upload(State(s.clone()), auth.clone(), axum::body::Bytes::from_static(&[9, 9, 9, 9, 1])).await.is_err());
+        let big = vec![0u8; super::BATCH_MAX_FILE as usize + 1];
+        assert!(super::batch_upload(State(s.clone()), auth, batch_body(None, &[("a.bin", &big)])).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn batch_into_shared_folder() {
+        let Some((s, a)) = up_state().await else { return };
+        let b = uuid::Uuid::new_v4();
+        sqlx::query("INSERT INTO users (id, username, pass_hash) VALUES ($1, $2, 'x')").bind(b).bind(format!("bt-{b}")).execute(&s.db).await.unwrap();
+        let auth_b = AuthUser { id: b, admin: false };
+        // chưa share: lỗi, không ghi gì
+        let r = super::batch_upload(State(s.clone()), auth_b.clone(), batch_body(Some(a), &[("doc/n.txt", b"xy")])).await.unwrap().0;
+        assert!(!r[0].ok);
+        for perm in ["view", "edit"] {
+            sqlx::query("INSERT INTO shares (id, owner, path, is_dir, target_user, permission, created_at) VALUES ($1, $2, 'doc', TRUE, $3, $4, 0)")
+                .bind(uuid::Uuid::new_v4())
+                .bind(a)
+                .bind(b)
+                .bind(perm)
+                .execute(&s.db)
+                .await
+                .unwrap();
+            let r = super::batch_upload(State(s.clone()), auth_b.clone(), batch_body(Some(a), &[("doc/n.txt", b"xy"), ("other/n.txt", b"z")])).await.unwrap().0;
+            assert_eq!(r[0].ok, perm == "edit"); // chỉ xem thì không ghi được
+            assert!(!r[1].ok); // ngoài vùng share
+        }
+        // ghi vào vùng của chủ, quota tính cho chủ
+        assert!(s.store.op.read(&s.store.key(a, "doc/n.txt").unwrap()).await.is_ok());
+        assert_eq!(used(&s, a).await, 2);
+        assert_eq!(used(&s, b).await, 0);
     }
 }

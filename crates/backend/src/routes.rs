@@ -137,6 +137,8 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/git/:id/sync", post(crate::git::sync_now))
         .route("/api/files/uploads", post(f::init_upload))
         .route("/api/files/uploads/active", get(f::upload_active))
+        // lô file nhỏ: tối đa 32MB dữ liệu + header JSON
+        .route("/api/files/uploads/batch", post(f::batch_upload).layer(axum::extract::DefaultBodyLimit::max(34 * 1024 * 1024)))
         .route("/api/files/uploads/:id", get(f::upload_status))
         // axum mặc định chặn body > 2MB; chunk cho phép tới 64MB.
         .route(
