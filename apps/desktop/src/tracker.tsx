@@ -39,7 +39,7 @@ export function TrackerPage(props: { tab: "tasks" | "habits"; onTab: (t: "tasks"
 }
 
 function TasksView(props: { onError: (m: string) => void }) {
-  const [view, setView] = createSignal<TaskView>("overdue");
+  const [view, setView] = createSignal<TaskView>("all");
   const [items, { refetch }] = createResource(view, (v) => api.tasks(v).catch((e) => (props.onError(errText(e)), [] as TaskItem[])), { initialValue: [] });
   // mở task ngay tại Tracker (không nhảy sang Deck) + xem file đính kèm tại chỗ
   const [openTask, setOpenTask] = createSignal<{ board: string; card: string } | null>(null);
