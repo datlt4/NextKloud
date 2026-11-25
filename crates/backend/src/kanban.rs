@@ -392,7 +392,8 @@ pub async fn update_card(State(s): State<AppState>, user: AuthUser, Path(id): Pa
             position = COALESCE($5, position), labels = COALESCE($6, labels),
             color = CASE WHEN $7 THEN $8 ELSE color END, due_at = CASE WHEN $9 THEN $10 ELSE due_at END,
             parent_id = CASE WHEN $11 THEN $12 ELSE parent_id END, archived = COALESCE($13, archived),
-            done_at = $14, updated_at = $15, attachments = COALESCE($16, attachments)
+            done_at = $14, updated_at = $15, attachments = COALESCE($16, attachments),
+            reminded_at = CASE WHEN $17 THEN NULL ELSE reminded_at END
          WHERE id = $1",
     )
     .bind(id)
@@ -411,6 +412,7 @@ pub async fn update_card(State(s): State<AppState>, user: AuthUser, Path(id): Pa
     .bind(done_at)
     .bind(now())
     .bind(attachments)
+    .bind(b.due_at.is_some())
     .execute(&s.db)
     .await?;
     Ok(Json(card(&s.db, user.id, id).await?.0))

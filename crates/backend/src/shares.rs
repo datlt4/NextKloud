@@ -190,13 +190,18 @@ pub async fn share_with(State(s): State<AppState>, user: AuthUser, Json(b): Json
     )
     .bind(Uuid::new_v4())
     .bind(user.id)
-    .bind(p)
+    .bind(&p)
     .bind(is_dir)
     .bind(tid)
     .bind(b.permission)
     .bind(now())
     .fetch_one(&s.db)
     .await?;
+    let sharer = crate::state::load_user(&s.db, user.id)
+        .await
+        .map(|u| u.display_name.unwrap_or(u.username))
+        .unwrap_or_default();
+    crate::events::emit(tid, crate::events::Ev::SharedWithYou { path: p.clone(), from: sharer });
     Ok((StatusCode::CREATED, Json(share_out(&s.db, r).await?)))
 }
 

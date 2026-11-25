@@ -248,6 +248,39 @@ pub async fn check_habit(State(s): State<AppState>, user: AuthUser, Path(id): Pa
     Ok(Json(habit_out(&s.db, h).await?))
 }
 
+/// Quét card đến hạn trong 24h tới (kể cả đã quá hạn) mà chưa nhắc: bắn SSE + đánh dấu reminded_at.
+pub async fn check_due_once(db: &PgPool) -> usize {
+    let now = now();
+    let rows: Vec<(Uuid, Uuid, String, i64, Uuid)> = sqlx::query_as(
+        "SELECT c.id, c.board_id, c.title, c.due_at, b.owner FROM cards c JOIN boards b ON b.id = c.board_id
+         WHERE c.done_at IS NULL AND NOT c.archived AND c.due_at IS NOT NULL AND c.due_at <= $1 AND c.reminded_at IS NULL
+         LIMIT 200",
+    )
+    .bind(now + 86_400)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+    let mut n = 0;
+    for (id, board, title, due, owner) in rows {
+        let ev = if due < now {
+            crate::events::Ev::TaskOverdue { card: id, board, title, due_at: due }
+        } else {
+            crate::events::Ev::TaskDue { card: id, board, title, due_at: due }
+        };
+        crate::events::emit(owner, ev);
+        if sqlx::query("UPDATE cards SET reminded_at = $2 WHERE id = $1 AND reminded_at IS NULL")
+            .bind(id)
+            .bind(now)
+            .execute(db)
+            .await
+            .is_ok()
+        {
+            n += 1;
+        }
+    }
+    n
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,6 +305,55 @@ mod tests {
     fn day_rejects_bad_format() {
         assert!(parse_day("23-11-2026").is_err());
         assert!(parse_day("2026-11-23").is_ok());
+    }
+
+    #[tokio::test]
+    async fn due_reminder_fires_once() {
+        use crate::events::{Ev, bus};
+        let Some((db, u)) = crate::kanban::tests::db_user().await else { return };
+        let b: (Uuid,) = sqlx::query_as("INSERT INTO boards (id, owner, title, created_at) VALUES ($1, $2, 'B', 0) RETURNING id")
+            .bind(Uuid::new_v4())
+            .bind(u)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        let c: (Uuid,) = sqlx::query_as("INSERT INTO board_columns (id, board_id, title, position) VALUES ($1, $2, 'Todo', 0) RETURNING id")
+            .bind(Uuid::new_v4())
+            .bind(b.0)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        let cid = Uuid::new_v4();
+        sqlx::query("INSERT INTO cards (id, board_id, column_id, title, position, due_at, created_at, updated_at) VALUES ($1,$2,$3,'x',0,$4,0,0)")
+            .bind(cid)
+            .bind(b.0)
+            .bind(c.0)
+            .bind(now() + 3600)
+            .execute(&db)
+            .await
+            .unwrap();
+        let mut rx = bus().subscribe();
+        // DB test dùng chung giữa các test chạy song song: chỉ xét event đúng card của mình
+        let mine = |rx: &mut tokio::sync::broadcast::Receiver<crate::events::Push>| {
+            let mut hit = false;
+            while let Ok(p) = rx.try_recv() {
+                if p.user == u {
+                    if let Ev::TaskDue { card, .. } = p.ev {
+                        if card == cid {
+                            hit = true;
+                        }
+                    }
+                }
+            }
+            hit
+        };
+        check_due_once(&db).await;
+        assert!(mine(&mut rx), "thiếu event nhắc card của mình");
+        let r: (Option<i64>,) = sqlx::query_as("SELECT reminded_at FROM cards WHERE id = $1").bind(cid).fetch_one(&db).await.unwrap();
+        assert!(r.0.is_some(), "chưa đánh dấu reminded_at");
+        // quét lại không nhắc lại card của mình
+        check_due_once(&db).await;
+        assert!(!mine(&mut rx), "bị nhắc trùng");
     }
 
     #[tokio::test]

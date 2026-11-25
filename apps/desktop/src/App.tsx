@@ -309,6 +309,42 @@ export default function App() {
     const h = routeOf();
     if (!routing && location.hash !== h && !(h === "#/" && !location.hash)) history.pushState(null, "", h);
   });
+  // SSE: nhắc task đến hạn + báo được chia sẻ (toast + notification hệ thống).
+  // EventSource không gửi được header Authorization nên token đi theo ?token=.
+  let es: EventSource | null = null;
+  createEffect(() => {
+    if (!authed() || !routed()) {
+      es?.close();
+      es = null;
+      return;
+    }
+    if (es) return;
+    const tok = localStorage.getItem("nk-token");
+    if (!tok) return;
+    try {
+      if ("Notification" in window && Notification.permission === "default") void Notification.requestPermission().catch(() => {});
+    } catch {}
+    es = new EventSource(`${serverOrigin()}/api/events?token=${encodeURIComponent(tok)}`);
+    es.onmessage = (m) => {
+      try {
+        const e = JSON.parse(m.data) as { type: string; title?: string; due_at?: number; path?: string; from?: string };
+        const dl = e.due_at ? fdate(e.due_at) : "";
+        const [title, body] = e.type === "task_overdue"
+          ? [t("nt.pushOver"), `${e.title ?? ""} · ${t("tk.dueAt", { d: dl })}`]
+          : e.type === "task_due"
+            ? [t("nt.pushDue"), `${e.title ?? ""} · ${t("tk.dueAt", { d: dl })}`]
+            : e.type === "shared_with_you"
+              ? [t("nt.pushShared"), `${e.from ?? ""} → ${e.path ?? ""}`]
+              : [null, null];
+        if (!title || !body) return;
+        flash(`${title} — ${body}`);
+        try {
+          if ("Notification" in window && Notification.permission === "granted") void new Notification(title, { body });
+        } catch {}
+      } catch {}
+    };
+  });
+  onCleanup(() => es?.close());
   const go = async (h: string) => {
     routing = true;
     try {

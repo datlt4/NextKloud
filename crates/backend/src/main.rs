@@ -152,6 +152,19 @@ async fn main() {
             }
         });
     }
+    // Nhắc task đến hạn qua SSE: quét mỗi phút (đánh dấu reminded_at để không spam).
+    {
+        let db = db.clone();
+        tokio::spawn(async move {
+            loop {
+                let n = nextkloud_backend::tracker::check_due_once(&db).await;
+                if n > 0 {
+                    tracing::info!("reminders sent: {n}");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            }
+        });
+    }
     let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| {
         tracing::warn!("JWT_SECRET unset — using dev default, set it in production");
         "dev-insecure-change-me".into()

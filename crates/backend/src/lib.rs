@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod config;
 pub mod deck;
+pub mod events;
 pub mod file_handlers;
 pub mod files;
 pub mod fulltext;
