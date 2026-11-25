@@ -123,6 +123,7 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/annotations/:id", axum::routing::patch(crate::notes::update).delete(crate::notes::remove))
         .route("/api/move", post(f::move_entry))
         .route("/api/copy", post(f::copy_entry))
+        .route("/api/jobs/:id", get(crate::jobs::status))
         .route("/api/config", get(crate::config::get))
         .route("/api/versions", get(crate::versions::list))
         .route("/api/versions/file", get(crate::versions::file))

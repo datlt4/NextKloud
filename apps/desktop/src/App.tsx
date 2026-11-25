@@ -1,5 +1,5 @@
 import { For, Index, Match, Show, Switch, batch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, Suspense } from "solid-js";
-import { SECRET_ROOT, api, isSecret, isSelfHostedWeb, serverOrigin, vaultSeen, type Entry, type Me } from "./api";
+import { SECRET_ROOT, api, isSecret, isSelfHostedWeb, serverOrigin, vaultSeen, type Entry, type Me, type OnConflict, type XferOpts } from "./api";
 import { syncFromServer, ui, wallCss } from "./background";
 import { ResetForm } from "./forms";
 import { LookDialog } from "./look";
@@ -45,7 +45,7 @@ function ThumbImg(props: { path: string; name: string }) {
     </Show>
   );
 }
-import { MoveDialog, NameDialog, TrashPage, errText, joinPath } from "./fileops";
+import { ConflictDialog, MoveDialog, NameDialog, TrashPage, errText, joinPath } from "./fileops";
 import { NotesPage } from "./annot";
 import { KanbanPage } from "./kanban";
 import { TrackerPage } from "./tracker";
@@ -814,11 +814,22 @@ export default function App() {
     }
   };
 
+  const [conflict, setConflict] = createSignal<{ name: string; pick: (p: OnConflict | null) => void } | null>(null);
+  /** Hỏi cách gộp 1 lần cho cả lượt; job chạy nền thì hiện % tiến độ. */
+  const xferOpts = (label: string): XferOpts => {
+    let pol: Promise<OnConflict | null> | undefined;
+    return {
+      ask: (name) => (pol ??= new Promise((pick) => setConflict({ name, pick: (p) => { setConflict(null); pick(p); } }))),
+      progress: (d, n) => setWorking(`${label} ${n ? Math.floor((d * 100) / n) : 0}%…`),
+    };
+  };
+
   /** Chuyển các mục vào `dest`. Lỗi ném ra để dialog hiện. */
   const moveTo = async (paths: string[], dest: string) => {
     const todo = paths.filter((p) => parentOf(p) !== dest && dest !== p && !dest.startsWith(p + "/"));
     if (!todo.length) return;
-    await each(t("f.movingN"), todo, (p) => api.move(p, joinPath(dest, p.split("/").pop()!)));
+    const o = xferOpts(t("f.movingN"));
+    await each(t("f.movingN"), todo, (p) => api.move(p, joinPath(dest, p.split("/").pop()!), undefined, o));
     flash(t("f.moved", { n: todo.length, dest: pretty(dest) }));
   };
   /** Sao chép vào `dest`; trùng tên trong cùng thư mục thì thêm " (bản sao)". */
@@ -829,7 +840,8 @@ export default function App() {
       const i = n.lastIndexOf(".");
       return i > 0 ? `${n.slice(0, i)}${t("f.copySuffix")}${n.slice(i)}` : `${n}${t("f.copySuffix")}`;
     };
-    await each(t("f.copyingN"), paths, (p) => api.copy(p, joinPath(dest, name(p))));
+    const o = xferOpts(t("f.copyingN"));
+    await each(t("f.copyingN"), paths, (p) => api.copy(p, joinPath(dest, name(p)), undefined, o));
     flash(t("f.copied", { n: paths.length, dest: pretty(dest) }));
   };
 
@@ -1853,7 +1865,7 @@ export default function App() {
                 <Match when={d().kind === "rename" && (d() as { f: Entry }).f}>
                   {(f) => (
                     <NameDialog title={f().is_dir ? t("f.renameDir") : t("f.renameFile")} label={t("f.newFileName")} initial={f().name} ok={t("f.rename")} onClose={() => setDlg(null)} onSubmit={async (n) => {
-                      await api.move(f().path, joinPath(parentOf(f().path), n));
+                      await api.move(f().path, joinPath(parentOf(f().path), n), undefined, xferOpts(t("f.movingN"))).finally(() => setWorking(null));
                       setDlg(null);
                       await reload();
                     }} />
@@ -1877,6 +1889,10 @@ export default function App() {
                 </Match>
               </Switch>
             )}
+          </Show>
+
+          <Show when={conflict()}>
+            {(c) => <ConflictDialog name={c().name} onPick={c().pick} />}
           </Show>
 
           <Show when={secretSet()}>
