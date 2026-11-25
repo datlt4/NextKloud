@@ -378,36 +378,113 @@ function dirOf2(p: string) {
   return p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
 }
 
+const RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+const fmtT = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+// chỉ 1 đoạn phát tại 1 thời điểm: nút mới bấm thì dừng nút đang phát
+let activeStop: (() => void) | null = null;
+const stopActiveVoice = () => {
+  activeStop?.();
+  activeStop = null;
+};
+
 function VoiceButton(props: { text: string; onPlay: () => void }) {
-  const [st, setSt] = createSignal<"idle" | "busy" | "play">("idle");
+  const [st, setSt] = createSignal<"idle" | "busy" | "play" | "paused">("idle");
+  const [pos, setPos] = createSignal(0);
+  const [dur, setDur] = createSignal(0);
+  const [rate, setRate] = createSignal(Number(localStorage.getItem("nk-tts-rate") ?? 1) || 1);
   let audio: HTMLAudioElement | null = null;
+  const stop = () => {
+    audio?.pause();
+    audio = null;
+    setSt("idle");
+  };
+  onCleanup(() => {
+    if (activeStop === stop) activeStop = null;
+    audio?.pause();
+    audio = null;
+  });
+  const toggle = async () => {
+    if (st() === "play" && audio) {
+      audio.pause();
+      setSt("paused");
+      return;
+    }
+    if (st() === "paused" && audio) {
+      try {
+        await audio.play();
+        if (audio) setSt("play");
+      } catch {
+        setSt("idle");
+      }
+      return;
+    }
+    setSt("busy");
+    try {
+      const url = await speak(props.text);
+      stopActiveVoice();
+      audio = new Audio(url);
+      audio.playbackRate = rate();
+      audio.onloadedmetadata = () => setDur(audio?.duration || 0);
+      audio.ontimeupdate = () => setPos(audio?.currentTime || 0);
+      audio.onended = () => {
+        if (activeStop === stop) activeStop = null;
+        setSt("idle");
+      };
+      props.onPlay();
+      activeStop = stop;
+      setSt("play");
+      setPos(0);
+      await audio.play();
+    } catch {
+      setSt("idle");
+    }
+  };
+  const seek = (e: Event) => {
+    const v = +(e.currentTarget as HTMLInputElement).value;
+    if (audio) audio.currentTime = v;
+    setPos(v);
+  };
+  const changeRate = (e: Event) => {
+    const v = +(e.currentTarget as HTMLSelectElement).value;
+    setRate(v);
+    try {
+      localStorage.setItem("nk-tts-rate", String(v));
+    } catch {}
+    if (audio) audio.playbackRate = v;
+  };
   return (
-    <button
-      class="voice-btn"
-      title={t("vw.mdListen")}
-      disabled={st() === "busy"}
-      onClick={async (e) => {
-        e.stopPropagation();
-        if (st() === "play" && audio) {
-          audio.pause();
-          setSt("idle");
-          return;
-        }
-        setSt("busy");
-        try {
-          const url = await speak(props.text);
-          audio = new Audio(url);
-          props.onPlay();
-          setSt("play");
-          audio.onended = () => setSt("idle");
-          await audio.play();
-        } catch {
-          setSt("idle");
-        }
-      }}
+    <Show
+      when={st() === "play" || st() === "paused"}
+      fallback={
+        <button
+          class="voice-btn"
+          title={t("vw.mdListen")}
+          disabled={st() === "busy"}
+          onClick={(e) => {
+            e.stopPropagation();
+            void toggle();
+          }}
+        >
+          {st() === "busy" ? <Icon name="listen" size={15} class="pulse" /> : <Icon name="listen" size={15} />}
+        </button>
+      }
     >
-      {st() === "busy" ? <Icon name="listen" size={15} class="pulse" /> : st() === "play" ? <Icon name="pause" size={15} /> : <Icon name="listen" size={15} />}
-    </button>
+      <div class="voice-bar">
+        <button class="icon-btn sm" title={t("vw.mdListen")} onClick={(e) => { e.stopPropagation(); void toggle(); }}>
+          {st() === "play" ? <Icon name="pause" size={14} /> : <Icon name="listen" size={14} />}
+        </button>
+        <span class="muted xs">{fmtT(pos())}</span>
+        <input
+          type="range" class="voice-seek" min={0} max={dur() || 0} step={0.1} value={pos()}
+          disabled={!dur()} style={{ "--p": `${dur() ? Math.min(100, (pos() / dur()) * 100) : 0}%` }}
+          onInput={seek}
+        />
+        <span class="muted xs">{fmtT(dur())}</span>
+        <select class="voice-rate" value={rate()} title={t("vw.speed")} onChange={changeRate}>
+          <For each={RATES}>{(r) => <option value={r}>{r}×</option>}</For>
+        </select>
+      </div>
+    </Show>
   );
 }
 
@@ -531,6 +608,7 @@ export default function MarkdownView(props: {
 
   const readAll = async () => {
     setBuiltHash(curHash());
+    stopActiveVoice();
     setPlayingAll(true);
     try {
       for (const b of list()) {
