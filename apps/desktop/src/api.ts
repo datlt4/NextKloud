@@ -533,6 +533,10 @@ export const api = {
   async tasks(view: TaskView) {
     return (await req(`/api/tasks?view=${view}`)).json() as Promise<TaskItem[]>;
   },
+  /** Task có hạn trong [from, to) epoch giây, gồm cả task đã xong (lịch tuần). */
+  async tasksRange(from: number, to: number) {
+    return (await req(`/api/tasks?view=range&from=${from}&to=${to}`)).json() as Promise<TaskItem[]>;
+  },
   async habits() {
     return (await req("/api/habits")).json() as Promise<Habit[]>;
   },

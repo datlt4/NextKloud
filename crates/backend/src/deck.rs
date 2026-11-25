@@ -218,9 +218,6 @@ pub async fn apply(State(s): State<AppState>, user: AuthUser, Json(a): Json<Appl
 
 pub async fn import(db: &PgPool, user: Uuid, b: &DBoard, a: &Apply) -> Result<Applied, AppError> {
     let source = format!("deck:{}", b.id);
-    if imported(db, user).await?.contains(&source) {
-        return Err(AppError::Conflict("board này đã nhập rồi".into()));
-    }
     let skip: HashSet<i64> = a.skip_stacks.iter().copied().collect();
     let mut parents = propose(b);
     for (k, v) in &a.parents {
@@ -231,6 +228,12 @@ pub async fn import(db: &PgPool, user: Uuid, b: &DBoard, a: &Apply) -> Result<Ap
     }
     let now = chrono::Utc::now().timestamp();
     let mut tx = db.begin().await?;
+    // khoá theo (user, board Deck) rồi mới kiểm tra: bấm nhập 2 lần song song cũng không ra 2 board
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))").bind(format!("{user}/{source}")).execute(&mut *tx).await?;
+    let dup: Option<(i32,)> = sqlx::query_as("SELECT 1 FROM boards WHERE owner = $1 AND source = $2").bind(user).bind(&source).fetch_optional(&mut *tx).await?;
+    if dup.is_some() {
+        return Err(AppError::Conflict("board này đã nhập rồi".into()));
+    }
     let board = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO boards (id, owner, title, labels, archived, position, source, created_at)
@@ -381,5 +384,25 @@ mod tests {
             .unwrap();
         assert_eq!(lesson.0, "To do"); // cột Subtask gộp vào To do
         assert!(matches!(import(&db, u, &b, &Apply { board_id: 3, parents: HashMap::new(), skip_stacks: vec![] }).await, Err(AppError::Conflict(_))));
+    }
+
+    #[tokio::test]
+    async fn import_is_idempotent_per_board() {
+        let Some((db, u)) = crate::kanban::tests::db_user().await else { return };
+        let (b3, mut b1) = (board(), board());
+        b1.id = 1;
+        b1.title = "Work".into();
+        let a = |id| Apply { board_id: id, parents: HashMap::new(), skip_stacks: vec![] };
+        // nhập song song cùng 1 board: đúng 1 lần thành công
+        let a3 = a(3);
+        let (r1, r2) = tokio::join!(import(&db, u, &b3, &a3), import(&db, u, &b3, &a3));
+        assert_eq!(r1.is_ok() as u8 + r2.is_ok() as u8, 1);
+        assert!(matches!(r1.err().or(r2.err()), Some(AppError::Conflict(_))));
+        // board khác vẫn nhập được, chạy lại thì bỏ qua (409), không tạo trùng
+        import(&db, u, &b1, &a(1)).await.unwrap();
+        assert!(matches!(import(&db, u, &b1, &a(1)).await, Err(AppError::Conflict(_))));
+        let src: Vec<String> = sqlx::query_scalar("SELECT source FROM boards WHERE owner = $1 ORDER BY source").bind(u).fetch_all(&db).await.unwrap();
+        assert_eq!(src, ["deck:1", "deck:3"]);
+        assert_eq!(imported(&db, u).await.unwrap(), HashSet::from(["deck:1".to_string(), "deck:3".to_string()]));
     }
 }
