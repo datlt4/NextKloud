@@ -6,6 +6,7 @@ import { LookDialog } from "./look";
 import { fmtSize } from "./format";
 import { fmtDate as fdate, fmtNum, t } from "./i18n";
 import { Icon, VAULTS, ext, kindOf } from "./icons";
+import { buildOffice } from "./ooxml";
 import Settings, { type SettingsTab } from "./Settings";
 import { Avatar } from "./avatar";
 import MarkdownView from "./viewers/MarkdownView";
@@ -99,6 +100,19 @@ export default function App() {
   const [menuLeftFor, setMenuLeftFor] = createSignal<string | null>(null);
   const [userMenu, setUserMenu] = createSignal(false);
   const [userMenuUp, setUserMenuUp] = createSignal(false);
+  const [newMenu, setNewMenu] = createSignal(false);
+  /** Tên file chưa trùng (thêm (2), (3)...), phần mở rộng luôn giữ nguyên. */
+  const stripExt = (n: string, ext: string) => (n.toLowerCase().endsWith(`.${ext}`) ? n.slice(0, -(ext.length + 1)) : n);
+  const uniqueName = async (base: string, ext: string) => {
+    let p = `${base}.${ext}`;
+    for (let i = 2; await api.exists(join(p)).then(() => true, () => false); i++) p = `${base} (${i}).${ext}`;
+    return p;
+  };
+  /** Mở dialog đặt tên rồi tạo file mới (md/txt/office/drawio/excalidraw). */
+  const newFileDlg = (ext: string, title: string, make: (base: string) => string | Uint8Array<ArrayBuffer>, open = true) => {
+    setNewMenu(false);
+    setDlg({ kind: "newfile", ext, title, make, open });
+  };
   const [mSearch, setMSearch] = createSignal(false);
   const [showLook, setShowLook] = createSignal(false);
   const [page, setPage] = createSignal<"files" | "settings" | "trash" | "notes" | "kanban" | "tasks" | "shared" | "secret" | "secret-trash">("files");
@@ -107,7 +121,7 @@ export default function App() {
   const inSecret = () => isSecret(prefix()) || page() === "secret-trash";
   const [boardId, setBoardId] = createSignal<string | null>(null);
   const [flashCard, setFlashCard] = createSignal<string | null>(null);
-  type Dlg = { kind: "mkdir" } | { kind: "rename"; f: Entry } | { kind: "move"; paths: string[] } | { kind: "copy"; paths: string[] };
+  type Dlg = { kind: "mkdir" } | { kind: "rename"; f: Entry } | { kind: "move"; paths: string[] } | { kind: "copy"; paths: string[] } | { kind: "newfile"; ext: string; title: string; make: (base: string) => string | Uint8Array<ArrayBuffer>; open: boolean };
   const [dlg, setDlg] = createSignal<Dlg | null>(null);
   const [sel, setSel] = createSignal<Set<string>>(new Set());
   const [notice, setNotice] = createSignal<{ text: string; undo?: () => Promise<void> } | null>(null);
@@ -435,6 +449,7 @@ export default function App() {
       setMenuFor(null);
       setMenuUpFor(null);
       setUserMenu(false);
+      setNewMenu(false);
     };
     document.addEventListener("click", close);
     onCleanup(() => document.removeEventListener("click", close));
@@ -1423,9 +1438,41 @@ export default function App() {
                     <Icon name="upload" /> <span class="hide-xs">{t("c.upload")}</span>
                   </button>
                   <Show when={!results()}>
-                    <button class="btn ghost" title={t("f.newFolder")} onClick={() => setDlg({ kind: "mkdir" })}>
-                      <Icon name="folderPlus" /> <span class="hide-xs">{t("f.newFolder")}</span>
-                    </button>
+                    <div class="menu-wrap" onClick={(e) => e.stopPropagation()}>
+                      <button class="btn ghost" title={t("f.new")} onClick={() => setNewMenu(!newMenu())}>
+                        <Icon name="plus" /> <span class="hide-xs">{t("f.new")}</span>
+                      </button>
+                      <Show when={newMenu()}>
+                        <div class="menu">
+                          <button onClick={() => { setNewMenu(false); setDlg({ kind: "mkdir" }); }}>
+                            <Icon name="folderPlus" /> {t("f.newFolder")}
+                          </button>
+                          <button onClick={() => newFileDlg("md", t("f.newMd"), (b) => `# ${b}\n`)}>
+                            <Icon name={kindOf("x.md", false).icon} /> {t("f.newMd")}
+                          </button>
+                          <button onClick={() => newFileDlg("txt", t("f.newTxt"), () => "")}>
+                            <Icon name={kindOf("x.txt", false).icon} /> {t("f.newTxt")}
+                          </button>
+                          <div class="menu-sep" />
+                          <button onClick={() => newFileDlg("docx", t("f.newDocx"), () => buildOffice("docx"))}>
+                            <Icon name={kindOf("x.docx", false).icon} /> {t("f.newDocx")}
+                          </button>
+                          <button onClick={() => newFileDlg("xlsx", t("f.newXlsx"), () => buildOffice("xlsx"))}>
+                            <Icon name={kindOf("x.xlsx", false).icon} /> {t("f.newXlsx")}
+                          </button>
+                          <button onClick={() => newFileDlg("pptx", t("f.newPptx"), () => buildOffice("pptx"))}>
+                            <Icon name={kindOf("x.pptx", false).icon} /> {t("f.newPptx")}
+                          </button>
+                          <div class="menu-sep" />
+                          <button onClick={() => newFileDlg("drawio", t("f.newDrawio"), () => "")}>
+                            <Icon name={kindOf("x.drawio", false).icon} /> {t("f.newDrawio")}
+                          </button>
+                          <button onClick={() => newFileDlg("excalidraw", t("f.newExcali"), () => "")}>
+                            <Icon name={kindOf("x.excalidraw", false).icon} /> {t("f.newExcali")}
+                          </button>
+                        </div>
+                      </Show>
+                    </div>
                   </Show>
                   <button class="btn ghost" title={t("f.uploadDir")} onClick={() => dirInput.click()} disabled={!!upload()}>
                     <Icon name="folder" /> <span class="hide-xs">{t("f.uploadDir")}</span>
@@ -1756,9 +1803,23 @@ export default function App() {
                     await reload();
                   }} />
                 </Match>
+                <Match when={d().kind === "newfile" && (d() as { kind: "newfile"; ext: string; title: string; make: (base: string) => string | Uint8Array<ArrayBuffer>; open: boolean })}>
+                  {(v) => (
+                    <NameDialog title={v().title} label={t("f.newFileName")} ok={t("f.create")} onClose={() => setDlg(null)} onSubmit={async (n) => {
+                      const base = stripExt(n, v().ext);
+                      const name = await uniqueName(base, v().ext);
+                      const content = v().make(base);
+                      if (typeof content === "string") await api.saveText(join(name), content);
+                      else await api.upload(join(name), new Blob([content], { type: "application/octet-stream" }));
+                      setDlg(null);
+                      await reload();
+                      if (v().open) await openAt(join(name), "");
+                    }} />
+                  )}
+                </Match>
                 <Match when={d().kind === "rename" && (d() as { f: Entry }).f}>
                   {(f) => (
-                    <NameDialog title={f().is_dir ? t("f.renameDir") : t("f.renameFile")} label={t("f.newName")} initial={f().name} ok={t("f.rename")} onClose={() => setDlg(null)} onSubmit={async (n) => {
+                    <NameDialog title={f().is_dir ? t("f.renameDir") : t("f.renameFile")} label={t("f.newFileName")} initial={f().name} ok={t("f.rename")} onClose={() => setDlg(null)} onSubmit={async (n) => {
                       await api.move(f().path, joinPath(parentOf(f().path), n));
                       setDlg(null);
                       await reload();
