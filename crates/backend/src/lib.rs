@@ -22,4 +22,5 @@ pub mod state;
 pub mod thumb;
 pub mod tts;
 pub mod users;
+pub mod versions;
 pub mod zip;

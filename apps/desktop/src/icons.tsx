@@ -44,6 +44,7 @@ const P: Record<string, string> = {
   folderPlus: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM12 10v6M9 13h6",
   kanban: "M4 4h4v16H4zM10 4h4v10h-4zM16 4h4v6h-4z",
   calendar: "M4 6h16v14H4zM4 10h16M8 3v4M16 3v4",
+  history: "M3 12a9 9 0 1 0 3-6.7M3 4v4h4M12 7v5l3 3",
   sub: "M6 4v10a3 3 0 0 0 3 3h9M15 14l3 3-3 3",
   clip: "M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7",
   copy: "M9 9h11v11H9zM5 15H4V4h11v1",

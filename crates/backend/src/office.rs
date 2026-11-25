@@ -254,6 +254,9 @@ pub async fn callback(
 
     let urow = load_user(&s.db, user_id).await?;
     let mut quota = Quota::new(urow.quota_limit.max(0) as u64, urow.quota_used.max(0) as u64);
+    if let Err(e) = crate::versions::snapshot(&s.store, user_id, &path).await {
+        tracing::warn!("version snapshot {path}: {e}");
+    }
     let mtime = s.store.put_local(user_id, &path, &tmp, Some(chrono::Utc::now().timestamp()), &mut quota).await;
     let _ = tokio::fs::remove_file(&tmp).await;
     let mtime = mtime?;

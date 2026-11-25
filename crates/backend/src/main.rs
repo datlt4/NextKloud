@@ -135,6 +135,10 @@ async fn main() {
                 if let Err(e) = nextkloud_backend::secret::purge_expired(&db, &store, days).await {
                     tracing::error!("secret trash purge: {e:?}");
                 }
+                let n = nextkloud_backend::versions::purge_expired(&db, &store).await;
+                if n > 0 {
+                    tracing::info!("versions: purged {n} old");
+                }
                 // upload bỏ dở > 7 ngày: xoá file staging + dòng resume
                 let n = store.sweep_staging(std::time::Duration::from_secs(7 * 86400));
                 let cutoff = chrono::Utc::now().timestamp() - 7 * 86400;

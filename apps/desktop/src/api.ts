@@ -634,6 +634,16 @@ export const api = {
   async exists(path: string) {
     await req(fileUrl(path), { method: "HEAD" });
   },
+  /** Bản cũ của file (mới nhất trước), ts = mtime bản cũ. */
+  async versions(path: string) {
+    return (await req(`/api/versions?path=${encodeURIComponent(path)}`)).json() as Promise<{ ts: number; size: number }[]>;
+  },
+  async versionBlob(path: string, ts: number) {
+    return (await req(`/api/versions/file?path=${encodeURIComponent(path)}&ts=${ts}`)).blob();
+  },
+  async restoreVersion(path: string, ts: number) {
+    await req("/api/versions/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, ts }) });
+  },
   async readBlob(path: string) {
     return (await req(fileUrl(path))).blob();
   },

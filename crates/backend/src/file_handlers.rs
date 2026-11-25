@@ -485,6 +485,10 @@ pub async fn complete_upload(
     let pend = pending(&s, user.id, &id).await?;
     let row = load_user(&s.db, pend.owner).await?;
     let mut q = Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64);
+    // ghi đè: giữ bản cũ (lỗi chép version không chặn upload)
+    if let Err(e) = crate::versions::snapshot(&s.store, pend.owner, &pend.path).await {
+        tracing::warn!("version snapshot {}: {e}", pend.path);
+    }
     let r = s.store.complete(pend.owner, &id, &pend.path, pend.size, pend.mtime, &mut q).await;
     // Clean staging on failure so retries start fresh.
     if r.is_err() {

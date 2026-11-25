@@ -51,6 +51,7 @@ import { KanbanPage } from "./kanban";
 import { TrackerPage } from "./tracker";
 import { checkUpdate, installUpdate, restartApp, updateState } from "./updater";
 import { PublicPage, ShareDialog, SharedPage } from "./share";
+import { VersionsDialog } from "./versions";
 import { SecretGate, SecretSettings } from "./secret";
 
 type SortKey = "name" | "size" | "modified";
@@ -96,6 +97,7 @@ export default function App() {
   const [sideOpen, setSideOpen] = createSignal(false);
   const [menuFor, setMenuFor] = createSignal<string | null>(null);
   const [shareFor, setShareFor] = createSignal<{ path: string } | null>(null);
+  const [versionsFor, setVersionsFor] = createSignal<string | null>(null);
   const [menuUpFor, setMenuUpFor] = createSignal<string | null>(null);
   const [menuLeftFor, setMenuLeftFor] = createSignal<string | null>(null);
   const [userMenu, setUserMenu] = createSignal(false);
@@ -1104,6 +1106,11 @@ export default function App() {
           <button onClick={() => { closeMenu(); setDlg({ kind: "copy", paths: [p.f.path] }); }}>
             <Icon name="copy" /> {t("f.copy")}
           </button>
+          <Show when={!p.f.is_dir && !isSecret(p.f.path)}>
+            <button onClick={() => { closeMenu(); setVersionsFor(p.f.path); }}>
+              <Icon name="history" /> {t("f.versions")}
+            </button>
+          </Show>
           <Show when={!isSecret(p.f.path)}>
             <button onClick={() => { closeMenu(); setShareFor({ path: p.f.path }); }}>
               <Icon name="users" /> {t("f.share")}
@@ -1881,6 +1888,9 @@ export default function App() {
 
           <Show when={shareFor()}>
             {(s) => <ShareDialog path={s().path} onClose={() => setShareFor(null)} onError={setErr} />}
+          </Show>
+          <Show when={versionsFor()}>
+            {(p) => <VersionsDialog path={p()} onClose={() => setVersionsFor(null)} onRestored={() => load(prefix())} onError={setErr} />}
           </Show>
         </Match>
       </Switch>
