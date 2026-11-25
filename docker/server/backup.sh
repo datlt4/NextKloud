@@ -20,6 +20,8 @@ run() {
   log "bắt đầu $ts (nền: ${last:-không có})"
   # Hardlink từ bản trước; rclone ghi file đổi qua file tạm rồi rename nên bản cũ không bị sửa theo.
   if [ -n "$last" ] && [ -d "$last/files" ]; then cp -al "$last/files" "$new/files"; fi
+  # multipart S3 bỏ dở (backend chết giữa chừng) > 24h: huỷ để không chiếm chỗ; lỗi thì bỏ qua
+  rclone backend cleanup "nk:${BACKUP_BUCKET:-nextkloud}" -o max-age=24h --log-level ERROR || log "cảnh báo: dọn multipart lỗi"
   pg_dump -h "${PGHOST:-db}" -Fc > "$new/db.dump" # PGUSER/PGPASSWORD/PGDATABASE lấy từ env
   rclone sync "nk:${BACKUP_BUCKET:-nextkloud}" "$new/files" --exclude "*/.nextkloud/thumbs/**" --transfers 8 --log-level ERROR
   chown -R 1000:1000 "$new"
