@@ -263,8 +263,8 @@ function HabitMonth(props: {
   });
   const bandLb = (gi: number) => {
     const g = groups()[gi];
-    const wn = t("tk.weekN", { n: g.w });
-    return g.y === vy() && g.m === vm() ? wn : `T${g.m + 1} · ${wn}`;
+    const wn = `W${g.w}`;
+    return g.y === vy() && g.m === vm() ? wn : `T${g.m + 1}·${wn}`;
   };
   const rangeLb = () => {
     const v = vis();

@@ -65,7 +65,7 @@ pub async fn tasks(State(s): State<AppState>, user: AuthUser, Query(q): Query<Ta
         "SELECT c.id, c.board_id, b.title AS board_title, c.column_id, k.title AS column_title,
                 c.parent_id, c.title, c.due_at, c.done_at, c.labels
          FROM cards c JOIN boards b ON b.id = c.board_id JOIN board_columns k ON k.id = c.column_id
-         WHERE b.owner = $1 AND NOT c.archived AND {cond}
+         WHERE b.owner = $1 AND NOT c.archived AND NOT k.is_cancel AND {cond}
          ORDER BY {order} LIMIT {lim}"
     );
     let rows: Vec<TaskItem> = if q.view == "all" || q.view == "done" {
@@ -252,8 +252,8 @@ pub async fn check_habit(State(s): State<AppState>, user: AuthUser, Path(id): Pa
 pub async fn check_due_once(db: &PgPool) -> usize {
     let now = now();
     let rows: Vec<(Uuid, Uuid, String, i64, Uuid)> = sqlx::query_as(
-        "SELECT c.id, c.board_id, c.title, c.due_at, b.owner FROM cards c JOIN boards b ON b.id = c.board_id
-         WHERE c.done_at IS NULL AND NOT c.archived AND c.due_at IS NOT NULL AND c.due_at <= $1 AND c.reminded_at IS NULL
+        "SELECT c.id, c.board_id, c.title, c.due_at, b.owner FROM cards c JOIN boards b ON b.id = c.board_id JOIN board_columns k ON k.id = c.column_id
+         WHERE c.done_at IS NULL AND NOT c.archived AND NOT k.is_cancel AND c.due_at IS NOT NULL AND c.due_at <= $1 AND c.reminded_at IS NULL
          LIMIT 200",
     )
     .bind(now + 86_400)
@@ -333,6 +333,22 @@ mod tests {
             .await
             .unwrap();
         let mut rx = bus().subscribe();
+        // card ở cột huỷ (Delete) thì không nhắc, không đánh dấu
+        let cx: (Uuid,) = sqlx::query_as("INSERT INTO board_columns (id, board_id, title, position, is_cancel) VALUES ($1, $2, 'Delete', 99, true) RETURNING id")
+            .bind(Uuid::new_v4())
+            .bind(b.0)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        let del = Uuid::new_v4();
+        sqlx::query("INSERT INTO cards (id, board_id, column_id, title, position, due_at, created_at, updated_at) VALUES ($1,$2,$3,'x',0,$4,0,0)")
+            .bind(del)
+            .bind(b.0)
+            .bind(cx.0)
+            .bind(now() + 3600)
+            .execute(&db)
+            .await
+            .unwrap();
         // DB test dùng chung giữa các test chạy song song: chỉ xét event đúng card của mình
         let mine = |rx: &mut tokio::sync::broadcast::Receiver<crate::events::Push>| {
             let mut hit = false;
@@ -354,6 +370,9 @@ mod tests {
         // quét lại không nhắc lại card của mình
         check_due_once(&db).await;
         assert!(!mine(&mut rx), "bị nhắc trùng");
+        // card cột huỷ không bị đánh dấu
+        let r2: (Option<i64>,) = sqlx::query_as("SELECT reminded_at FROM cards WHERE id = $1").bind(del).fetch_one(&db).await.unwrap();
+        assert!(r2.0.is_none(), "card cột huỷ không được nhắc");
     }
 
     #[tokio::test]
