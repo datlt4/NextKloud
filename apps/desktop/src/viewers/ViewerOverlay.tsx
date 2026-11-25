@@ -1,6 +1,7 @@
 import { Match, Show, Suspense, Switch, createEffect, createResource, createSignal, lazy, on, onCleanup } from "solid-js";
 import { marked } from "marked";
-import { api, setViewOwner } from "../api";
+import { api, setViewOwner, speak } from "../api";
+import { ui } from "../background";
 import { onEsc, inField } from "../esc";
 import { t } from "../i18n";
 import { Icon } from "../icons";
@@ -17,14 +18,14 @@ const ExcalidrawView = lazy(() => import("./ExcalidrawView"));
 const OfficeView = lazy(() => import("./OfficeView"));
 const MarkdownView = lazy(() => import("./MarkdownView"));
 
-/** owner: file của người khác chia sẻ -> chỉ xem (md render thuần, Office/zip/drawio tải về). */
+/** owner: file của người khác chia sẻ -> chỉ xem (md render thuần, zip/drawio tải về); Office xem/sửa theo quyền share. */
 export function ViewerOverlay(props: { path: string; owner?: string; onClose: () => void; onError?: (m: string) => void }) {
   const [cur, setCur] = createSignal(props.path);
   createEffect(on(() => props.path, (p) => setCur(p)));
   setViewOwner(props.owner ?? null);
   onCleanup(() => setViewOwner(null));
   const name = () => cur().split("/").pop() ?? cur();
-  const SHARED_OK = ["markdown", "text", "image", "video", "audio", "pdf", "epub"];
+  const SHARED_OK = ["markdown", "text", "image", "video", "audio", "pdf", "epub", "office"];
   const kind = () => {
     const k = viewerKind(name());
     return props.owner && !SHARED_OK.includes(k) ? "other" : k;
@@ -53,6 +54,39 @@ export function ViewerOverlay(props: { path: string; owner?: string; onClose: ()
       }
     }
     props.onError?.(`${t("c.notFound")}: ${tt}`);
+  };
+  // md được chia sẻ: đọc lần lượt từng khối đã render (bấm lần nữa để dừng)
+  const [reading, setReading] = createSignal(false);
+  let mdEl: HTMLDivElement | undefined;
+  let voice: HTMLAudioElement | null = null;
+  const stopRead = () => {
+    setReading(false);
+    voice?.pause();
+    voice = null;
+  };
+  onCleanup(stopRead);
+  const readAll = async () => {
+    if (reading()) return stopRead();
+    setReading(true);
+    try {
+      for (const el of Array.from(mdEl?.children ?? [])) {
+        const txt = el.textContent?.trim();
+        if (!reading()) break;
+        if (!txt) continue;
+        const url = await speak(txt);
+        if (!reading()) break;
+        await new Promise<void>((res) => {
+          voice = new Audio(url);
+          voice.playbackRate = ui().ttsRate;
+          voice.onended = voice.onerror = voice.onpause = () => res();
+          voice.play().catch(() => res());
+        });
+      }
+    } catch (e) {
+      props.onError?.(String((e as Error)?.message ?? e));
+    } finally {
+      stopRead();
+    }
   };
   const close = () => props.onClose();
   onEsc((e) => !inField(e) && (close(), true));
@@ -96,7 +130,16 @@ export function ViewerOverlay(props: { path: string; owner?: string; onClose: ()
                 </Match>
               </Switch>
             }>
-              <Show when={!props.owner} fallback={<div class="md-shared"><div class="md-content" innerHTML={marked.parse(text()!) as string} /></div>}>
+              <Show when={!props.owner} fallback={
+                <div class="md-shared">
+                  <div class="md-bar">
+                    <button onClick={() => void readAll()} title={reading() ? t("vw.mdStopRead") : undefined}>
+                      {reading() ? t("vw.mdReading") : (<><Icon name="listen" size={15} /> {t("vw.mdReadAll")}</>)}
+                    </button>
+                  </div>
+                  <div class="md-content" ref={mdEl} innerHTML={marked.parse(text()!) as string} />
+                </div>
+              }>
                 <MarkdownView path={cur()} text={text()!} anchor={anchor()} onOpenLink={(l, a) => void openLink(l, a)} onError={props.onError} onSaved={() => refetch()} />
               </Show>
             </Show>

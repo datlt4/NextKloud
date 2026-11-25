@@ -104,14 +104,21 @@ pub async fn list(
 
 /// Tìm theo tên trên toàn bộ cây của user (trigram index).
 pub async fn search(db: &PgPool, user: Uuid, q: &str, limit: i64) -> Result<Vec<Row>, sqlx::Error> {
+    search_under(db, user, "", q, limit).await
+}
+
+/// Như `search` nhưng chỉ trong cây con `root` ("" = toàn bộ), không gồm chính root.
+pub async fn search_under(db: &PgPool, user: Uuid, root: &str, q: &str, limit: i64) -> Result<Vec<Row>, sqlx::Error> {
+    let under = if root.is_empty() { "%".to_string() } else { format!("{}/%", like_escape(root)) };
     sqlx::query_as::<_, Row>(&format!(
         "SELECT {COLS} FROM files
-         WHERE user_id = $1 AND name ILIKE $2 AND path NOT LIKE '.%' AND path NOT LIKE '%/.%'
+         WHERE user_id = $1 AND name ILIKE $2 AND path NOT LIKE '.%' AND path NOT LIKE '%/.%' AND path LIKE $4
          ORDER BY is_dir DESC, name LIMIT $3"
     ))
     .bind(user)
     .bind(format!("%{}%", like_escape(q)))
     .bind(limit)
+    .bind(under)
     .fetch_all(db)
     .await
 }

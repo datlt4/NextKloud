@@ -143,14 +143,16 @@ pub async fn thumb(
     let user = auth_opt(&headers, &q, &s).await.ok_or_else(|| AppError::Auth("missing token".into()))?;
     let is_img = thumb_kind(&path).ok_or_else(|| AppError::BadRequest("loại file này chưa có thumbnail".into()))?;
     let size_px: u32 = q.get("s").and_then(|v| v.parse().ok()).unwrap_or(256).clamp(64, 2048);
-    let meta = s.store.stat(user.id, &path).await?;
+    // file người khác chia sẻ: đọc + cache trong cây của chủ file, key gắn đúng path đã được cấp quyền
+    let oid = crate::shares::resolve(&s.db, user.id, q.get("owner").and_then(|v| v.parse().ok()), &path, false).await?;
+    let meta = s.store.stat(oid, &path).await?;
     if meta.is_dir() {
         return Err(AppError::BadRequest("not a file".into()));
     }
     let mtime = crate::files::mtime_of(&meta);
     let size = meta.content_length();
-    let hash = thumb_key(&user.id, &path, mtime, size, size_px);
-    let tkey = s.store.key(user.id, &thumb_object(&hash))?;
+    let hash = thumb_key(&oid, &path, mtime, size, size_px);
+    let tkey = s.store.key(oid, &thumb_object(&hash))?;
     let etag = format!("\"{hash}\"");
     if let Some(inm) = headers.get(header::IF_NONE_MATCH).and_then(|v| v.to_str().ok()) {
         if inm.split(',').any(|t| t.trim() == etag) {
@@ -171,9 +173,9 @@ pub async fn thumb(
         if size > 100 * 1024 * 1024 {
             return Err(AppError::BadRequest("ảnh quá lớn để tạo thumbnail".into()));
         }
-        s.store.op.read(&s.store.key(user.id, &path)?).await.map_err(StoreError::from)?.to_vec()
+        s.store.op.read(&s.store.key(oid, &path)?).await.map_err(StoreError::from)?.to_vec()
     } else {
-        video_frame_png(user.id, &path, &s.store).await.map_err(AppError::Internal)?
+        video_frame_png(oid, &path, &s.store).await.map_err(AppError::Internal)?
     };
     // Decode/resize tốn CPU: chạy ngoài worker async.
     let out = tokio::task::spawn_blocking(move || render_image(&src, size_px))

@@ -106,6 +106,16 @@ fn dl_token(user: uuid::Uuid, path: &str, enc: &EncodingKey) -> Result<String, A
 #[derive(Deserialize)]
 pub struct ConfigBody {
     pub path: String,
+    /// mở file người khác chia sẻ
+    #[serde(default)]
+    pub owner: Option<uuid::Uuid>,
+}
+
+/// (chủ file, được sửa không): share xem -> chỉ xem, share sửa -> sửa thẳng file của chủ.
+pub async fn access(db: &sqlx::PgPool, me: uuid::Uuid, owner: Option<uuid::Uuid>, path: &str) -> Result<(uuid::Uuid, bool), AppError> {
+    let oid = crate::shares::resolve(db, me, owner, path, false).await?;
+    let edit = oid == me || crate::shares::resolve(db, me, owner, path, true).await.is_ok();
+    Ok((oid, edit))
 }
 
 /// Validation cho token của DocumentServer: nó ký cả payload JSON, KHÔNG có exp.
@@ -125,27 +135,31 @@ pub async fn config(
     let path = clean_path(&b.path).map_err(AppError::from)?;
     let (file_type, document_type) =
         doc_type(&path).ok_or_else(|| AppError::BadRequest("loại office này chưa hỗ trợ".into()))?;
-    let meta = s.store.stat(user.id, &path).await?;
+    let (oid, can_edit) = access(&s.db, user.id, b.owner, &path).await?;
+    let meta = s.store.stat(oid, &path).await?;
     if meta.is_dir() {
         return Err(AppError::BadRequest("not a file".into()));
     }
     let mtime = mtime_of(&meta);
     let size = meta.content_length();
-    let key = doc_key(&user.id, &path, mtime, size);
+    let key = doc_key(&oid, &path, mtime, size);
     // DocumentServer tải file + gọi callback: ưu tiên địa chỉ nội bộ (NextKloud public có thể nằm sau lớp đăng nhập).
     let base = std::env::var("ONLYOFFICE_BACKEND_URL").ok().map(|v| v.trim_end_matches('/').to_string()).filter(|v| !v.is_empty()).unwrap_or_else(|| public_base(&headers));
-    let dl = dl_token(user.id, &path, &s.enc)?;
+    let dl = dl_token(oid, &path, &s.enc)?;
 
-    sqlx::query(
-        "INSERT INTO office_docs (key, user_id, path, created_at) VALUES ($1, $2, $3, $4)
-         ON CONFLICT (key) DO UPDATE SET path = EXCLUDED.path",
-    )
-    .bind(&key)
-    .bind(user.id)
-    .bind(&path)
-    .bind(chrono::Utc::now().timestamp())
-    .execute(&s.db)
-    .await?;
+    // chỉ phiên sửa mới có dòng office_docs -> callback lưu vào file của chủ (snapshot + quota chủ)
+    if can_edit {
+        sqlx::query(
+            "INSERT INTO office_docs (key, user_id, path, created_at) VALUES ($1, $2, $3, $4)
+             ON CONFLICT (key) DO UPDATE SET path = EXCLUDED.path",
+        )
+        .bind(&key)
+        .bind(oid)
+        .bind(&path)
+        .bind(chrono::Utc::now().timestamp())
+        .execute(&s.db)
+        .await?;
+    }
 
     let row = load_user(&s.db, user.id).await?;
     let name = path.rsplit('/').next().unwrap_or(&path);
@@ -156,12 +170,13 @@ pub async fn config(
             "key": key,
             "title": name,
             "url": format!("{base}/api/office/file?t={dl}"),
+            "permissions": { "edit": can_edit },
         },
         "documentType": document_type,
         "editorConfig": {
             "callbackUrl": format!("{base}/api/office/callback"),
             "user": { "id": user.id.to_string(), "name": display },
-            "mode": "edit",
+            "mode": if can_edit { "edit" } else { "view" },
             "lang": "vi",
         },
     });

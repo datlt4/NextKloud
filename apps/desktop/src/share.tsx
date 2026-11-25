@@ -1,15 +1,19 @@
-import { For, Show, createResource, createSignal } from "solid-js";
+import { For, Show, Suspense, createResource, createSignal, lazy, onCleanup } from "solid-js";
 import { api, serverOrigin, type Entry, type LinkMeta, type ShareRow, type SharedItem } from "./api";
 import { fmtDate, fmtNum, t } from "./i18n";
 import { errText } from "./fileops";
 import { Icon } from "./icons";
 import { ViewerOverlay } from "./viewers/ViewerOverlay";
+import { extOfName, hasThumb } from "./viewers/kinds";
+
+const PdfThumb = lazy(() => import("./viewers/PdfThumb"));
 
 const expText = (e: number | null) => (!e ? t("sh.forever") : e * 1000 < Date.now() ? t("sh.expired", { d: fmtDate(e) }) : t("sh.until", { d: fmtDate(e) }));
 
-/** Dialog quản lý chia sẻ + link công khai cho 1 file/thư mục của mình. */
-export function ShareDialog(props: { path: string; onClose: () => void; onError: (m: string) => void }) {
-  const [rows, { refetch }] = createResource(() => props.path, (p) => api.shares(p).catch((e) => (props.onError(errText(e)), [] as ShareRow[])));
+/** Dialog quản lý chia sẻ + link công khai cho 1 file/thư mục của mình.
+ *  owner: chia sẻ lại mục người khác chia sẻ cho tôi (quyền ≤ myPerm, không có link công khai). */
+export function ShareDialog(props: { path: string; owner?: string; myPerm?: string; onClose: () => void; onError: (m: string) => void }) {
+  const [rows, { refetch }] = createResource(() => props.path, (p) => api.shares(p, props.owner).catch((e) => (props.onError(errText(e)), [] as ShareRow[])));
   const [user, setUser] = createSignal("");
   const [perm, setPerm] = createSignal("view");
   const [pw, setPw] = createSignal("");
@@ -47,22 +51,23 @@ export function ShareDialog(props: { path: string; onClose: () => void; onError:
             <input value={user()} onInput={(e) => setUser(e.currentTarget.value)} placeholder={t("u.username")} />
             <select value={perm()} onChange={(e) => setPerm(e.currentTarget.value)} title={t("sh.perm")}>
               <option value="view">{t("sh.canView")}</option>
-              <option value="edit">{t("sh.canEdit")}</option>
+              <Show when={!props.owner || props.myPerm === "edit"}><option value="edit">{t("sh.canEdit")}</option></Show>
             </select>
-            <button class="btn primary sm" onClick={() => user().trim() && run(() => api.shareWith(props.path, user().trim(), perm()).then(() => setUser("")))}>{t("c.add")}</button>
+            <button class="btn primary sm" onClick={() => user().trim() && run(() => api.shareWith(props.path, user().trim(), perm(), props.owner).then(() => setUser("")))}>{t("c.add")}</button>
           </div>
           <For each={userShares()} fallback={<p class="muted xs">{t("sh.noShares")}</p>}>
             {(r) => (
               <div class="sh-row">
                 <Icon name="user" size={15} class="ic muted" />
                 <span>{r.target}</span>
-                <span class="muted xs">{r.permission === "edit" ? t("sh.canEdit") : t("sh.canView")} · {expText(r.expires_at)}</span>
+                <span class="muted xs">{r.permission === "edit" ? t("sh.canEdit") : t("sh.canView")} · {expText(r.expires_at)}{r.granted_by && !props.owner ? ` · ${t("sh.via", { name: r.granted_by })}` : ""}</span>
                 <span class="grow" />
                 <button class="icon-btn sm danger" title={t("sh.revoke")} onClick={() => confirm(t("sh.revokeAsk", { name: r.target ?? "" })) && run(() => api.unshare(r.id))}><Icon name="trash" size={13} /></button>
               </div>
             )}
           </For>
         </div>
+        <Show when={!props.owner}>
         <div class="sh-sec">
           <b>{t("sh.pubTitle")}</b>
           <div class="sh-add">
@@ -88,7 +93,8 @@ export function ShareDialog(props: { path: string; onClose: () => void; onError:
             )}
           </For>
         </div>
-        <p class="muted xs">{t("sh.note")}</p>
+        </Show>
+        <p class="muted xs">{props.owner ? t("sh.reshareNote") : t("sh.note")}</p>
       </div>
     </div>
   );
@@ -99,18 +105,41 @@ export function SharedPage(props: { onError: (m: string) => void }) {
   const [list, { refetch }] = createResource(() => api.shared().catch((e) => (props.onError(errText(e)), [] as SharedItem[])), { initialValue: [] });
   const [sel, setSel] = createSignal<SharedItem | null>(null);
   const [view, setView] = createSignal<string | null>(null);
+  const [shareFor, setShareFor] = createSignal<string | null>(null);
   const [prefix, setPrefix] = createSignal("");
+  const [query, setQuery] = createSignal("");
+  // tìm theo tên trong cả mục được chia sẻ (chờ gõ xong 300ms)
+  const [term, setTerm] = createSignal("");
+  let qTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(qTimer));
+  const onQuery = (v: string) => {
+    setQuery(v);
+    clearTimeout(qTimer);
+    qTimer = setTimeout(() => setTerm(v.trim()), 300);
+  };
+  const [hits] = createResource(
+    () => (sel()?.is_dir && term() ? { o: sel()!.owner_id, r: sel()!.path, q: term() } : null),
+    (v) => api.sharedSearch(v.o, v.r, v.q).catch((e) => (props.onError(errText(e)), [] as Entry[])),
+  );
   const abs = () => (prefix() ? `${sel()!.path}/${prefix()}` : sel()!.path);
   const [page, { refetch: refetchFiles }] = createResource(
     () => (sel() ? { o: sel()!.owner_id, p: abs() } : null),
     (v) => api.files(v.p, { sort: "name", desc: false, offset: 0, limit: 200 }, v.o).catch((e) => (props.onError(errText(e)), { entries: [], dirs: 0, files: 0, bytes: 0 })),
   );
   const crumbs = () => prefix().split("/").filter(Boolean);
-  const go = (i: number) => setPrefix(crumbs().slice(0, i).join("/"));
+  const clearQuery = () => {
+    clearTimeout(qTimer);
+    setQuery("");
+    setTerm("");
+  };
+  const go = (i: number) => (clearQuery(), setPrefix(crumbs().slice(0, i).join("/")));
   const pick = (s: SharedItem) => {
     setSel(s);
     setPrefix("");
+    clearQuery();
   };
+  const openDir = (e: Entry) => (clearQuery(), setPrefix(e.path.slice(sel()!.path.length + 1)));
+  const rows = () => (term() ? hits() ?? [] : page()?.entries ?? []);
   const reload = () => {
     refetch();
     refetchFiles();
@@ -158,7 +187,7 @@ export function SharedPage(props: { onError: (m: string) => void }) {
         <div class="kb-boards">
           <For each={list()} fallback={!list.loading && <span class="muted sm">{t("sh.noShared")}</span>}>
             {(s) => (
-              <button class="chip" classList={{ on: sel()?.id === s.id }} onClick={() => pick(s)} title={`${s.owner_name} · ${s.permission === "edit" ? t("sh.canEdit") : t("sh.viewOnly")}`}>
+              <button class="chip" classList={{ on: sel()?.id === s.id }} onClick={() => pick(s)} title={`${s.owner_name} · ${s.permission === "edit" ? t("sh.canEdit") : t("sh.viewOnly")}${s.via ? ` · ${t("sh.via", { name: s.via })}` : ""}`}>
                 {s.owner_name}/{s.path.split("/").pop()}
               </button>
             )}
@@ -171,8 +200,13 @@ export function SharedPage(props: { onError: (m: string) => void }) {
             <button class="link" onClick={() => go(0)}>{sel()!.path.split("/").pop()}</button>
             <For each={crumbs()}>{(c, i) => <><span class="muted">/</span><button class="link" onClick={() => go(i() + 1)}>{c}</button></>}</For>
           </Show>
-          <span class="muted xs">{t("sh.ownerLine", { name: sel()!.owner_name, perm: sel()!.permission === "edit" ? t("sh.canEdit") : t("sh.viewOnly") })}</span>
+          <span class="muted xs">{t("sh.ownerLine", { name: sel()!.owner_name, perm: sel()!.permission === "edit" ? t("sh.canEdit") : t("sh.viewOnly") })}{sel()!.via ? ` · ${t("sh.via", { name: sel()!.via! })}` : ""}</span>
           <span class="grow" />
+          <Show when={sel()!.is_dir}>
+            <input class="sh-search" type="search" value={query()} onInput={(e) => onQuery(e.currentTarget.value)} placeholder={t("sh.search")} />
+            <a class="btn ghost sm" href={api.zipDownloadUrl(abs(), sel()!.owner_id)} download="" title={t("f.zip")}><Icon name="download" size={15} /> zip</a>
+          </Show>
+          <button class="btn ghost sm" onClick={() => setShareFor(abs())} title={t("f.share")}><Icon name="users" size={15} /> {t("f.share")}</button>
           <Show when={canEdit()}>
             <button class="btn ghost sm" onClick={newFolder}><Icon name="plus" size={15} /> {t("sh.mkdir")}</button>
             <button class="btn ghost sm" onClick={() => fileInput.click()}><Icon name="upload" size={15} /> {t("c.upload")}</button>
@@ -180,24 +214,26 @@ export function SharedPage(props: { onError: (m: string) => void }) {
           </Show>
           <button class="btn ghost sm" onClick={() => saveCopy(abs())} title={t("sh.saveDirTip")}><Icon name="copy" size={15} /> {t("sh.saveCopy")}</button>
         </div>
-        <Show when={!page.loading} fallback={<p class="muted pad">{t("c.loading")}</p>}>
+        <Show when={!(term() ? hits.loading : page.loading)} fallback={<p class="muted pad">{t("c.loading")}</p>}>
           <div class="sh-list">
-            <For each={page()?.entries ?? []} fallback={<p class="muted pad">{t("sh.emptyList")}</p>}>
+            <For each={rows()} fallback={<p class="muted pad">{term() ? t("sh.noHits") : t("sh.emptyList")}</p>}>
               {(e) => (
                 <div class="tk-row">
-                  <Icon name={e.is_dir ? "folder" : "file"} size={16} class="ic muted" />
+                  <SharedIcon e={e} owner={sel()!.owner_id} />
                   <div class="tk-main">
                     <b>{relName(e.path)}</b>
                     <span class="muted xs">{e.is_dir ? t("f.dirLabel") : `${fmtNum(e.size)} B`}</span>
                   </div>
                   <Show when={e.is_dir}>
-                    <button class="btn ghost sm" onClick={() => setPrefix(prefix() ? `${prefix()}/${e.name}` : e.name)}>{t("c.open")}</button>
+                    <button class="btn ghost sm" onClick={() => openDir(e)}>{t("c.open")}</button>
+                    <a class="btn ghost sm" href={api.zipDownloadUrl(e.path, sel()!.owner_id)} download="" title={t("f.zip")}><Icon name="download" size={14} /></a>
                   </Show>
                   <Show when={!e.is_dir}>
                     <button class="btn ghost sm" onClick={() => setView(e.path)}><Icon name="file" size={14} /> {t("c.open")}</button>
                     <button class="btn ghost sm" onClick={() => dl(e)}><Icon name="download" size={14} /> {t("sh.dl")}</button>
                     <button class="btn ghost sm" onClick={() => saveCopy(e.path)} title={t("sh.saveTip")}><Icon name="copy" size={14} /></button>
                   </Show>
+                  <button class="btn ghost sm" onClick={() => setShareFor(e.path)} title={t("f.share")}><Icon name="users" size={14} /></button>
                   <Show when={canEdit()}>
                     <button class="icon-btn sm danger" title={t("sh.delTip")} onClick={() => confirm(t("sh.delAsk", { name: e.name })) && run(() => api.remove(e.path, sel()!.owner_id))}><Icon name="trash" size={13} /></button>
                   </Show>
@@ -210,7 +246,29 @@ export function SharedPage(props: { onError: (m: string) => void }) {
       <Show when={view() && sel()}>
         <ViewerOverlay path={view()!} owner={sel()!.owner_id} onClose={() => setView(null)} onError={props.onError} />
       </Show>
+      <Show when={shareFor() && sel()}>
+        <ShareDialog path={shareFor()!} owner={sel()!.owner_id} myPerm={sel()!.permission} onClose={() => setShareFor(null)} onError={props.onError} />
+      </Show>
     </div>
+  );
+}
+
+/** Icon dòng: thumbnail ảnh/video (server) hoặc trang 1 pdf (pdf.js, file ≤ 20MB), lỗi thì về icon thường. */
+function SharedIcon(props: { e: Entry; owner: string }) {
+  const [bad, setBad] = createSignal(false);
+  const icon = () => <Icon name={props.e.is_dir ? "folder" : "file"} size={16} class="ic muted" />;
+  if (props.e.is_dir) return icon();
+  if (extOfName(props.e.name) === "pdf" && props.e.size <= 20 * 1024 * 1024) {
+    return (
+      <Show when={!bad()} fallback={icon()}>
+        <Suspense fallback={icon()}><PdfThumb url={api.streamUrl(props.e.path, props.owner)} size={40} class="sh-thumb" onFail={() => setBad(true)} /></Suspense>
+      </Show>
+    );
+  }
+  return (
+    <Show when={hasThumb(props.e.name) && !bad()} fallback={icon()}>
+      <img class="sh-thumb" loading="lazy" decoding="async" src={api.thumbUrl(props.e.path, 128, props.owner)} alt="" onError={() => setBad(true)} />
+    </Show>
   );
 }
 
