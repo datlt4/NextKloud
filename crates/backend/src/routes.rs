@@ -176,6 +176,7 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/shares/:id", axum::routing::delete(crate::shares::unshare))
         .route("/api/shared", get(crate::shares::shared_with_me))
         .route("/api/shared/save", post(crate::shares::save_copy))
+        .route("/api/shared/search", get(crate::shares::shared_search))
         // link công khai: không cần đăng nhập
         .route("/api/s/:token", get(crate::shares::link_meta))
         .route("/api/s/:token/list", get(crate::shares::link_list))

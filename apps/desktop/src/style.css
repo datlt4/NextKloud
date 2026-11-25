@@ -961,6 +961,9 @@ details[open] > summary.callout-title::before { transform: rotate(90deg); }
 .sh-row:last-child { border-bottom: 0; }
 .sh-link { flex: 1; min-width: 0; height: 30px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--input); color: var(--text); font: inherit; font-size: 12.5px; }
 .sh-list { padding: 0 12px 12px; }
+.sh-thumb { width: 40px; height: 40px; object-fit: cover; border-radius: 6px; flex: none; background: var(--input); }
+canvas.sh-thumb { object-fit: contain; }
+.sh-search { width: 180px; max-width: 40vw; height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--input); color: var(--text); font: inherit; font-size: 13px; }
 .auth-card.pub { min-width: min(560px, 92vw); }
 .auth-card.pub .sh-row span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* obsidian: sửa inline, embed, backlinks */

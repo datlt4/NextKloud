@@ -37,6 +37,10 @@ struct ShareRow {
     expires_at: Option<i64>,
     #[allow(dead_code)]
     created_at: i64,
+    /// người tạo share (None = chủ file), Some = chia sẻ lại
+    granted_by: Option<Uuid>,
+    #[allow(dead_code)]
+    parent_id: Option<Uuid>,
 }
 
 fn expired(r: &ShareRow) -> bool {
@@ -57,8 +61,21 @@ pub async fn resolve(db: &PgPool, me: Uuid, owner: Option<Uuid>, path: &str, nee
     if p.is_empty() {
         return Err(AppError::BadRequest("cần path cụ thể trong thư mục được chia sẻ".into()));
     }
+    match grant(db, me, o, &p).await? {
+        Some(r) if !need_edit || r.permission == "edit" => Ok(o),
+        Some(_) => Err(AppError::Forbidden("bạn chỉ được xem, không được sửa".into())),
+        None => Err(AppError::NotFound("không có quyền truy cập".into())),
+    }
+}
+
+/// Share còn hạn cho `me` phủ path `p` (đã clean) của owner; ưu tiên share có quyền sửa.
+async fn grant(db: &PgPool, me: Uuid, o: Uuid, p: &str) -> Result<Option<ShareRow>, AppError> {
+    // vùng hệ thống (.nextkloud: Bí mật, thumbnail cache...) không bao giờ lộ cho người khác
+    if ops::is_reserved(p) {
+        return Ok(None);
+    }
     let rows: Vec<ShareRow> = sqlx::query_as(
-        "SELECT id, owner, path, is_dir, target_user, token, pass_hash, permission, expires_at, created_at
+        "SELECT id, owner, path, is_dir, target_user, token, pass_hash, permission, expires_at, created_at, granted_by, parent_id
          FROM shares WHERE owner = $1 AND target_user = $2 AND (expires_at IS NULL OR expires_at > $3)",
     )
     .bind(o)
@@ -66,19 +83,16 @@ pub async fn resolve(db: &PgPool, me: Uuid, owner: Option<Uuid>, path: &str, nee
     .bind(now())
     .fetch_all(db)
     .await?;
-    let mut seen_view = false;
-    for r in &rows {
+    let mut hit: Option<ShareRow> = None;
+    for r in rows {
         if p == r.path || p.starts_with(&format!("{}/", r.path)) {
-            if !need_edit || r.permission == "edit" {
-                return Ok(o);
+            if r.permission == "edit" {
+                return Ok(Some(r));
             }
-            seen_view = true;
+            hit = hit.or(Some(r));
         }
     }
-    if seen_view {
-        return Err(AppError::Forbidden("bạn chỉ được xem, không được sửa".into()));
-    }
-    Err(AppError::NotFound("không có quyền truy cập".into()))
+    Ok(hit)
 }
 
 // ---------- owner: quản lý chia sẻ ----------
@@ -89,6 +103,8 @@ pub struct ShareOut {
     pub path: String,
     pub is_dir: bool,
     pub target: Option<String>,
+    /// username người chia sẻ lại (None = chủ file tạo)
+    pub granted_by: Option<String>,
     pub token: Option<String>,
     pub has_password: bool,
     pub permission: String,
@@ -96,19 +112,21 @@ pub struct ShareOut {
     pub created_at: i64,
 }
 
+async fn username(db: &PgPool, u: Option<Uuid>) -> Result<Option<String>, AppError> {
+    let Some(u) = u else { return Ok(None) };
+    let row: Option<(String,)> = sqlx::query_as("SELECT username FROM users WHERE id = $1").bind(u).fetch_optional(db).await?;
+    Ok(row.map(|(n,)| n))
+}
+
 async fn share_out(db: &PgPool, r: ShareRow) -> Result<ShareOut, AppError> {
-    let target = match r.target_user {
-        Some(u) => {
-            let row: Option<(String,)> = sqlx::query_as("SELECT username FROM users WHERE id = $1").bind(u).fetch_optional(db).await?;
-            row.map(|(n,)| n)
-        }
-        None => None,
-    };
+    let target = username(db, r.target_user).await?;
+    let granted_by = username(db, r.granted_by).await?;
     Ok(ShareOut {
         id: r.id,
         path: r.path,
         is_dir: r.is_dir,
         target,
+        granted_by,
         token: r.token,
         has_password: r.pass_hash.is_some(),
         permission: r.permission,
@@ -121,13 +139,27 @@ async fn share_out(db: &PgPool, r: ShareRow) -> Result<ShareOut, AppError> {
 pub struct SharesQuery {
     #[serde(default)]
     pub path: String,
+    /// mục được chia sẻ: chỉ liệt kê các share lại do chính tôi tạo
+    #[serde(default)]
+    pub owner: Option<Uuid>,
 }
 
-/// Các chia sẻ/link của chính mình (lọc theo path nếu có).
+/// Các chia sẻ/link của chính mình (lọc theo path nếu có). Chủ file thấy cả share lại của người nhận.
 pub async fn list_shares(State(s): State<AppState>, user: AuthUser, Query(q): Query<SharesQuery>) -> Result<Json<Vec<ShareOut>>, AppError> {
-    let rows: Vec<ShareRow> = if q.path.is_empty() {
+    let rows: Vec<ShareRow> = if let Some(o) = q.owner.filter(|o| *o != user.id) {
+        let p = ops::user_path(&q.path)?;
         sqlx::query_as(
-            "SELECT id, owner, path, is_dir, target_user, token, pass_hash, permission, expires_at, created_at
+            "SELECT id, owner, path, is_dir, target_user, token, pass_hash, permission, expires_at, created_at, granted_by, parent_id
+             FROM shares WHERE owner = $1 AND path = $2 AND granted_by = $3 ORDER BY created_at DESC",
+        )
+        .bind(o)
+        .bind(p)
+        .bind(user.id)
+        .fetch_all(&s.db)
+        .await?
+    } else if q.path.is_empty() {
+        sqlx::query_as(
+            "SELECT id, owner, path, is_dir, target_user, token, pass_hash, permission, expires_at, created_at, granted_by, parent_id
              FROM shares WHERE owner = $1 ORDER BY created_at DESC LIMIT 200",
         )
         .bind(user.id)
@@ -136,7 +168,7 @@ pub async fn list_shares(State(s): State<AppState>, user: AuthUser, Query(q): Qu
     } else {
         let p = ops::user_path(&q.path)?;
         sqlx::query_as(
-            "SELECT id, owner, path, is_dir, target_user, token, pass_hash, permission, expires_at, created_at
+            "SELECT id, owner, path, is_dir, target_user, token, pass_hash, permission, expires_at, created_at, granted_by, parent_id
              FROM shares WHERE owner = $1 AND path = $2 ORDER BY created_at DESC",
         )
         .bind(user.id)
@@ -157,25 +189,41 @@ pub struct ShareWith {
     pub username: String,
     #[serde(default = "view_perm")]
     pub permission: String,
+    /// chia sẻ lại mục người khác chia sẻ cho tôi
+    #[serde(default)]
+    pub owner: Option<Uuid>,
 }
 fn view_perm() -> String {
     "view".into()
 }
 
-/// Chia sẻ cho 1 user (không chia sẻ cho chính mình, không re-share).
+/// Chia sẻ cho 1 user. owner = người khác -> chia sẻ lại (quyền ≤ quyền mình, hạn theo share gốc).
 pub async fn share_with(State(s): State<AppState>, user: AuthUser, Json(b): Json<ShareWith>) -> Result<(StatusCode, Json<ShareOut>), AppError> {
     if b.permission != "view" && b.permission != "edit" {
         return Err(AppError::BadRequest("permission phải là view hoặc edit".into()));
     }
     let p = ops::user_path(&b.path)?;
-    let is_dir = ops::kind(&s.db, user.id, &p).await?.ok_or_else(|| AppError::NotFound("not found".into()))?;
+    let o = b.owner.unwrap_or(user.id);
+    let parent = if o == user.id {
+        None
+    } else {
+        let g = grant(&s.db, user.id, o, &p).await?.ok_or_else(|| AppError::NotFound("không có quyền truy cập".into()))?;
+        if b.permission == "edit" && g.permission != "edit" {
+            return Err(AppError::Forbidden("bạn chỉ được xem nên chỉ chia sẻ lại được quyền xem".into()));
+        }
+        Some(g)
+    };
+    let is_dir = ops::kind(&s.db, o, &p).await?.ok_or_else(|| AppError::NotFound("not found".into()))?;
     let target: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM users WHERE username = $1").bind(b.username.trim()).fetch_optional(&s.db).await?;
     let (tid,) = target.ok_or_else(|| AppError::NotFound("không có user này".into()))?;
     if tid == user.id {
         return Err(AppError::BadRequest("không thể chia sẻ cho chính mình".into()));
     }
+    if tid == o {
+        return Err(AppError::BadRequest("người này là chủ file".into()));
+    }
     let dup: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM shares WHERE owner = $1 AND path = $2 AND target_user = $3")
-        .bind(user.id)
+        .bind(o)
         .bind(&p)
         .bind(tid)
         .fetch_optional(&s.db)
@@ -184,17 +232,20 @@ pub async fn share_with(State(s): State<AppState>, user: AuthUser, Json(b): Json
         return Err(AppError::Conflict("đã chia sẻ cho user này".into()));
     }
     let r: ShareRow = sqlx::query_as(
-        "INSERT INTO shares (id, owner, path, is_dir, target_user, permission, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING id, owner, path, is_dir, target_user, token, pass_hash, permission, expires_at, created_at",
+        "INSERT INTO shares (id, owner, path, is_dir, target_user, permission, created_at, granted_by, parent_id, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id, owner, path, is_dir, target_user, token, pass_hash, permission, expires_at, created_at, granted_by, parent_id",
     )
     .bind(Uuid::new_v4())
-    .bind(user.id)
+    .bind(o)
     .bind(&p)
     .bind(is_dir)
     .bind(tid)
     .bind(b.permission)
     .bind(now())
+    .bind(parent.as_ref().map(|_| user.id))
+    .bind(parent.as_ref().map(|g| g.id))
+    .bind(parent.as_ref().and_then(|g| g.expires_at))
     .fetch_one(&s.db)
     .await?;
     let sharer = crate::state::load_user(&s.db, user.id)
@@ -216,6 +267,7 @@ pub struct NewLink {
 }
 
 /// Tạo link công khai (chỉ xem + tải, kể cả khi path được chia sẻ edit cho user khác).
+/// Chỉ chủ file: người nhận không tạo link được (path luôn tính trong cây của chính mình).
 pub async fn create_link(State(s): State<AppState>, user: AuthUser, Json(b): Json<NewLink>) -> Result<(StatusCode, Json<ShareOut>), AppError> {
     let p = ops::user_path(&b.path)?;
     let is_dir = ops::kind(&s.db, user.id, &p).await?.ok_or_else(|| AppError::NotFound("not found".into()))?;
@@ -243,7 +295,7 @@ pub async fn create_link(State(s): State<AppState>, user: AuthUser, Json(b): Jso
     let r: ShareRow = sqlx::query_as(
         "INSERT INTO shares (id, owner, path, is_dir, token, pass_hash, permission, expires_at, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, 'view', $7, $8)
-         RETURNING id, owner, path, is_dir, target_user, token, pass_hash, permission, expires_at, created_at",
+         RETURNING id, owner, path, is_dir, target_user, token, pass_hash, permission, expires_at, created_at, granted_by, parent_id",
     )
     .bind(Uuid::new_v4())
     .bind(user.id)
@@ -258,9 +310,10 @@ pub async fn create_link(State(s): State<AppState>, user: AuthUser, Json(b): Jso
     Ok((StatusCode::CREATED, Json(share_out(&s.db, r).await?)))
 }
 
-/// Xoá chia sẻ/link của chính mình. Người từng được chia sẻ mất quyền ngay.
+/// Xoá chia sẻ/link (chủ file, hoặc người đã chia sẻ lại). Người từng được chia sẻ mất quyền ngay,
+/// các share lại tạo từ share này cũng mất theo (FK parent_id ON DELETE CASCADE).
 pub async fn unshare(State(s): State<AppState>, user: AuthUser, Path(id): Path<Uuid>) -> Result<StatusCode, AppError> {
-    let n = sqlx::query("DELETE FROM shares WHERE id = $1 AND owner = $2").bind(id).bind(user.id).execute(&s.db).await?.rows_affected();
+    let n = sqlx::query("DELETE FROM shares WHERE id = $1 AND (owner = $2 OR granted_by = $2)").bind(id).bind(user.id).execute(&s.db).await?.rows_affected();
     if n == 0 {
         return Err(AppError::NotFound("share not found".into()));
     }
@@ -278,14 +331,16 @@ pub struct SharedItem {
     pub is_dir: bool,
     pub permission: String,
     pub expires_at: Option<i64>,
+    /// username người chia sẻ lại cho tôi (None = chủ file)
+    pub via: Option<String>,
 }
 
 /// Tất cả file/thư mục người khác chia sẻ cho tôi (còn hạn).
 pub async fn shared_with_me(State(s): State<AppState>, user: AuthUser) -> Result<Json<Vec<SharedItem>>, AppError> {
     Ok(Json(
         sqlx::query_as(
-            "SELECT s.id, s.owner AS owner_id, u.username AS owner_name, s.path, s.is_dir, s.permission, s.expires_at
-             FROM shares s JOIN users u ON u.id = s.owner
+            "SELECT s.id, s.owner AS owner_id, u.username AS owner_name, s.path, s.is_dir, s.permission, s.expires_at, g.username AS via
+             FROM shares s JOIN users u ON u.id = s.owner LEFT JOIN users g ON g.id = s.granted_by
              WHERE s.target_user = $1 AND (s.expires_at IS NULL OR s.expires_at > $2)
              ORDER BY u.username, s.path",
         )
@@ -294,6 +349,26 @@ pub async fn shared_with_me(State(s): State<AppState>, user: AuthUser) -> Result
         .fetch_all(&s.db)
         .await?,
     ))
+}
+
+#[derive(Deserialize)]
+pub struct SharedSearch {
+    pub owner: Uuid,
+    /// thư mục gốc được chia sẻ (hoặc thư mục con của nó)
+    pub root: String,
+    pub q: String,
+    pub limit: Option<i64>,
+}
+
+/// Tìm theo tên trong cây được chia sẻ; chỉ trả path nằm dưới root.
+pub async fn shared_search(State(s): State<AppState>, user: AuthUser, Query(q): Query<SharedSearch>) -> Result<Json<Vec<index::Row>>, AppError> {
+    let root = ops::user_path(&q.root)?;
+    let o = resolve(&s.db, user.id, Some(q.owner), &root, false).await?;
+    let term = q.q.trim();
+    if term.is_empty() {
+        return Ok(Json(vec![]));
+    }
+    Ok(Json(index::search_under(&s.db, o, &root, term, q.limit.unwrap_or(200).clamp(1, 1000)).await?))
 }
 
 #[derive(Deserialize)]
@@ -397,7 +472,7 @@ pub struct LinkQuery {
 
 async fn public_share(db: &PgPool, token: &str, pw: &str) -> Result<ShareRow, AppError> {
     let r: Option<ShareRow> = sqlx::query_as(
-        "SELECT id, owner, path, is_dir, target_user, token, pass_hash, permission, expires_at, created_at FROM shares WHERE token = $1",
+        "SELECT id, owner, path, is_dir, target_user, token, pass_hash, permission, expires_at, created_at, granted_by, parent_id FROM shares WHERE token = $1",
     )
     .bind(token)
     .fetch_optional(db)
@@ -598,7 +673,7 @@ mod tests {
         // chưa share: B không resolve được
         assert!(resolve(&s.db, b, Some(a), "doc/a.txt", false).await.is_err());
         // A share thư mục doc cho B (xem)
-        share_with(State(s.clone()), auth(a), Json(ShareWith { path: "doc".into(), username: format!("sh-{b}"), permission: "view".into() }))
+        share_with(State(s.clone()), auth(a), Json(ShareWith { path: "doc".into(), username: format!("sh-{b}"), permission: "view".into(), owner: None }))
             .await
             .unwrap();
         // B đọc được file bên trong, không sửa được
@@ -607,7 +682,7 @@ mod tests {
         // B không trèo ra ngoài
         assert!(resolve(&s.db, b, Some(a), "other/x".into(), false).await.is_err());
         // A thu hồi: B mất quyền
-        let list = list_shares(State(s.clone()), auth(a), Query(SharesQuery { path: "doc".into() })).await.unwrap();
+        let list = list_shares(State(s.clone()), auth(a), Query(SharesQuery { path: "doc".into(), owner: None })).await.unwrap();
         unshare(State(s.clone()), auth(a), Path(list.0[0].id)).await.unwrap();
         assert!(resolve(&s.db, b, Some(a), "doc/a.txt", false).await.is_err());
     }
@@ -631,5 +706,164 @@ mod tests {
         // hết hạn
         sqlx::query("UPDATE shares SET expires_at = $1 WHERE token = $2").bind(now() - 1).bind(&tok).execute(&s.db).await.unwrap();
         assert!(public_share(&s.db, &tok, "bi-mat-123").await.is_err());
+    }
+
+    async fn new_user(db: &PgPool) -> Uuid {
+        let u = Uuid::new_v4();
+        sqlx::query("INSERT INTO users (id, username, pass_hash) VALUES ($1, $2, 'x')").bind(u).bind(format!("sh-{u}")).execute(db).await.unwrap();
+        u
+    }
+
+    async fn give(s: &AppState, from: Uuid, owner: Option<Uuid>, path: &str, to: Uuid, perm: &str) -> Result<ShareOut, AppError> {
+        let b = ShareWith { path: path.into(), username: format!("sh-{to}"), permission: perm.into(), owner };
+        share_with(State(s.clone()), auth(from), Json(b)).await.map(|r| r.1 .0)
+    }
+
+    async fn add_file(db: &PgPool, u: Uuid, path: &str) {
+        crate::index::add_file(db, u, path, 3, 0).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn resolve_stays_in_subtree() {
+        let Some((s, a, b)) = setup().await else { return };
+        give(&s, a, None, "doc", b, "view").await.unwrap();
+        assert!(resolve(&s.db, b, Some(a), "doc", false).await.is_ok());
+        // "doc2" chỉ trùng tiền tố chuỗi, không nằm trong "doc"
+        assert!(resolve(&s.db, b, Some(a), "doc2/x", false).await.is_err());
+        assert!(resolve(&s.db, b, Some(a), "doc/../other/x", false).await.is_err());
+        assert!(resolve(&s.db, b, Some(a), "", false).await.is_err());
+        // kể cả có dòng share trỏ vào .nextkloud (không tạo được qua API), vùng hệ thống vẫn bị chặn
+        sqlx::query("INSERT INTO shares (id, owner, path, is_dir, target_user, permission, created_at) VALUES ($1, $2, '.nextkloud', TRUE, $3, 'edit', 0)")
+            .bind(Uuid::new_v4())
+            .bind(a)
+            .bind(b)
+            .execute(&s.db)
+            .await
+            .unwrap();
+        assert!(resolve(&s.db, b, Some(a), ".nextkloud/thumbs/x.webp", false).await.is_err());
+        assert!(resolve(&s.db, b, Some(a), ".nextkloud/secret/k", false).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn reshare_rules_and_cascade() {
+        let Some((s, a, b)) = setup().await else { return };
+        let (c, d) = (new_user(&s.db).await, new_user(&s.db).await);
+        // chưa được chia sẻ: không chia sẻ lại được
+        assert!(give(&s, b, Some(a), "doc", c, "view").await.is_err());
+        let ab = give(&s, a, None, "doc", b, "view").await.unwrap();
+        let exp = now() + 3600;
+        sqlx::query("UPDATE shares SET expires_at = $1 WHERE id = $2").bind(exp).bind(ab.id).execute(&s.db).await.unwrap();
+        // quyền xem không nâng lên sửa được
+        assert!(matches!(give(&s, b, Some(a), "doc/a.txt", c, "edit").await, Err(AppError::Forbidden(_))));
+        // không chia sẻ ngoài vùng được cấp, không chia sẻ lại cho chủ file
+        add_file(&s.db, a, "other/x.txt").await;
+        assert!(give(&s, b, Some(a), "other/x.txt", c, "view").await.is_err());
+        assert!(give(&s, b, Some(a), "doc", a, "view").await.is_err());
+        // chia sẻ lại quyền xem: C đọc được, không sửa được, hạn theo share gốc
+        let bc = give(&s, b, Some(a), "doc", c, "view").await.unwrap();
+        assert_eq!(bc.granted_by, Some(format!("sh-{b}")));
+        assert_eq!(bc.expires_at, Some(exp));
+        assert_eq!(resolve(&s.db, c, Some(a), "doc/a.txt", false).await.unwrap(), a);
+        assert!(resolve(&s.db, c, Some(a), "doc/a.txt", true).await.is_err());
+        // C chia tiếp cho D (chuỗi)
+        give(&s, c, Some(a), "doc/a.txt", d, "view").await.unwrap();
+        assert!(resolve(&s.db, d, Some(a), "doc/a.txt", false).await.is_ok());
+        // chủ file thấy mọi share của mục; B chỉ thấy share do B tạo
+        let all = list_shares(State(s.clone()), auth(a), Query(SharesQuery { path: "doc".into(), owner: None })).await.unwrap().0;
+        assert_eq!(all.len(), 2);
+        let mine = list_shares(State(s.clone()), auth(b), Query(SharesQuery { path: "doc".into(), owner: Some(a) })).await.unwrap().0;
+        assert_eq!(mine.iter().map(|r| r.id).collect::<Vec<_>>(), vec![bc.id]);
+        // C không thu hồi được share của B; người nhận không tạo link công khai được
+        assert!(unshare(State(s.clone()), auth(c), Path(ab.id)).await.is_err());
+        assert!(create_link(State(s.clone()), auth(b), Json(NewLink { path: "doc".into(), password: String::new(), expires_in_days: None })).await.is_err());
+        // chủ thu hồi share của B -> C, D mất quyền theo
+        unshare(State(s.clone()), auth(a), Path(ab.id)).await.unwrap();
+        assert!(resolve(&s.db, b, Some(a), "doc/a.txt", false).await.is_err());
+        assert!(resolve(&s.db, c, Some(a), "doc/a.txt", false).await.is_err());
+        assert!(resolve(&s.db, d, Some(a), "doc/a.txt", false).await.is_err());
+        let left: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM shares WHERE owner = $1").bind(a).fetch_one(&s.db).await.unwrap();
+        assert_eq!(left.0, 0);
+    }
+
+    #[tokio::test]
+    async fn reshare_edit_and_self_revoke() {
+        let Some((s, a, b)) = setup().await else { return };
+        let c = new_user(&s.db).await;
+        give(&s, a, None, "doc", b, "edit").await.unwrap();
+        let bc = give(&s, b, Some(a), "doc", c, "edit").await.unwrap();
+        assert!(resolve(&s.db, c, Some(a), "doc/a.txt", true).await.is_ok());
+        // B tự thu hồi share mình đã tạo
+        unshare(State(s.clone()), auth(b), Path(bc.id)).await.unwrap();
+        assert!(resolve(&s.db, c, Some(a), "doc/a.txt", false).await.is_err());
+        assert!(resolve(&s.db, b, Some(a), "doc/a.txt", true).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn shared_search_scoped() {
+        let Some((s, a, b)) = setup().await else { return };
+        for p in ["doc/report-1.txt", "doc/sub/report-2.txt", "doc2/report.txt", "other/report.txt", "doc/.h/report.txt"] {
+            add_file(&s.db, a, p).await;
+        }
+        let q = |root: &str| Query(SharedSearch { owner: a, root: root.into(), q: "report".into(), limit: None });
+        assert!(shared_search(State(s.clone()), auth(b), q("doc")).await.is_err());
+        give(&s, a, None, "doc", b, "view").await.unwrap();
+        let mut got: Vec<String> = shared_search(State(s.clone()), auth(b), q("doc")).await.unwrap().0.into_iter().map(|r| r.path).collect();
+        got.sort();
+        assert_eq!(got, vec!["doc/report-1.txt", "doc/sub/report-2.txt"]);
+        let sub: Vec<String> = shared_search(State(s.clone()), auth(b), q("doc/sub")).await.unwrap().0.into_iter().map(|r| r.path).collect();
+        assert_eq!(sub, vec!["doc/sub/report-2.txt"]);
+        assert!(shared_search(State(s.clone()), auth(b), q("doc2")).await.is_err());
+        assert!(shared_search(State(s.clone()), auth(b), q("doc/..")).await.is_err());
+        assert!(shared_search(State(s.clone()), auth(b), q("")).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn office_access_follows_permission() {
+        let Some((s, a, b)) = setup().await else { return };
+        assert!(crate::office::access(&s.db, b, Some(a), "doc/a.docx").await.is_err());
+        let ab = give(&s, a, None, "doc", b, "view").await.unwrap();
+        assert_eq!(crate::office::access(&s.db, b, Some(a), "doc/a.docx").await.unwrap(), (a, false));
+        unshare(State(s.clone()), auth(a), Path(ab.id)).await.unwrap();
+        give(&s, a, None, "doc", b, "edit").await.unwrap();
+        assert_eq!(crate::office::access(&s.db, b, Some(a), "doc/a.docx").await.unwrap(), (a, true));
+        assert_eq!(crate::office::access(&s.db, a, None, "doc/a.docx").await.unwrap(), (a, true));
+    }
+
+    #[tokio::test]
+    async fn thumb_and_zip_need_share() {
+        use image::ImageEncoder as _;
+        let Some((mut s, a, b)) = setup().await else { return };
+        s.store = crate::files::tests::tmp_store(&format!("sh-{a}")).0;
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png).write_image(&[255u8, 0, 0, 255].repeat(16), 4, 4, image::ExtendedColorType::Rgba8).unwrap();
+        s.store.op.write(&format!("{a}/doc/p.png"), png).await.unwrap();
+        s.store.op.write(&format!("{a}/doc/a.txt"), b"abc".to_vec()).await.unwrap();
+        s.store.op.write(&format!("{a}/other/q.png"), b"x".to_vec()).await.unwrap();
+        add_file(&s.db, a, "other/q.png").await;
+        let tok = crate::auth::create_jwt(b, false, &s.enc).unwrap();
+        let mut h = HeaderMap::new();
+        h.insert(header::AUTHORIZATION, format!("Bearer {tok}").parse().unwrap());
+        let q = |pairs: &[(&str, String)]| Query(pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect::<HashMap<_, _>>());
+        let thumb = |p: &str| crate::thumb::thumb(State(s.clone()), h.clone(), Path(p.to_string()), q(&[("owner", a.to_string())]));
+        let zip = |p: &str| crate::zip::download_dir(State(s.clone()), h.clone(), q(&[("owner", a.to_string()), ("path", p.to_string())]));
+        // chưa chia sẻ: bị chặn
+        assert!(thumb("doc/p.png").await.is_err());
+        assert!(zip("doc").await.is_err());
+        give(&s, a, None, "doc", b, "view").await.unwrap();
+        assert_eq!(thumb("doc/p.png").await.unwrap().status(), StatusCode::OK);
+        // thumbnail đã cache trong cây của A, nhưng B không đọc thẳng được cache / file ngoài vùng
+        let hash = {
+            let m = s.store.stat(a, "doc/p.png").await.unwrap();
+            crate::thumb::thumb_key(&a, "doc/p.png", crate::files::mtime_of(&m), m.content_length(), 256)
+        };
+        assert!(s.store.op.stat(&format!("{a}/.nextkloud/thumbs/{hash}.webp")).await.is_ok());
+        assert!(thumb(&format!(".nextkloud/thumbs/{hash}.webp")).await.is_err());
+        assert!(thumb("other/q.png").await.is_err());
+        // zip: chỉ đúng thư mục được chia sẻ
+        let res = zip("doc").await.unwrap();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        assert!(body.windows(5).any(|w| w == b"a.txt") && body.windows(3).any(|w| w == b"abc"));
+        assert!(zip("other").await.is_err());
+        assert!(zip("").await.is_err());
     }
 }

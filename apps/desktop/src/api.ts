@@ -158,6 +158,8 @@ export interface ShareRow {
   path: string;
   is_dir: boolean;
   target: string | null;
+  /** người nhận đã chia sẻ lại (null = chủ file tạo) */
+  granted_by: string | null;
   token: string | null;
   has_password: boolean;
   permission: string;
@@ -172,6 +174,8 @@ export interface SharedItem {
   is_dir: boolean;
   permission: string;
   expires_at: number | null;
+  /** người chia sẻ lại cho tôi (null = chủ file) */
+  via: string | null;
 }
 export interface Backlink {
   path: string;
@@ -396,18 +400,20 @@ export const api = {
     await this.upload(path, new Blob([text], { type: "text/plain;charset=utf-8" }));
   },
   /** URL stream trực tiếp (kèm ?t= cho <video>/<audio>/<img> không gửi được Bearer). */
-  streamUrl(path: string) {
+  streamUrl(path: string, owner?: string) {
     const t = token();
-    return `${serverOrigin()}${fileUrl(path)}?t=${encodeURIComponent(t ?? "")}${vtQ(path)}${ownQ(path, "&")}`;
+    return `${serverOrigin()}${fileUrl(path)}?t=${encodeURIComponent(t ?? "")}${vtQ(path)}${owner ? `&owner=${encodeURIComponent(owner)}` : ownQ(path, "&")}`;
   },
-  thumbUrl(path: string, s = 256) {
+  /** owner: thumbnail file người khác chia sẻ (mặc định theo file đang xem trong ViewerOverlay). */
+  thumbUrl(path: string, s = 256, owner?: string) {
     const t = token();
     const base = isSecret(path) ? `/api/secret/thumb/${encPath(sRel(path))}` : `/api/thumb/${encPath(path)}`;
-    return `${serverOrigin()}${base}?s=${s}&t=${encodeURIComponent(t ?? "")}${vtQ(path)}`;
+    return `${serverOrigin()}${base}?s=${s}&t=${encodeURIComponent(t ?? "")}${vtQ(path)}${owner ? `&owner=${encodeURIComponent(owner)}` : ownQ(path, "&")}`;
   },
   async officeConfig(path: string) {
     const sec = isSecret(path); // file bí mật: chỉ xem
-    const r = await req(sec ? "/api/secret/office/config" : "/api/office/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: sec ? sRel(path) : path }) });
+    const owner = !sec && viewOwner ? { owner: viewOwner } : {}; // file được chia sẻ: server quyết xem/sửa theo quyền
+    const r = await req(sec ? "/api/secret/office/config" : "/api/office/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: sec ? sRel(path) : path, ...owner }) });
     return r.json() as Promise<{ config: any; token: string }>;
   },
   async zipList(path: string, limit = 20000) {
@@ -518,11 +524,14 @@ export const api = {
     return (await req("/api/kanban/import/deck", { method: "POST", headers: JSON_H, body: JSON.stringify({ board_id, parents, skip_stacks }) })).json() as Promise<{ board: string; cards: number; subtasks: number }>;
   },
   // --- chia sẻ ---
-  async shares(path?: string) {
-    return (await req(path ? `/api/shares?path=${encodeURIComponent(path)}` : "/api/shares")).json() as Promise<ShareRow[]>;
+  /** owner: mục được chia sẻ cho tôi -> chỉ các share lại do tôi tạo. */
+  async shares(path?: string, owner?: string) {
+    const q = new URLSearchParams({ ...(path ? { path } : {}), ...(owner ? { owner } : {}) }).toString();
+    return (await req(`/api/shares${q ? `?${q}` : ""}`)).json() as Promise<ShareRow[]>;
   },
-  async shareWith(path: string, username: string, permission: string) {
-    return (await req("/api/shares", { method: "POST", headers: JSON_H, body: JSON.stringify({ path, username, permission }) })).json() as Promise<ShareRow>;
+  /** owner: chia sẻ lại mục người khác chia sẻ cho tôi (quyền ≤ quyền của tôi). */
+  async shareWith(path: string, username: string, permission: string, owner?: string) {
+    return (await req("/api/shares", { method: "POST", headers: JSON_H, body: JSON.stringify({ path, username, permission, ...(owner ? { owner } : {}) }) })).json() as Promise<ShareRow>;
   },
   async unshare(id: string) {
     await req(`/api/shares/${id}`, { method: "DELETE" });
@@ -538,6 +547,10 @@ export const api = {
   },
   async shared() {
     return (await req("/api/shared")).json() as Promise<SharedItem[]>;
+  },
+  /** Tìm theo tên trong cây được chia sẻ (root = gốc mục được chia sẻ). */
+  async sharedSearch(owner: string, root: string, q: string) {
+    return (await req(`/api/shared/search?${new URLSearchParams({ owner, root, q })}`)).json() as Promise<Entry[]>;
   },
   async saveCopy(owner: string, path: string, to: string) {
     return (await req("/api/shared/save", { method: "POST", headers: JSON_H, body: JSON.stringify({ owner, path, to }) })).json() as Promise<{ files: number }>;
@@ -773,9 +786,9 @@ export const api = {
     return r.text();
   },
   /** Link tải cả thư mục thành zip (stream trực tiếp, không qua RAM). */
-  zipDownloadUrl(path: string) {
+  zipDownloadUrl(path: string, owner?: string) {
     const t = token();
-    return `${serverOrigin()}/api/zip/download?path=${encodeURIComponent(path)}&t=${encodeURIComponent(t ?? "")}`;
+    return `${serverOrigin()}/api/zip/download?path=${encodeURIComponent(path)}&t=${encodeURIComponent(t ?? "")}${owner ? `&owner=${encodeURIComponent(owner)}` : ""}`;
   },
   /** Link tải trực tiếp (token 10 phút, chỉ cho file này): trình duyệt stream xuống đĩa, không qua RAM. */
   async directDownloadUrl(path: string): Promise<string> {

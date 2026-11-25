@@ -303,10 +303,12 @@ pub async fn download_dir(
     let user = auth_opt(&headers, &q, &s).await.ok_or_else(|| AppError::Auth("missing token".into()))?;
     let raw = q.get("path").cloned().unwrap_or_default();
     let prefix = if raw.trim().is_empty() { String::new() } else { crate::ops::user_path(&raw)? };
+    // thư mục người khác chia sẻ: cần quyền xem trên đúng prefix (gốc "" thì resolve từ chối)
+    let oid = crate::shares::resolve(&s.db, user.id, q.get("owner").and_then(|v| v.parse().ok()), &prefix, false).await?;
     let like = format!("{}/%", crate::index::like_escape(&prefix));
     let files: Vec<(String, i64, i64)> = if prefix.is_empty() {
         sqlx::query_as("SELECT path, size, modified FROM files WHERE user_id = $1 AND NOT is_dir AND path NOT LIKE '.nextkloud/%' ORDER BY path LIMIT 200001")
-            .bind(user.id)
+            .bind(oid)
             .fetch_all(&s.db)
             .await?
     } else {
@@ -314,7 +316,7 @@ pub async fn download_dir(
             "SELECT path, size, modified FROM files WHERE user_id = $1 AND NOT is_dir AND path NOT LIKE '.nextkloud/%'
              AND (path = $2 OR path LIKE $3) ORDER BY path LIMIT 200001",
         )
-        .bind(user.id)
+        .bind(oid)
         .bind(&prefix)
         .bind(&like)
         .fetch_all(&s.db)
@@ -329,7 +331,7 @@ pub async fn download_dir(
     }
     if files.is_empty() {
         // phân biệt thư mục rỗng (zip chỉ có entry thư mục) với path không tồn tại
-        if prefix.is_empty() || crate::ops::kind(&s.db, user.id, &prefix).await?.is_none() {
+        if prefix.is_empty() || crate::ops::kind(&s.db, oid, &prefix).await?.is_none() {
             return Err(AppError::NotFound("thư mục trống hoặc không tồn tại".into()));
         }
     }
@@ -384,7 +386,7 @@ pub async fn download_dir(
 
     let (tx, rx) = futures::channel::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(8);
     let op = s.store.op.clone();
-    let uid = user.id;
+    let uid = oid;
     tokio::spawn(async move {
         if let Err(e) = zip_range(&op, uid, &entries, &lay, a, b, tx.clone()).await {
             let _ = tx.clone().try_send(Err(std::io::Error::new(std::io::ErrorKind::Other, format!("{e:?}"))));
