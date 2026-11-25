@@ -118,6 +118,7 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/vault/outline", get(f::vault_outline))
         .route("/api/vault/backlinks", get(f::vault_backlinks))
         .route("/api/mkdir", post(f::mkdir))
+        .route("/api/sync/list", get(f::sync_list))
         .route("/api/dl", post(f::dl_token))
         .route("/api/annotations", get(crate::notes::list).post(crate::notes::create))
         .route("/api/annotations/:id", axum::routing::patch(crate::notes::update).delete(crate::notes::remove))

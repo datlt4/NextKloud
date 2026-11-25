@@ -8,7 +8,7 @@ const repoName = (url: string) => {
   const last = url.replace(/\/+$/, "").split(/[/:]/).pop() ?? "repo";
   return last.replace(/\.git$/, "") || "repo";
 };
-const ago = (s: number | null) => {
+export const ago = (s: number | null) => {
   if (!s) return t("git.never");
   const d = Math.max(0, Date.now() / 1000 - s);
   if (d < 60) return t("git.justNow");

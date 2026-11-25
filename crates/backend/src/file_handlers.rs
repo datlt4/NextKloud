@@ -104,6 +104,30 @@ pub async fn search_files(
     Ok(Json(index::search(&s.db, user.id, term, q.limit.unwrap_or(200).clamp(1, 1000)).await?))
 }
 
+#[derive(Deserialize)]
+pub struct SyncListQuery {
+    #[serde(default)]
+    pub prefix: String,
+    #[serde(default)]
+    pub cursor: String,
+    pub limit: Option<i64>,
+}
+
+/// Liệt kê đệ quy cả cây dưới `prefix` cho app desktop đồng bộ (phân trang bằng cursor).
+pub async fn sync_list(
+    State(s): State<AppState>,
+    user: AuthUser,
+    Query(q): Query<SyncListQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let prefix = clean_path(&q.prefix)?;
+    if !prefix.is_empty() && ops::kind(&s.db, user.id, &prefix).await? != Some(true) {
+        return Err(AppError::NotFound("folder not found".into()));
+    }
+    let limit = q.limit.unwrap_or(5000).clamp(1, 10_000);
+    let (entries, next) = index::sync_list(&s.db, user.id, &prefix, &q.cursor, limit).await?;
+    Ok(Json(serde_json::json!({ "entries": entries, "next": next })))
+}
+
 /// Parse "bytes=a-b" | "bytes=a-" | "bytes=-n" -> [start, end). None = không hợp lệ/không có.
 pub fn parse_range(h: &str, size: u64) -> Option<(u64, u64)> {
     let r = h.strip_prefix("bytes=")?;

@@ -9,14 +9,16 @@ import { LookPanel } from "./look";
 import UsersAdmin from "./UsersAdmin";
 import { installUpdate, restartApp, checkUpdate, updateState } from "./updater";
 import { GitPanel } from "./gitsync";
+import { FolderSyncPanel } from "./foldersync";
 
-export type SettingsTab = "profile" | "security" | "look" | "git" | "users" | "system";
+export type SettingsTab = "profile" | "security" | "look" | "git" | "sync" | "users" | "system";
 
-const TABS: { id: SettingsTab; icon: string; admin?: boolean }[] = [
+const TABS: { id: SettingsTab; icon: string; admin?: boolean; desktop?: boolean }[] = [
   { id: "profile", icon: "user" },
   { id: "security", icon: "key" },
   { id: "look", icon: "palette" },
   { id: "git", icon: "code" },
+  { id: "sync", icon: "cloud", desktop: true },
   { id: "users", icon: "users", admin: true },
   { id: "system", icon: "server", admin: true },
 ];
@@ -30,7 +32,7 @@ export default function Settings(props: {
   onError: (m: string) => void;
   onOpen: (folder: string) => void;
 }) {
-  const tabs = () => TABS.filter((t) => !t.admin || props.me.is_admin);
+  const tabs = () => TABS.filter((t) => (!t.admin || props.me.is_admin) && (!t.desktop || isTauri()));
   return (
     <div class="settings">
       <nav class="set-nav">
@@ -68,6 +70,9 @@ export default function Settings(props: {
         </Show>
         <Show when={props.tab === "git"}>
           <GitPanel onOpen={props.onOpen} onError={props.onError} />
+        </Show>
+        <Show when={props.tab === "sync" && isTauri()}>
+          <FolderSyncPanel onOpen={props.onOpen} />
         </Show>
         <Show when={props.tab === "users" && props.me.is_admin}>
           <UsersAdmin meId={props.me.id} onError={props.onError} onChanged={() => api.me().then(props.onMe).catch(() => {})} />
