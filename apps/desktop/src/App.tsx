@@ -137,6 +137,7 @@ export default function App() {
   };
   const [setTab, setSetTab] = createSignal<SettingsTab>("profile");
   const [trackerTab, setTrackerTab] = createSignal<"tasks" | "habits">("tasks");
+  const [taskCal, setTaskCal] = createSignal(false); // Tracker: lịch tuần (#/tasks/week)
   const openSettings = (t: SettingsTab) => {
     setSetTab(t);
     setPage("settings");
@@ -312,7 +313,7 @@ export default function App() {
     if (pg === "kanban") return boardId() ? `#/kanban/${boardId()}` : "#/kanban";
     // khu Bí mật: không đưa tên file/thư mục vào URL + lịch sử trình duyệt
     if (pg === "secret" || pg === "secret-trash" || isSecret(prefix()) || isSecret(open()?.path ?? "")) return "#/secret";
-    if (pg === "tasks") return trackerTab() === "habits" ? "#/tasks/habits" : "#/tasks";
+    if (pg === "tasks") return trackerTab() === "habits" ? "#/tasks/habits" : taskCal() ? "#/tasks/week" : "#/tasks";
     if (pg !== "files") return `#/${pg}`;
     const o = open();
     if (o) return `#/o/${encP(o.path)}`;
@@ -390,7 +391,7 @@ export default function App() {
       else if (m?.[1] === "f") await load(rest);
       else if (m?.[1] === "o" && rest) await openAt(rest, "");
       else if (m?.[1] === "notes" || m?.[1] === "trash" || m?.[1] === "shared") setPage(m[1]);
-      else if (m?.[1] === "tasks") { setPage("tasks"); setTrackerTab(rest === "habits" ? "habits" : "tasks"); }
+      else if (m?.[1] === "tasks") { setPage("tasks"); setTrackerTab(rest === "habits" ? "habits" : "tasks"); setTaskCal(rest === "week"); }
       else if (m?.[1] === "kanban") {
         // deep-link task: #/kanban/<board>#<id task> (id đầy đủ hoặc 8 ký tự đầu)
         const [bid, frag] = rest.split("#");
@@ -1408,7 +1409,7 @@ export default function App() {
                     <button class="icon-btn sm" onClick={() => setErr("")}><Icon name="close" size={14} /></button>
                   </div>
                 </Show>
-                <TrackerPage tab={trackerTab()} onTab={setTrackerTab} onError={setErr} />
+                <TrackerPage tab={trackerTab()} onTab={setTrackerTab} cal={taskCal()} onCal={setTaskCal} onError={setErr} />
               </Show>
               <Show when={page() === "trash"}>
                 <Show when={err()}>

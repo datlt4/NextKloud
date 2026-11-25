@@ -12,7 +12,7 @@ const todayStr = () => dayStr(new Date());
 
 const VIEWS: TaskView[] = ["overdue", "today", "week", "all", "done"];
 
-export function TrackerPage(props: { tab: "tasks" | "habits"; onTab: (t: "tasks" | "habits") => void; onError: (m: string) => void }) {
+export function TrackerPage(props: { tab: "tasks" | "habits"; onTab: (t: "tasks" | "habits") => void; cal: boolean; onCal: (on: boolean) => void; onError: (m: string) => void }) {
   const tab = () => props.tab;
   const setTab = props.onTab;
   return (
@@ -27,7 +27,7 @@ export function TrackerPage(props: { tab: "tasks" | "habits"; onTab: (t: "tasks"
       <div class="tk-cols">
         <div class="tk-col tk-col-tasks">
           <h3 class="tk-col-title">{t("tk.tasks")}</h3>
-          <TasksView onError={props.onError} />
+          <TasksView cal={props.cal} onCal={props.onCal} onError={props.onError} />
         </div>
         <div class="tk-col tk-col-habits">
           <h3 class="tk-col-title">{t("tk.habits")}</h3>
@@ -38,9 +38,11 @@ export function TrackerPage(props: { tab: "tasks" | "habits"; onTab: (t: "tasks"
   );
 }
 
-function TasksView(props: { onError: (m: string) => void }) {
+function TasksView(props: { cal: boolean; onCal: (on: boolean) => void; onError: (m: string) => void }) {
   const [view, setView] = createSignal<TaskView>("all");
-  const [items, { refetch }] = createResource(view, (v) => api.tasks(v).catch((e) => (props.onError(errText(e)), [] as TaskItem[])), { initialValue: [] });
+  // đang xem lịch tuần thì không tải list; ver tăng để lịch tải lại sau khi sửa trong drawer
+  const [ver, setVer] = createSignal(0);
+  const [items, { refetch }] = createResource(() => !props.cal && view(), (v) => api.tasks(v).catch((e) => (props.onError(errText(e)), [] as TaskItem[])), { initialValue: [] });
   // mở task ngay tại Tracker (không nhảy sang Deck) + xem file đính kèm tại chỗ
   const [openTask, setOpenTask] = createSignal<{ board: string; card: string } | null>(null);
   const [viewPath, setViewPath] = createSignal<string | null>(null);
@@ -57,12 +59,17 @@ function TasksView(props: { onError: (m: string) => void }) {
     <div>
       <div class="tk-views">
         <For each={VIEWS}>
-          {(v) => <button class="chip" classList={{ on: view() === v }} onClick={() => setView(v)}>{t(`tk.${v}`)}</button>}
+          {(v) => <button class="chip" classList={{ on: !props.cal && view() === v }} onClick={() => (setView(v), props.onCal(false))}>{t(`tk.${v}`)}</button>}
         </For>
+        <button class="chip" classList={{ on: props.cal }} onClick={() => props.onCal(true)}><Icon name="calendar" size={13} /> {t("tk.calView")}</button>
         <span class="grow" />
-        <button class="btn ghost sm" onClick={() => refetch()} title={t("tk.reload")}><Icon name="menu" size={14} /> {t("tk.reload")}</button>
+        <button class="btn ghost sm" onClick={() => (props.cal ? setVer(ver() + 1) : refetch())} title={t("tk.reload")}><Icon name="menu" size={14} /> {t("tk.reload")}</button>
       </div>
+      <Show when={props.cal}>
+        <WeekCal ver={ver()} onOpen={(it) => setOpenTask({ board: it.board_id, card: it.id })} onError={props.onError} />
+      </Show>
       {/* giữ list khi refetch (không unmount/remount gây blink + mất scroll) */}
+      <Show when={!props.cal}>
       <Show when={groups().length || !items.loading} fallback={<p class="muted pad">{t("c.loading")}</p>}>
         <Show when={items().length} fallback={<div class="empty"><Icon name="check" size={48} /><p>{view() === "done" ? t("tk.emptyDone") : t("tk.emptyOpen")}</p></div>}>
           <For each={groups()}>
@@ -86,12 +93,184 @@ function TasksView(props: { onError: (m: string) => void }) {
           </For>
         </Show>
       </Show>
+      </Show>
       <Show when={openTask()} keyed>
-        {(o) => <TaskDrawer boardId={o.board} cardId={o.card} onClose={() => setOpenTask(null)} onChanged={() => refetch()} onOpenFile={setViewPath} onError={props.onError} />}
+        {(o) => <TaskDrawer boardId={o.board} cardId={o.card} onClose={() => setOpenTask(null)} onChanged={() => (props.cal ? setVer(ver() + 1) : refetch())} onOpenFile={setViewPath} onError={props.onError} />}
       </Show>
       <Show when={viewPath()}>
         {(p) => <ViewerOverlay path={p()} onClose={() => setViewPath(null)} onError={props.onError} />}
       </Show>
+    </div>
+  );
+}
+
+// thứ 2 đầu tuần (YYYY-MM-DD) chứa ngày d
+const monOf = (d: Date) => {
+  const m = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  m.setDate(m.getDate() - ((m.getDay() + 6) % 7));
+  return dayStr(m);
+};
+const addDays = (ds: string, n: number) => {
+  const d = parseDS(ds);
+  d.setDate(d.getDate() + n);
+  return dayStr(d);
+};
+// giờ hạn; 00:00 và 12:00 (ô chọn ngày trong drawer lưu trưa) coi như không có giờ
+const fmtTime = (s: number) => {
+  const d = new Date(s * 1000);
+  const hm = d.getHours() * 60 + d.getMinutes();
+  return hm === 0 || (hm === 720 && !d.getSeconds()) ? "" : d.toLocaleTimeString(loc(), { hour: "2-digit", minute: "2-digit" });
+};
+
+/** Lịch tuần T2–CN: card theo ngày hạn, kéo sang ngày khác để đổi hạn (giữ giờ). */
+function WeekCal(props: { ver: number; onOpen: (it: TaskItem) => void; onError: (m: string) => void }) {
+  const [start, setStart] = createSignal(monOf(new Date()));
+  const days = createMemo(() => [0, 1, 2, 3, 4, 5, 6].map((i) => addDays(start(), i)));
+  const [items, { mutate, refetch }] = createResource(
+    () => [start(), props.ver] as const,
+    ([s]) => api.tasksRange(parseDS(s).getTime() / 1000, parseDS(addDays(s, 7)).getTime() / 1000).catch((e) => (props.onError(errText(e)), [] as TaskItem[])),
+    { initialValue: [] },
+  );
+  const byDay = createMemo(() => {
+    const m = new Map<string, TaskItem[]>();
+    for (const it of items()) {
+      const k = dayStr(new Date(it.due_at! * 1000));
+      m.set(k, [...(m.get(k) ?? []), it]);
+    }
+    return m;
+  });
+  const move = async (it: TaskItem, ds: string) => {
+    const old = new Date(it.due_at! * 1000);
+    const nd = parseDS(ds);
+    nd.setHours(old.getHours(), old.getMinutes(), old.getSeconds());
+    const due = Math.floor(nd.getTime() / 1000);
+    if (due === it.due_at) return;
+    mutate((l) => l.map((x) => (x.id === it.id ? { ...x, due_at: due } : x)));
+    try {
+      await api.updateCard(it.id, { due_at: due });
+    } catch (e) {
+      props.onError(errText(e));
+    }
+    refetch();
+  };
+  // kéo thả như Deck: chuột kéo ngay, cảm ứng nhấn giữ
+  const [dragId, setDragId] = createSignal<string | null>(null);
+  const [over, setOver] = createSignal<string | null>(null);
+  let suppressClick = false;
+  const startDrag = (e: PointerEvent, it: TaskItem, el: HTMLElement) => {
+    if (e.button !== 0) return;
+    const sx = e.clientX, sy = e.clientY, rect = el.getBoundingClientRect();
+    const sc = [el.closest<HTMLElement>(".tk-col"), el.closest<HTMLElement>(".tk-cols")].find((n) => n && n.scrollHeight > n.clientHeight + 1);
+    let ghost: HTMLElement | null = null, timer: number | undefined, tick: number | undefined;
+    let x = sx, y = sy;
+    const dayAt = () => (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>(".tk-wk-day")?.dataset.day ?? null;
+    const place = () => {
+      if (!ghost) return;
+      ghost.style.transform = `translate(${x - (sx - rect.left)}px, ${y - (sy - rect.top)}px) rotate(2deg)`;
+      setOver(dayAt());
+    };
+    const begin = () => {
+      ghost = el.cloneNode(true) as HTMLElement;
+      ghost.classList.add("kb-ghost");
+      ghost.style.width = `${rect.width}px`;
+      document.body.appendChild(ghost);
+      setDragId(it.id);
+      navigator.vibrate?.(15);
+      place();
+      tick = window.setInterval(() => {
+        if (!sc) return;
+        const r = sc.getBoundingClientRect();
+        if (y < r.top + 40) sc.scrollTop -= 12;
+        else if (y > r.bottom - 40) sc.scrollTop += 12;
+        else return;
+        setOver(dayAt());
+      }, 30);
+    };
+    const blockTouch = (ev: TouchEvent) => ghost && ev.preventDefault();
+    const mv = (ev: PointerEvent) => {
+      x = ev.clientX;
+      y = ev.clientY;
+      if (!ghost) {
+        const far = Math.hypot(x - sx, y - sy);
+        if (e.pointerType === "touch") {
+          if (far > 8) cleanup(); // đang cuộn, không phải kéo
+        } else if (far > 5) begin();
+        return;
+      }
+      place();
+    };
+    const up = () => {
+      const target = over();
+      const was = !!ghost;
+      cleanup();
+      if (!was) return;
+      suppressClick = true;
+      setTimeout(() => (suppressClick = false), 50);
+      if (target) void move(it, target);
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      clearInterval(tick);
+      ghost?.remove();
+      ghost = null;
+      setDragId(null);
+      setOver(null);
+      window.removeEventListener("pointermove", mv);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      document.removeEventListener("touchmove", blockTouch);
+    };
+    window.addEventListener("pointermove", mv);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    document.addEventListener("touchmove", blockTouch, { passive: false });
+    if (e.pointerType === "touch") timer = window.setTimeout(begin, 350);
+  };
+  const dm = (ds: string) => `${Number(ds.slice(8, 10))}/${Number(ds.slice(5, 7))}`;
+  const label = () => `${dm(start())} – ${dm(addDays(start(), 6))}/${addDays(start(), 6).slice(0, 4)}`;
+  const late = (it: TaskItem) => !it.done_at && (it.due_at ?? 0) * 1000 < new Date().setHours(0, 0, 0, 0);
+  return (
+    <div class="tk-wk-wrap">
+      <div class="tk-wk-bar">
+        <button class="icon-btn sm" onClick={() => setStart(addDays(start(), -7))} title={t("tk.prevW")}>‹</button>
+        <b>{label()}</b>
+        <button class="icon-btn sm" onClick={() => setStart(addDays(start(), 7))} title={t("tk.nextW")}>›</button>
+        <Show when={start() !== monOf(new Date())}>
+          <button class="btn ghost sm" onClick={() => setStart(monOf(new Date()))}>{t("tk.thisWeek")}</button>
+        </Show>
+        <span class="muted xs">{t("tk.dragTip")}</span>
+      </div>
+      <div class="tk-wk">
+        <For each={days()}>
+          {(ds) => (
+            <div class="tk-wk-day" data-day={ds} classList={{ today: ds === todayStr(), over: over() === ds }}>
+              <div class="tk-wk-head">{parseDS(ds).toLocaleDateString(loc(), { weekday: "short" })} <span>{dm(ds)}</span></div>
+              <For each={byDay().get(ds) ?? []}>
+                {(it) => {
+                  let el!: HTMLDivElement;
+                  return (
+                    <div
+                      ref={el}
+                      class="tk-wk-card"
+                      classList={{ done: !!it.done_at, late: late(it), dragging: dragId() === it.id }}
+                      title={`${it.title} · ${it.board_title} · ${it.column_title}`}
+                      onPointerDown={(e) => startDrag(e, it, el)}
+                      onClick={() => !suppressClick && props.onOpen(it)}
+                    >
+                      <span class="tk-wk-t">{it.title}</span>
+                      <span class="tk-wk-meta muted xs">
+                        <Show when={it.done_at}><Icon name="check" size={11} class="ic kb-done-ic" /></Show>
+                        <Show when={fmtTime(it.due_at!)}>{(tm) => <b class="tk-wk-time">{tm()}</b>}</Show>
+                        <span>{it.board_title}</span>
+                      </span>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
+          )}
+        </For>
+      </div>
     </div>
   );
 }

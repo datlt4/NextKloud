@@ -14,10 +14,22 @@ const today0 = () => {
   d.setHours(0, 0, 0, 0);
   return d.getTime() / 1000;
 };
+// ô checklist như marked vẽ: list lồng, "1. [ ]", trong "> ", phải có chữ sau "]"
+const TASK_RE = /^((?:[ \t]*>)*[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+)\[([ xX])\](?=[ \t]+\S)/;
+/** Duyệt từng ô checklist theo thứ tự (bỏ code fence); f trả dòng mới nếu muốn sửa. */
+const eachTask = (md: string, f: (i: number, done: boolean, pre: string, line: string) => string | void) => {
+  let fence = false, i = -1;
+  return md.split("\n").map((l) => {
+    if (/^[ \t]*(```|~~~)/.test(l)) fence = !fence;
+    const m = fence ? null : TASK_RE.exec(l);
+    return m ? f(++i, m[2] !== " ", m[1], l) ?? l : l;
+  }).join("\n");
+};
 /** Checklist markdown trong mô tả: [đã xong, tổng]. */
 const checklist = (md: string): [number, number] => {
-  const all = md.match(/^\s*[-*+] \[[ xX]\]/gm) ?? [];
-  return [all.filter((l) => /\[[xX]\]/.test(l)).length, all.length];
+  let done = 0, n = 0;
+  eachTask(md, (_i, d) => void (n++, d && done++));
+  return [done, n];
 };
 
 export function KanbanPage(props: { boardId: string | null; onBoard: (id: string | null) => void; onError: (m: string) => void; flashId?: string | null; onFlashed?: () => void }) {
@@ -542,8 +554,7 @@ export function CardDrawer(props: {
   const html = createMemo(() => (marked.parse(k().description || "") as string).replace(/<input (checked="" )?disabled="" type="checkbox">/g, (_m, on) => `<input ${on ? "checked " : ""}type="checkbox">`));
   // Bấm checkbox trong mô tả -> đổi đúng dòng thứ n "[ ]" <-> "[x]".
   const toggleCheck = (n: number) => {
-    let i = -1;
-    const d = k().description.replace(/^(\s*[-*+] )\[([ xX])\]/gm, (m, pre, v) => (++i === n ? `${pre}[${v === " " ? "x" : " "}]` : m));
+    const d = eachTask(k().description, (i, done, pre, l) => (i === n ? `${pre}[${done ? " " : "x"}]${l.slice(pre.length + 3)}` : undefined));
     props.onPatch({ description: d });
   };
   const run = async (f: () => Promise<unknown>) => {

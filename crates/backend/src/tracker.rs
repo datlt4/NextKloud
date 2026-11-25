@@ -41,9 +41,14 @@ pub struct TaskItem {
 
 #[derive(Deserialize)]
 pub struct TaskQuery {
-    /// overdue | today | week | done | all (mặc định overdue)
+    /// overdue | today | week | done | all | range (mặc định overdue)
     #[serde(default)]
     pub view: String,
+    /// view=range: [from, to) epoch giây, client tự tính đầu tuần theo giờ máy
+    #[serde(default)]
+    pub from: Option<i64>,
+    #[serde(default)]
+    pub to: Option<i64>,
 }
 
 pub async fn tasks(State(s): State<AppState>, user: AuthUser, Query(q): Query<TaskQuery>) -> Result<Json<Vec<TaskItem>>, AppError> {
@@ -53,11 +58,16 @@ pub async fn tasks(State(s): State<AppState>, user: AuthUser, Query(q): Query<Ta
         "week" => ("c.due_at >= $2 AND c.due_at < $3 AND c.done_at IS NULL", 300),
         "all" => ("c.done_at IS NULL AND c.due_at IS NOT NULL", 300),
         "done" => ("c.done_at IS NOT NULL AND c.due_at IS NOT NULL", 100),
+        "range" => ("c.due_at >= $2 AND c.due_at < $3", 500), // lịch tuần: gồm cả task đã xong
         _ => ("c.due_at < $2 AND c.done_at IS NULL", 300), // overdue
     };
     let (from, to) = match q.view.as_str() {
         "today" => (t0, t1),
         "week" => (t0, w1),
+        "range" => match (q.from, q.to) {
+            (Some(a), Some(b)) if a < b && b - a <= 62 * 86_400 => (a, b),
+            _ => return Err(AppError::BadRequest("khoảng ngày không hợp lệ (tối đa 62 ngày)".into())),
+        },
         _ => (t0, t0),
     };
     let order = if q.view == "done" { "c.done_at DESC" } else { "c.due_at ASC NULLS LAST" };
@@ -70,7 +80,7 @@ pub async fn tasks(State(s): State<AppState>, user: AuthUser, Query(q): Query<Ta
     );
     let rows: Vec<TaskItem> = if q.view == "all" || q.view == "done" {
         sqlx::query_as(&sql).bind(user.id).fetch_all(&s.db).await?
-    } else if q.view == "today" || q.view == "week" {
+    } else if q.view == "today" || q.view == "week" || q.view == "range" {
         sqlx::query_as(&sql).bind(user.id).bind(from).bind(to).fetch_all(&s.db).await?
     } else {
         // overdue + view lạ (rớt về overdue, khớp cond chỉ dùng $2)
@@ -423,7 +433,7 @@ mod tests {
             tts_url: String::new(),
             vaults: Default::default(),
         };
-        let r = tasks(State(s.clone()), AuthUser { id: u, admin: false }, Query(TaskQuery { view: "overdue".into() })).await.unwrap();
+        let r = tasks(State(s.clone()), AuthUser { id: u, admin: false }, Query(TaskQuery { view: "overdue".into(), from: None, to: None })).await.unwrap();
         assert_eq!(r.0.len(), 1);
         // habit: chấm 2 ngày liên tiếp -> streak 2
         let h = create_habit(State(s.clone()), AuthUser { id: u, admin: false }, Json(NewHabit { title: "chạy".into() })).await.unwrap().1;
@@ -439,5 +449,69 @@ mod tests {
             .unwrap();
         }
         assert_eq!(list_habits(State(s), AuthUser { id: u, admin: false }).await.unwrap().0[0].streak, 2);
+    }
+
+    #[tokio::test]
+    async fn tasks_range_week() {
+        let Some((db, u)) = crate::kanban::tests::db_user().await else { return };
+        let b: (Uuid,) = sqlx::query_as("INSERT INTO boards (id, owner, title, created_at) VALUES ($1, $2, 'B', 0) RETURNING id")
+            .bind(Uuid::new_v4())
+            .bind(u)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        let col = |title: &'static str, cancel: bool| {
+            let db = db.clone();
+            async move {
+                let r: (Uuid,) = sqlx::query_as("INSERT INTO board_columns (id, board_id, title, position, is_cancel) VALUES ($1, $2, $3, 0, $4) RETURNING id")
+                    .bind(Uuid::new_v4())
+                    .bind(b.0)
+                    .bind(title)
+                    .bind(cancel)
+                    .fetch_one(&db)
+                    .await
+                    .unwrap();
+                r.0
+            }
+        };
+        let (todo, del) = (col("Todo", false).await, col("Delete", true).await);
+        let w0 = 1_800_000_000_i64;
+        // (cột, hạn, xong, lưu trữ, tiêu đề)
+        let rows = [(todo, w0, None, false, "open"), (todo, w0 + 86_400, Some(w0), false, "done"), (todo, w0 + 7 * 86_400, None, false, "next"), (todo, w0 - 1, None, false, "prev"), (del, w0, None, false, "cancel"), (todo, w0, None, true, "arch")];
+        for (c, due, done, arch, t) in rows {
+            sqlx::query("INSERT INTO cards (id, board_id, column_id, title, position, due_at, done_at, archived, created_at, updated_at) VALUES ($1,$2,$3,$4,0,$5,$6,$7,0,0)")
+                .bind(Uuid::new_v4())
+                .bind(b.0)
+                .bind(c)
+                .bind(t)
+                .bind(due)
+                .bind(done)
+                .bind(arch)
+                .execute(&db)
+                .await
+                .unwrap();
+        }
+        let (store, _) = crate::files::tests::tmp_store("tracker_range");
+        let s = AppState {
+            db: db.clone(),
+            store,
+            enc: jsonwebtoken::EncodingKey::from_secret(b"t"),
+            dec: jsonwebtoken::DecodingKey::from_secret(b"t"),
+            uploads: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            http: reqwest::Client::new(),
+            tts_url: String::new(),
+            vaults: Default::default(),
+        };
+        let q = |from, to| Query(TaskQuery { view: "range".into(), from, to });
+        let r = tasks(State(s.clone()), AuthUser { id: u, admin: false }, q(Some(w0), Some(w0 + 7 * 86_400))).await.unwrap().0;
+        // [from, to): gồm task đã xong, bỏ cột huỷ + lưu trữ + ngoài tuần
+        assert_eq!(r.iter().map(|t| t.title.as_str()).collect::<Vec<_>>(), ["open", "done"]);
+        // user khác không thấy
+        let (_, other) = crate::kanban::tests::db_user().await.unwrap();
+        assert!(tasks(State(s.clone()), AuthUser { id: other, admin: false }, q(Some(w0), Some(w0 + 7 * 86_400))).await.unwrap().0.is_empty());
+        // thiếu/ngược/quá dài -> 400
+        for (a, z) in [(None, Some(w0)), (Some(w0), Some(w0)), (Some(w0), Some(w0 + 63 * 86_400))] {
+            assert!(matches!(tasks(State(s.clone()), AuthUser { id: u, admin: false }, q(a, z)).await, Err(AppError::BadRequest(_))));
+        }
     }
 }
