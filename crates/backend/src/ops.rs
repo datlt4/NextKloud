@@ -66,6 +66,14 @@ pub(crate) async fn check_parents(db: &PgPool, user: Uuid, path: &str) -> Result
     Ok(())
 }
 
+/// Ghi file vào `path`: không được trùng thư mục có sẵn, không nằm dưới 1 file.
+pub(crate) async fn check_file_target(db: &PgPool, user: Uuid, path: &str) -> Result<(), AppError> {
+    if kind(db, user, path).await? == Some(true) {
+        return Err(AppError::Conflict(format!("'{path}' là thư mục")));
+    }
+    check_parents(db, user, path).await
+}
+
 /// Thư mục chỉ tồn tại trong chỉ mục (S3 không có thư mục rỗng).
 pub async fn mkdir(db: &PgPool, user: Uuid, path: &str) -> Result<(), AppError> {
     match kind(db, user, path).await? {
@@ -120,6 +128,14 @@ pub async fn count_files(db: &PgPool, user: Uuid, path: &str) -> Result<i64, sql
     Ok(n)
 }
 
+/// Mỗi user 1 khoá: move/copy/trash không chạy đè lên nhau (job nền + sync + web cùng lúc).
+static TREE_LOCKS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<Uuid, std::sync::Arc<tokio::sync::Mutex<()>>>>> =
+    std::sync::LazyLock::new(Default::default);
+async fn tree_lock(user: Uuid) -> tokio::sync::OwnedMutexGuard<()> {
+    let m = TREE_LOCKS.lock().unwrap().entry(user).or_default().clone();
+    m.lock_owned().await
+}
+
 /// Đổi tên / di chuyển file hoặc cả thư mục. Trả về số file đã chuyển.
 pub async fn move_path(db: &PgPool, store: &Store, user: Uuid, from: &str, to: &str) -> Result<u64, AppError> {
     move_with(db, store, user, from, to, None, &Progress::default()).await
@@ -141,6 +157,7 @@ pub async fn move_with(
     if to.starts_with(&format!("{from}/")) {
         return Err(AppError::BadRequest("không thể chuyển thư mục vào chính nó".into()));
     }
+    let _g = tree_lock(user).await;
     if check_dest(db, user, from, to, pol).await? {
         return merge(db, store, user, from, to, pol.unwrap(), false, prog).await;
     }
@@ -206,7 +223,7 @@ pub async fn move_with(
                    path = $3 || substr(path, length($2) + 1),
                    parent = CASE WHEN path = $2 THEN $4 ELSE $3 || substr(parent, length($2) + 1) END,
                    name = CASE WHEN path = $2 THEN $5 ELSE name END
-                 WHERE user_id = $1 AND (path = $2 OR path LIKE $6)",
+                 WHERE user_id = $1 AND (path = $2 OR path = ANY($7) OR (is_dir AND path LIKE $6))",
             )
             .bind(user)
             .bind(from)
@@ -214,9 +231,19 @@ pub async fn move_with(
             .bind(tp)
             .bind(tn)
             .bind(&sub)
+            .bind(&files)
             .execute(&mut *tx)
             .await?;
             ensure_dirs(&mut tx, user, &ancestors(to), modified).await?;
+            // file mới ghi vào nguồn trong lúc chuyển (sync/upload) không bị dời: dựng lại thư mục cha cho chúng
+            let left: Vec<(String,)> = sqlx::query_as("SELECT path FROM files WHERE user_id = $1 AND path LIKE $2 AND NOT is_dir")
+                .bind(user)
+                .bind(&sub)
+                .fetch_all(&mut *tx)
+                .await?;
+            for (p,) in &left {
+                ensure_dirs(&mut tx, user, &ancestors(p), modified).await?;
+            }
             crate::notes::move_paths(&mut tx, user, from, to).await?;
             crate::fulltext::move_paths(&mut tx, user, from, to).await?;
         } else {
@@ -307,6 +334,7 @@ pub async fn copy_with(
     if to == from || to.starts_with(&format!("{from}/")) {
         return Err(AppError::BadRequest("không thể sao chép thư mục vào chính nó".into()));
     }
+    let _g = tree_lock(user).await;
     if check_dest(db, user, from, to, pol).await? {
         return merge(db, store, user, from, to, pol.unwrap(), true, prog).await;
     }
@@ -470,8 +498,8 @@ async fn merge(
                         }
                     };
                     match r.map_err(StoreError::from) {
-                        // move: mất trên store từ trước vẫn dời dòng chỉ mục (như move_path)
-                        Err(StoreError::NotFound) if !copy => Ok(()),
+                        // move: mất trên store từ trước vẫn dời dòng chỉ mục (như move_path), trừ khi đè lên file có thật ở đích
+                        Err(StoreError::NotFound) if !copy && old.is_none() => Ok(()),
                         r => r,
                     }
                 }

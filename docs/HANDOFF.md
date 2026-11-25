@@ -1,7 +1,7 @@
 # NextKloud — Handoff (chi tiết)
 
 Tài liệu bàn giao cho agent kế tiếp (review hoặc tiếp quản). Đọc hết file này trước khi sửa code.
-Cập nhật: 2026-11-26 · version 0.1.59 · việc còn lại tổng hợp ở mục 9.0 (bảng "Còn lại 26/11").
+Cập nhật: 2026-11-26 · version 0.1.61 · việc còn lại tổng hợp ở mục 9.0 (bảng "Còn lại 26/11").
 
 > Repo **public**. Không ghi secret, mật khẩu, nội dung file hay nội dung card Kanban của người dùng vào repo (kể cả trong tài liệu này).
 
@@ -332,15 +332,32 @@ git_repos(id, user_id → users CASCADE, url, branch, folder, ssh_key, ssh_pub, 
 
 **Còn lại 26/11 (0.1.59)** — đã xong ở 0.1.56–0.1.59: khoá đăng nhập sai (10 lần/15 phút theo username, RAM), `is_admin` đọc từ DB mỗi request (user bị xoá thì token chết), CORS theo `ALLOWED_ORIGINS`, dọn staging + dòng `uploads` > 7 ngày (mỗi giờ), lịch sử phiên bản (`versions.rs`: `.nextkloud/versions/<path>/<mtime>`, 10 bản/30 ngày, không tính quota, menu file → Phiên bản), SSE dùng vé 1 phút (`POST /api/events/ticket`) + nhắc hạn chỉ khi user đang online, lọc HTML markdown (`sanitize.ts`, hook `marked`), xem inline file được chia sẻ (chỉ xem: md/text/ảnh/video/pdf/epub; Office/zip/drawio tải về), CI job `integration` (Postgres + RustFS service, không chặn Docker), image TTS chỉ build khi `docker/tts/**` đổi, TTS tốc độ mặc định trong Giao diện (`UiSettings.ttsRate`). Backup đêm đã kiểm tra 26/11: chạy đủ 23–25/11, giữ 2 bản.
 
+**Đã làm 26/11 (0.1.61):**
+- Upload:
+  - Tạm dừng/tiếp tục từng file và tất cả; hàng đợi giữ qua F5 bằng IndexedDB (`upqueue.ts`; file >200MB thì chọn lại).
+  - File nhỏ gửi theo lô: `POST /api/files/uploads/batch`.
+- Move/copy thư mục >500 file chạy job nền (`jobs.rs`, `GET /api/jobs/:id`, mất khi restart). Gộp khi trùng tên: overwrite / skip / keep_both. Zip hỗ trợ Range và ETag (bảng CRC lưu trong RAM).
+- Tracker: lịch tuần `#/tasks/week` kéo thả đổi hạn. Nhập Deck chống trùng. Đếm checklist hiểu cả `1. [ ]`.
+- Chia sẻ:
+  - Thumbnail, zip, Office (sửa khi có quyền sửa), tìm kiếm trong mục được chia sẻ.
+  - Re-share: migration `0017_reshare.sql`; thu hồi thì xoá luôn các share con.
+- Đồng bộ 2 chiều trên desktop (`src-tauri/src/sync`, `GET /api/sync/list`, tab Cài đặt → Đồng bộ thư mục):
+  - Quét mỗi 30 giây, so sánh 3 phía.
+  - Chặn xoá hàng loạt (>50 file và >30%).
+  - Chưa test trên máy thật.
+- Sửa sau review:
+  - Khoá theo user cho move/copy.
+  - UPDATE chỉ dời đúng các file đã chuyển.
+  - Move/copy/trash/restore chạy tách khỏi request (client ngắt không cắt ngang).
+  - Chặn upload đè lên thư mục; chặn path trùng trong 1 lô.
+- Backup đêm huỷ multipart S3 bỏ dở quá 24 giờ.
+
 | Còn lại | Ghi chú |
 |---|---|
-| Upload: tạm dừng/chạy tiếp trong panel, hàng đợi qua F5 (IndexedDB), API batch file nhỏ | resume theo (path,size,mtime) đã có |
-| Job nền move/rename thư mục rất lớn + merge khi trùng tên; Range cho zip | zip là stream sinh động, Range cần tính trước layout |
-| Kanban: lịch weekly, nhập board Deck còn lại (deck:1) | checklist trong mô tả đã bấm được |
-| Chia sẻ: thumbnail/zip/Office/search/TTS trên file được chia sẻ, re-share | xem inline cơ bản đã có |
-| Desktop sync 2 chiều | mục lớn nhất (9.6) |
-| Multipart S3 bỏ dở khi process chết | opendal không có API list/abort; cân nhắc lifecycle rule trên RustFS |
-| Phiên bản mồ côi khi đổi tên/xoá file | tự hết sau 30 ngày |
+| Sync: chuẩn hoá Unicode NFC/NFD, phân biệt hoa thường (macOS/Windows) | chưa có crate chuẩn hoá; macOS APFS giữ nguyên tên nên ít gặp |
+| Job nền mất khi restart giữa chừng | đừng deploy khi đang chạy job lớn; cứu bằng `POST /api/admin/reindex/:id` |
+| Upload trong "Được chia sẻ" chưa dùng hàng đợi/lô | backend lô đã hỗ trợ `owner` |
+| Test S3 chập chờn khi chạy song song | client HTTP toàn cục của opendal dùng chung giữa các runtime test; chạy riêng thì qua |
 
 1. **Chia sẻ** (người dùng chốt làm ngay sau Kanban): chia sẻ file/thư mục giữa user (quyền xem/sửa) + link công khai có mật khẩu và hạn, như Google Drive. File trong Bí mật không chia sẻ được. — ✅ xong 0.1.17 (`shares.rs`, `share.tsx`, migration `0014`): share theo username, link public (chỉ xem, MK + hạn), duyệt/tải/upload/sửa trong "Được chia sẻ", "Lưu bản sao" về file mình, link dùng được khi chưa đăng nhập. Chưa làm: xem inline/thumbnail/zip/office/search/TTS trên file được chia sẻ (tải về để xem), re-share.
 2. **Task tracker** (danh sách việc theo hạn, lấy từ card có `due_at`) và **Habit tracker** (lưới ngày, streak) — ✅ xong 0.1.15 (`tracker.rs`, `tracker.tsx`, migration `0013`): task lọc Quá hạn/Hôm nay/7 ngày/Tất cả/Đã xong; habit chấm theo ngày, streak tính tới hôm nay, lưới 12 tuần. Chưa làm: lịch weekly, nhắc hạn (đợi SSE 9.7).

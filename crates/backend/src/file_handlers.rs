@@ -1,5 +1,5 @@
 //! File HTTP handlers. Auth + quota enforced here, bytes via FsStore.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use axum::{
     Json,
@@ -249,7 +249,9 @@ pub async fn delete_file(
 ) -> Result<Json<ops::TrashItem>, AppError> {
     let p = ops::user_path(&path)?;
     let oid = crate::shares::resolve(&s.db, user.id, q.get("owner").and_then(|v| v.parse().ok()), &p, true).await?;
-    Ok(Json(ops::trash(&s.db, &s.store, oid, &p).await?))
+    // chạy tách khỏi request: client ngắt/timeout không cắt ngang việc chuyển vào thùng rác
+    let t = tokio::spawn(async move { ops::trash(&s.db, &s.store, oid, &p).await }).await.map_err(|e| AppError::Internal(e.to_string()))??;
+    Ok(Json(t))
 }
 
 #[derive(Deserialize)]
@@ -310,7 +312,8 @@ async fn xfer(s: AppState, user: AuthUser, b: MoveBody, copy: bool) -> Result<Re
         }
     };
     if !big {
-        let n = run(s.db.clone(), s.store.clone(), Default::default()).await?;
+        // tách khỏi request: client ngắt kết nối không cắt ngang giữa chừng
+        let n = tokio::spawn(run(s.db.clone(), s.store.clone(), Default::default())).await.map_err(|e| AppError::Internal(e.to_string()))??;
         return Ok(Json(serde_json::json!({ "files": n })).into_response());
     }
     let id = crate::jobs::spawn(user.id, move |p| run(s.db.clone(), s.store.clone(), p));
@@ -326,7 +329,8 @@ pub async fn restore_trash(
     user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<ops::TrashItem>, AppError> {
-    Ok(Json(ops::restore(&s.db, &s.store, user.id, id).await?))
+    let t = tokio::spawn(async move { ops::restore(&s.db, &s.store, user.id, id).await }).await.map_err(|e| AppError::Internal(e.to_string()))??;
+    Ok(Json(t))
 }
 
 pub async fn purge_trash(State(s): State<AppState>, user: AuthUser, Path(id): Path<Uuid>) -> Result<StatusCode, AppError> {
@@ -371,6 +375,7 @@ pub async fn init_upload(
     let row = load_user(&s.db, user.id).await?;
     ops::upload_path(&b.path)?; // validate early, chặn ghi vào .nextkloud (trừ file cài đặt client)
     let oid = crate::shares::resolve(&s.db, user.id, b.owner, &b.path, true).await?;
+    ops::check_file_target(&s.db, oid, &clean_path(&b.path)?).await?;
     // quota tính cho chủ vùng (chủ file khi upload vào thư mục được chia sẻ)
     let orow = if oid == user.id { row } else { load_user(&s.db, oid).await? };
     let oq = Quota::new(orow.quota_limit.max(0) as u64, orow.quota_used.max(0) as u64);
@@ -523,6 +528,7 @@ pub async fn complete_upload(
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
     let pend = pending(&s, user.id, &id).await?;
+    ops::check_file_target(&s.db, pend.owner, &clean_path(&pend.path)?).await?;
     let row = load_user(&s.db, pend.owner).await?;
     let mut q = Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64);
     // ghi đè: giữ bản cũ (lỗi chép version không chặn upload)
@@ -604,6 +610,10 @@ pub async fn batch_upload(
     if head.files.iter().any(|f| f.size > BATCH_MAX_FILE) {
         return Err(bad("file too large for batch (max 1MiB)"));
     }
+    // trùng path trong 1 lô: quota bị trừ bản cũ 2 lần
+    if head.files.iter().map(|f| f.path.trim_matches('/')).collect::<HashSet<_>>().len() != head.files.len() {
+        return Err(bad("duplicate path in batch"));
+    }
     let total: u64 = head.files.iter().map(|f| f.size).sum();
     if total > BATCH_MAX_BYTES || total != (body.len() - start) as u64 {
         return Err(bad("body size mismatch"));
@@ -638,6 +648,7 @@ pub async fn batch_upload(
 async fn batch_one(s: &AppState, me: Uuid, owner: Option<Uuid>, f: &BatchFile, data: &[u8]) -> Result<(), AppError> {
     ops::upload_path(&f.path)?;
     let oid = crate::shares::resolve(&s.db, me, owner, &f.path, true).await?;
+    ops::check_file_target(&s.db, oid, &clean_path(&f.path)?).await?;
     let row = load_user(&s.db, oid).await?;
     let mut q = Quota::new(row.quota_limit.max(0) as u64, row.quota_used.max(0) as u64);
     if let Err(e) = crate::versions::snapshot(&s.store, oid, &f.path).await {
@@ -691,7 +702,7 @@ mod tests {
 
     async fn up_state() -> Option<(AppState, uuid::Uuid)> {
         let Some((db, u)) = crate::kanban::tests::db_user().await else { return None };
-        let (store, _) = crate::files::tests::tmp_store("upresume");
+        let (store, _) = crate::files::tests::tmp_store(&format!("up-{}", uuid::Uuid::new_v4())); // mỗi test 1 thư mục: chạy song song không xoá của nhau
         Some((
             AppState {
                 db,
@@ -849,7 +860,14 @@ mod tests {
         assert!(super::batch_upload(State(s.clone()), auth.clone(), b.into()).await.is_err());
         assert!(super::batch_upload(State(s.clone()), auth.clone(), axum::body::Bytes::from_static(&[9, 9, 9, 9, 1])).await.is_err());
         let big = vec![0u8; super::BATCH_MAX_FILE as usize + 1];
-        assert!(super::batch_upload(State(s.clone()), auth, batch_body(None, &[("a.bin", &big)])).await.is_err());
+        assert!(super::batch_upload(State(s.clone()), auth.clone(), batch_body(None, &[("a.bin", &big)])).await.is_err());
+        // trùng path trong 1 lô
+        assert!(super::batch_upload(State(s.clone()), auth.clone(), batch_body(None, &[("d.txt", b"1"), ("d.txt", b"2")])).await.is_err());
+        // ghi đè lên thư mục / ghi dưới 1 file: từng file báo lỗi, thư mục giữ nguyên
+        super::batch_upload(State(s.clone()), auth.clone(), batch_body(None, &[("dir/in.txt", b"x"), ("f.txt", b"y")])).await.unwrap();
+        let r = super::batch_upload(State(s.clone()), auth, batch_body(None, &[("dir", b"z"), ("f.txt/sub.txt", b"w")])).await.unwrap().0;
+        assert!(r.iter().all(|x| !x.ok));
+        assert_eq!(crate::ops::kind(&s.db, u, "dir").await.unwrap(), Some(true));
     }
 
     #[tokio::test]

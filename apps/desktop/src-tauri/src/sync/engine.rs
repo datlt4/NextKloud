@@ -478,6 +478,15 @@ impl<'a> Ctx<'a> {
             remove_tree(&mut b_in, p);
         }
         let todo = plan::plan(&local, &r_in, &b_in);
+        // xoá quá nhiều trong 1 vòng (ổ con chưa mount, thư mục bị đổi tên...): dừng, không xoá hàng loạt
+        let dels: usize = todo
+            .iter()
+            .filter(|(_, a)| matches!(a, Action::DeleteRemote | Action::TrashLocal))
+            .map(|(k, _)| 1 + self.base.range(format!("{k}/")..).take_while(|(p, _)| p.starts_with(&format!("{k}/"))).count())
+            .sum();
+        if dels > 50 && dels * 10 > self.base.len() * 3 {
+            return Err(E::Msg("sync.e.massDelete".into()));
+        }
         let is_dir = |k: &str| local.get(k).or(remote.get(k)).is_some_and(|m| m.is_dir);
         // tạo thư mục trước (cha trước con), rồi file, cuối cùng xoá thư mục (con trước cha)
         let mut order: Vec<(&String, &Action)> = todo.iter().filter(|(_, a)| matches!(a, Action::MkdirLocal | Action::MkdirRemote)).collect();
@@ -538,6 +547,10 @@ impl<'a> Ctx<'a> {
                 Ok(())
             }
             Action::TrashLocal => {
+                // file vừa bị sửa sau lúc quét: không bỏ vào thùng rác, vòng sau sẽ thành "sửa thắng xoá"
+                if l.is_some_and(|m| !m.is_dir) && local_meta(&self.lpath(rel)) != l {
+                    return Err(E::Stop);
+                }
                 self.trash_local(rel)?;
                 remove_tree(&mut self.base, rel);
                 Ok(())
@@ -661,7 +674,9 @@ impl<'a> Ctx<'a> {
             self.base.insert(rel.into(), Base::of(lm, r));
             return Ok(());
         }
-        let stamp = plan::stamp(now() + self.auth.tz * 60);
+        // thêm 4 ký tự ngẫu nhiên: 2 máy trùng hostname cùng phút không ghi đè bản conflict của nhau
+        let rnd = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0) ^ std::process::id();
+        let stamp = format!("{} {:04x}", plan::stamp(now() + self.auth.tz * 60), rnd & 0xffff);
         let mut cname = plan::conflict_name(rel, &self.s.host, &stamp);
         for i in 2.. {
             if local_meta(&self.lpath(&cname)).is_none() {
