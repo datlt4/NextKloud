@@ -1,7 +1,7 @@
 # NextKloud — Handoff (chi tiết)
 
 Tài liệu bàn giao cho agent kế tiếp (review hoặc tiếp quản). Đọc hết file này trước khi sửa code.
-Cập nhật: 2026-11-23 · version 0.1.14 · việc còn lại tổng hợp ở mục 9.0.
+Cập nhật: 2026-11-26 · version 0.1.59 · việc còn lại tổng hợp ở mục 9.0 (bảng "Còn lại 26/11").
 
 > Repo **public**. Không ghi secret, mật khẩu, nội dung file hay nội dung card Kanban của người dùng vào repo (kể cả trong tài liệu này).
 
@@ -165,7 +165,8 @@ NextKloud là bản thay thế Nextcloud **không dùng PHP**: Tauri v2 + Rust (
 | `STAGING_DIR` | `/data/staging` | chunk upload |
 | `NEXTKLOUD_WEB` | — | thư mục web để serve (SPA fallback) |
 | `TTS_URL` | `http://localhost:8016` | proxy TTS |
-| `ONLYOFFICE_URL`, `REDIS_URL`, `ALLOWED_ORIGINS` | — | có trong compose, **code chưa dùng** |
+| `ALLOWED_ORIGINS` | `*` | `*` = CORS mở; hoặc danh sách origin cách dấu phẩy (app Tauri luôn được phép) |
+| `ONLYOFFICE_URL`, `REDIS_URL` | — | `REDIS_URL` có trong compose, code chưa dùng |
 
 ### 3.4 CI
 
@@ -328,6 +329,18 @@ git_repos(id, user_id → users CASCADE, url, branch, folder, ssh_key, ssh_pub, 
 ## 9. Backlog chi tiết
 
 ### 9.0 Việc còn lại (tổng hợp 23/11, ưu tiên từ trên xuống)
+
+**Còn lại 26/11 (0.1.59)** — đã xong ở 0.1.56–0.1.59: khoá đăng nhập sai (10 lần/15 phút theo username, RAM), `is_admin` đọc từ DB mỗi request (user bị xoá thì token chết), CORS theo `ALLOWED_ORIGINS`, dọn staging + dòng `uploads` > 7 ngày (mỗi giờ), lịch sử phiên bản (`versions.rs`: `.nextkloud/versions/<path>/<mtime>`, 10 bản/30 ngày, không tính quota, menu file → Phiên bản), SSE dùng vé 1 phút (`POST /api/events/ticket`) + nhắc hạn chỉ khi user đang online, lọc HTML markdown (`sanitize.ts`, hook `marked`), xem inline file được chia sẻ (chỉ xem: md/text/ảnh/video/pdf/epub; Office/zip/drawio tải về), CI job `integration` (Postgres + RustFS service, không chặn Docker), image TTS chỉ build khi `docker/tts/**` đổi, TTS tốc độ mặc định trong Giao diện (`UiSettings.ttsRate`). Backup đêm đã kiểm tra 26/11: chạy đủ 23–25/11, giữ 2 bản.
+
+| Còn lại | Ghi chú |
+|---|---|
+| Upload: tạm dừng/chạy tiếp trong panel, hàng đợi qua F5 (IndexedDB), API batch file nhỏ | resume theo (path,size,mtime) đã có |
+| Job nền move/rename thư mục rất lớn + merge khi trùng tên; Range cho zip | zip là stream sinh động, Range cần tính trước layout |
+| Kanban: lịch weekly, nhập board Deck còn lại (deck:1) | checklist trong mô tả đã bấm được |
+| Chia sẻ: thumbnail/zip/Office/search/TTS trên file được chia sẻ, re-share | xem inline cơ bản đã có |
+| Desktop sync 2 chiều | mục lớn nhất (9.6) |
+| Multipart S3 bỏ dở khi process chết | opendal không có API list/abort; cân nhắc lifecycle rule trên RustFS |
+| Phiên bản mồ côi khi đổi tên/xoá file | tự hết sau 30 ngày |
 
 1. **Chia sẻ** (người dùng chốt làm ngay sau Kanban): chia sẻ file/thư mục giữa user (quyền xem/sửa) + link công khai có mật khẩu và hạn, như Google Drive. File trong Bí mật không chia sẻ được. — ✅ xong 0.1.17 (`shares.rs`, `share.tsx`, migration `0014`): share theo username, link public (chỉ xem, MK + hạn), duyệt/tải/upload/sửa trong "Được chia sẻ", "Lưu bản sao" về file mình, link dùng được khi chưa đăng nhập. Chưa làm: xem inline/thumbnail/zip/office/search/TTS trên file được chia sẻ (tải về để xem), re-share.
 2. **Task tracker** (danh sách việc theo hạn, lấy từ card có `due_at`) và **Habit tracker** (lưới ngày, streak) — ✅ xong 0.1.15 (`tracker.rs`, `tracker.tsx`, migration `0013`): task lọc Quá hạn/Hôm nay/7 ngày/Tất cả/Đã xong; habit chấm theo ngày, streak tính tới hôm nay, lưới 12 tuần. Chưa làm: lịch weekly, nhắc hạn (đợi SSE 9.7).
@@ -565,8 +578,8 @@ card_links(card_id, url, title, image_url, fetched_at)          -- unfurl Open G
    - Xoá user: xoá S3 trước, DB sau.
    - Cân nhắc job đối soát định kỳ (so số lượng và dung lượng, báo lệch).
 5. ~~**`reindex` xoá các thư mục rỗng**~~ (đã sửa): `rebuild` giờ giữ lại các thư mục rỗng do user tạo (không có file con trong lần quét, bỏ qua thư mục hệ thống `.`); scan bỏ qua cache `.nextkloud/thumbs/` nên thumbnail không tính vào quota.
-6. **JWT mang cờ `adm`:** thu hồi quyền admin không có hiệu lực tới khi token hết hạn. Nên kiểm tra `is_admin` từ DB ở các API admin.
-7. **CORS `permissive`;** `ALLOWED_ORIGINS` có trong compose nhưng không được dùng. Chưa có rate-limit đăng nhập. JWT để trong localStorage (rủi ro XSS; markdown viewer phải sanitize HTML).
+6. ~~**JWT mang cờ `adm`**~~ (đã sửa 0.1.56): `AuthUser` đọc `is_admin` từ DB mỗi request.
+7. CORS theo `ALLOWED_ORIGINS` (mini đang `*`), rate-limit đăng nhập trong RAM (restart là reset), markdown đã lọc HTML (0.1.58). JWT vẫn để trong localStorage.
 8. **Offset phân trang sâu khi sort theo size** mất khoảng 430ms trên 1 triệu dòng; `COUNT` mỗi request mất khoảng 70ms. Có thể cache count (Redis) hoặc chỉ count khi offset = 0.
 9. **Kích thước thư mục luôn bằng 0;** footer chỉ cộng file nằm trực tiếp trong thư mục. Muốn có tổng đệ quy thì cần cột tổng hợp hoặc truy vấn `LIKE prefix`.
 10. **Lặt vặt:**
