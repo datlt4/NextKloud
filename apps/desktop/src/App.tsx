@@ -105,6 +105,8 @@ export default function App() {
   const [userMenu, setUserMenu] = createSignal(false);
   const [userMenuUp, setUserMenuUp] = createSignal(false);
   const [newMenu, setNewMenu] = createSignal(false);
+  /** Token link công khai đang xem (#/s/<token>), kể cả khi đã đăng nhập. */
+  const [pubToken, setPubToken] = createSignal<string | null>(null);
   /** Tên file chưa trùng (thêm (2), (3)...), phần mở rộng luôn giữ nguyên. */
   const stripExt = (n: string, ext: string) => (n.toLowerCase().endsWith(`.${ext}`) ? n.slice(0, -(ext.length + 1)) : n);
   const uniqueName = async (base: string, ext: string) => {
@@ -310,6 +312,7 @@ export default function App() {
   // URL giữ vị trí (thư mục / file đang mở / trang): F5 hay gửi link vẫn về đúng chỗ, nút Back của trình duyệt dùng được.
   const encP = (p: string) => p.split("/").map(encodeURIComponent).join("/");
   const routeOf = () => {
+    if (pubToken()) return `#/s/${pubToken()}`;
     const pg = page();
     if (pg === "settings") return `#/settings/${setTab()}`;
     if (pg === "kanban") return boardId() ? `#/kanban/${boardId()}` : "#/kanban";
@@ -387,6 +390,14 @@ export default function App() {
   const go = async (h: string) => {
     routing = true;
     try {
+      // link công khai: xem được cả khi đã đăng nhập, không đá về trang chủ
+      const pm = /^#\/s\/([A-Za-z0-9]+)/.exec(h);
+      if (pm) {
+        setPubToken(pm[1]);
+        setRouted(true);
+        return;
+      }
+      setPubToken(null);
       const m = /^#\/(f|o|notes|trash|tasks|shared|settings|kanban|secret)(?:\/(.*))?$/.exec(h);
       const rest = m?.[2] ? decodeURIComponent(m[2]) : "";
       if (m?.[1] === "secret") await openSecret();
@@ -1183,6 +1194,12 @@ export default function App() {
               <button type="submit" class="btn primary block">{t("login.go")}</button>
             </form>
           </div>
+        </Match>
+
+        <Match when={authed() && pubToken()}>
+          <Show when={pubToken()} keyed>
+            {(t) => <PublicPage token={t} />}
+          </Show>
         </Match>
 
         <Match when={true}>

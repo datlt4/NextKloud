@@ -287,9 +287,9 @@ function SharedIcon(props: { e: Entry; owner: string }) {
 }
 
 /** Trang link công khai — dùng được khi chưa đăng nhập. */
-export function PublicPage() {
+export function PublicPage(props: { token?: string } = {}) {
   const m = /^#\/s\/([A-Za-z0-9]+)/.exec(location.hash);
-  const token = () => m?.[1] ?? "";
+  const token = () => props.token ?? m?.[1] ?? "";
   const [pw, setPw] = createSignal("");
   const [tried, setTried] = createSignal("");
   const [gone, setGone] = createSignal("");
