@@ -201,6 +201,20 @@ export function SharedPage(props: { onError: (m: string) => void }) {
             <For each={crumbs()}>{(c, i) => <><span class="muted">/</span><button class="link" onClick={() => go(i() + 1)}>{c}</button></>}</For>
           </Show>
           <span class="muted xs">{t("sh.ownerLine", { name: sel()!.owner_name, perm: sel()!.permission === "edit" ? t("sh.canEdit") : t("sh.viewOnly") })}{sel()!.via ? ` · ${t("sh.via", { name: sel()!.via! })}` : ""}</span>
+          <Show when={!sel()!.is_dir}>
+            <button class="btn ghost sm" onClick={() => setView(sel()!.path)}><Icon name="file" size={14} /> {t("c.open")}</button>
+            <button class="btn ghost sm" onClick={async () => {
+              try {
+                const u = await api.sharedDirectUrl(sel()!.owner_id, sel()!.path);
+                const a = document.createElement("a");
+                a.href = u;
+                a.download = sel()!.path.split("/").pop() ?? "";
+                a.click();
+              } catch (e) {
+                props.onError(errText(e));
+              }
+            }}><Icon name="download" size={14} /> {t("sh.dl")}</button>
+          </Show>
           <span class="grow" />
           <Show when={sel()!.is_dir}>
             <input class="sh-search" type="search" value={query()} onInput={(e) => onQuery(e.currentTarget.value)} placeholder={t("sh.search")} />
