@@ -15,7 +15,6 @@ services:
     environment:
       - BIND=0.0.0.0:8014
       - DATABASE_URL=postgres://nextkloud:nextkloud@db:5432/nextkloud
-      - REDIS_URL=redis://cache:6379
       - JWT_SECRET=${JWT_SECRET:-dev-insecure-change-me}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
       - STORAGE_DRIVER=s3 # s3 (RustFS) | fs
@@ -46,8 +45,6 @@ services:
     depends_on:
       db:
         condition: service_started
-      cache:
-        condition: service_started
       bucket-init:
         condition: service_completed_successfully
 
@@ -60,13 +57,6 @@ services:
       - POSTGRES_USER=nextkloud
       - POSTGRES_PASSWORD=nextkloud
       - POSTGRES_DB=nextkloud
-
-  cache:
-    image: redis:7-alpine
-    restart: unless-stopped
-    volumes:
-      - /mnt/das_8tb/nextkloud_volume/redis:/data
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
 
   # TTS giọng đọc: edge-tts (Microsoft Neural, miễn phí) + detect EN/VI/ZH
   # bằng LibreTranslate sẵn có trên mini PC (:8015).
