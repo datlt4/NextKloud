@@ -597,6 +597,10 @@ export default function MarkdownView(props: {
   const [playingAll, setPlayingAll] = createSignal(false);
   const [prepping, setPrepping] = createSignal<[number, number] | null>(null);
   const [prepped, setPrepped] = createSignal(false);
+  const [prePaused, setPrePaused] = createSignal(false);
+  let preCancelled = false;
+  let preCtl: AbortController | null = null;
+  onCleanup(() => { preCancelled = true; preCtl?.abort(); });
   const curHash = createMemo(() => hashText(props.text));
   const stale = () => builtHash() !== null && builtHash() !== curHash();
   createEffect(() => {
@@ -630,19 +634,42 @@ export default function MarkdownView(props: {
 
   // Tải trước toàn bài vào cache RAM (nghe liền mạch, không chờ từng đoạn).
   // Chưa phải lưu offline lâu dài: tắt/reload trang là mất, phải tải lại.
+  // Bấm nhầm thì tạm dừng / huỷ được ngay, không phải chờ hết 164 đoạn.
   const prefetchAll = async () => {
+    if (prepping()) return;
     const items = list().filter((b) => b.kind === "speak" && stripForSpeech(b.text).trim());
     setPrepping([0, items.length]);
     setPrepped(false);
+    setPrePaused(false);
+    preCancelled = false;
     try {
       for (let i = 0; i < items.length; i++) {
-        await speak(stripForSpeech(items[i].text)).catch(() => {});
+        if (preCancelled) break;
+        while (prePaused() && !preCancelled) await new Promise((r) => setTimeout(r, 200));
+        if (preCancelled) break;
+        // huỷ là dừng ngay cả request đang chạy, không chờ xong đoạn hiện tại
+        const ctl = new AbortController();
+        preCtl = ctl;
+        try {
+          await speak(stripForSpeech(items[i].text), undefined, ctl.signal);
+        } catch {
+          /* bị huỷ hoặc lỗi mạng: bỏ qua */
+        } finally {
+          if (preCtl === ctl) preCtl = null;
+        }
+        if (preCancelled) break;
         setPrepping([i + 1, items.length]);
       }
-      setPrepped(true);
+      if (!preCancelled) setPrepped(true);
     } finally {
       setPrepping(null);
+      setPrePaused(false);
     }
+  };
+  const cancelPrefetch = () => {
+    preCancelled = true;
+    preCtl?.abort();
+    setPrePaused(false);
   };
 
   const onArticleClick = (e: MouseEvent) => {
@@ -811,9 +838,17 @@ export default function MarkdownView(props: {
         <button onClick={readAll} disabled={playingAll() || editing()}>
           {playingAll() ? t("vw.mdReading") : (<><Icon name="listen" size={15} /> {t("vw.mdReadAll")}</>)}
         </button>
-        <button class="ghost" onClick={prefetchAll} disabled={!!prepping() || playingAll() || editing()} title={t("vw.mdPrefetchTip")}>
-          {prepping() ? t("vw.mdPrefetching", { a: prepping()![0], b: prepping()![1] }) : prepped() ? t("vw.mdPrefetched") : t("vw.mdPrefetch")}
-        </button>
+        <Show when={prepping()} fallback={
+          <button class="ghost" onClick={prefetchAll} disabled={playingAll() || editing()} title={t("vw.mdPrefetchTip")}>
+            {prepped() ? t("vw.mdPrefetched") : t("vw.mdPrefetch")}
+          </button>
+        }>
+          <button class="ghost" onClick={() => setPrePaused(!prePaused())} title={prePaused() ? t("vw.resume") : t("vw.pause")}>
+            <Icon name={prePaused() ? "play" : "pause"} size={14} />
+          </button>
+          <span class="muted sm">{t("vw.mdPrefetching", { a: prepping()![0], b: prepping()![1] })}</span>
+          <button class="ghost" onClick={cancelPrefetch} title={t("c.cancel")}><Icon name="close" size={14} /></button>
+        </Show>
         <Show when={!editing()} fallback={
           <>
             <button class="primary" onClick={saveEdit} disabled={saving() || draft() === props.text}>{saving() ? t("vw.mdSaving") : t("vw.mdSave")}</button>
