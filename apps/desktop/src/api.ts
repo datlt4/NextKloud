@@ -576,6 +576,14 @@ export const api = {
   async tasks(view: TaskView) {
     return (await req(`/api/tasks?view=${view}`)).json() as Promise<TaskItem[]>;
   },
+  /** Thư mục ghim ở sidebar (đồng bộ server). */
+  async bookmarks() {
+    return (await req("/api/bookmarks")).json() as Promise<string[]>;
+  },
+  /** Bật/tắt ghim 1 thư mục, trả về danh sách mới. */
+  async toggleBookmark(path: string) {
+    return (await req("/api/bookmarks", { method: "POST", headers: JSON_H, body: JSON.stringify({ path }) })).json() as Promise<string[]>;
+  },
   /** Task có hạn trong [from, to) epoch giây, gồm cả task đã xong (lịch tuần). */
   async tasksRange(from: number, to: number) {
     return (await req(`/api/tasks?view=range&from=${from}&to=${to}`)).json() as Promise<TaskItem[]>;

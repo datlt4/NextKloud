@@ -169,6 +169,7 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/kanban/import/deck", get(crate::deck::preview).post(crate::deck::apply))
         .route("/api/cards/:id/subtasks", get(crate::kanban::subtasks))
         .route("/api/tasks", get(crate::tracker::tasks))
+        .route("/api/bookmarks", get(crate::bookmarks::list).post(crate::bookmarks::toggle))
         .route("/api/events", get(crate::events::stream))
         .route("/api/events/ticket", post(crate::events::ticket))
         .route("/api/shares", get(crate::shares::list_shares).post(crate::shares::share_with))

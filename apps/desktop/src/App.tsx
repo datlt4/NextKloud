@@ -1,4 +1,4 @@
-import { For, Index, Match, Show, Switch, batch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, Suspense } from "solid-js";
+import { For, Index, Match, Show, Switch, batch, createEffect, createMemo, createResource, createSignal, lazy, onCleanup, onMount, Suspense } from "solid-js";
 import { SECRET_ROOT, api, isSecret, isSelfHostedWeb, serverOrigin, vaultSeen, type Entry, type Me, type OnConflict, type XferOpts } from "./api";
 import { syncFromServer, ui, wallCss } from "./background";
 import { ResetForm } from "./forms";
@@ -432,47 +432,67 @@ export default function App() {
     refreshMe();
     refreshVer();
     syncFromServer();
-    seedBookmarks();
+    // ghim sidebar giờ đồng bộ server (effect dưới tự seed khi cần)
     // app cài đặt: tự kiểm tra cập nhật 1 lần
     checkUpdate(true).catch(() => {});
   };
 
-  /** Thư mục ghim ở sidebar (lưu máy này): lần đầu tự ghim sẵn "Obsidian Vaults" nếu có. */
-  const BM_KEY = "nk-bookmarks";
-  const BM_SEEDED = "nk-bookmarks-seeded";
-  const loadBookmarks = (): string[] => {
-    try {
-      const v = JSON.parse(localStorage.getItem(BM_KEY) ?? "[]");
-      return Array.isArray(v) ? v.filter((x) => typeof x === "string" && x) : [];
-    } catch {
-      return [];
-    }
-  };
-  const [bookmarks, setBookmarks] = createSignal<string[]>(loadBookmarks());
-  const saveBookmarks = (l: string[]) => {
-    setBookmarks(l);
-    try {
-      localStorage.setItem(BM_KEY, JSON.stringify(l));
-    } catch {}
-  };
-  const toggleBookmark = (p: string) =>
-    saveBookmarks(bookmarks().includes(p) ? bookmarks().filter((x) => x !== p) : [...bookmarks(), p]);
-  const seedBookmarks = () => {
-    try {
-      if (localStorage.getItem(BM_SEEDED)) return;
-    } catch {
-      return;
-    }
-    const done = () => {
+  /** Thư mục ghim ở sidebar (đồng bộ server, thay localStorage cũ `nk-bookmarks`). */
+  const [bookmarks, { mutate: mutateBookmarks, refetch: refetchBookmarks }] = createResource(
+    () => authed(),
+    async (a) => {
+      if (!a) return [] as string[];
       try {
-        localStorage.setItem(BM_SEEDED, "1");
+        return await api.bookmarks();
+      } catch {
+        return [] as string[];
+      }
+    },
+    { initialValue: [] as string[] },
+  );
+  const toggleBookmark = (p: string) => {
+    const cur = bookmarks() ?? [];
+    mutateBookmarks(cur.includes(p) ? cur.filter((x) => x !== p) : [...cur, p]);
+    api.toggleBookmark(p).then((l) => mutateBookmarks(l)).catch((e) => {
+      setErr(errText(e));
+      void refetchBookmarks();
+    });
+  };
+  let bmSeeded = false;
+  createEffect(() => {
+    // ghim sẵn "Obsidian Vaults" (khi server còn trống) + chuyển pin cũ từ máy này lên server (1 lần/phiên)
+    if (!authed() || bmSeeded || bookmarks.loading) return;
+    bmSeeded = true;
+    const go = async () => {
+      try {
+        let local: string[] = [];
+        try {
+          const v = JSON.parse(localStorage.getItem("nk-bookmarks") ?? "[]");
+          if (Array.isArray(v)) local = v.filter((x) => typeof x === "string" && x);
+        } catch {}
+        const have = new Set(bookmarks() ?? []);
+        const missing = [...new Set(local)].filter((b) => !have.has(b));
+        const empty = have.size === 0;
+        if (empty && !missing.includes(VAULTS)) {
+          try {
+            await api.exists(VAULTS);
+            missing.unshift(VAULTS);
+          } catch {}
+        }
+        for (const b of missing) {
+          try {
+            await api.toggleBookmark(b);
+          } catch {}
+        }
+        try {
+          localStorage.removeItem("nk-bookmarks");
+          localStorage.removeItem("nk-bookmarks-seeded");
+        } catch {}
+        if (missing.length) await refetchBookmarks();
       } catch {}
     };
-    api.exists(VAULTS).then(() => {
-      const cur = loadBookmarks();
-      if (!cur.includes(VAULTS)) saveBookmarks([VAULTS, ...cur]);
-    }).catch(() => {}).finally(done);
-  };
+    void go();
+  });
 
   onMount(() => {
     if (authed()) enter();
