@@ -18,6 +18,13 @@ export function sanitizeHtml(html: string): string {
       if (n.startsWith("on") || n === "style" && /expression|url\s*\(/i.test(a.value) || (URL_ATTRS.has(n) && badUrl(a.value))) el.removeAttribute(a.name);
     }
   });
+  // link ra ngoài: luôn mở tab mới
+  doc.body.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((a) => {
+    if (/^https?:\/\//i.test(a.getAttribute("href") ?? "") && a.origin !== location.origin) {
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+    }
+  });
   return doc.body.innerHTML;
 }
 
