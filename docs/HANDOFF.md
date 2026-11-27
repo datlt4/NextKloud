@@ -1,7 +1,7 @@
 # NextKloud — Handoff (chi tiết)
 
 Tài liệu bàn giao cho agent kế tiếp (review hoặc tiếp quản). Đọc hết file này trước khi sửa code.
-Cập nhật: 2026-11-27 · version 0.1.64 · việc còn lại tổng hợp ở mục 9.0 (bảng "Còn lại 26/11").
+Cập nhật: 2026-11-27 · version 0.1.65 · việc còn lại tổng hợp ở mục 9.0 (bảng "Còn lại 26/11").
 
 > Repo **public**. Không ghi secret, mật khẩu, nội dung file hay nội dung card Kanban của người dùng vào repo (kể cả trong tài liệu này).
 

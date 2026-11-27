@@ -1883,7 +1883,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nextkloud-backend"
-version = "0.1.64"
+version = "0.1.65"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -1897,8 +1897,10 @@ dependencies = [
  "image",
  "jsonwebtoken",
  "opendal",
+ "opendal-http-transport-reqwest",
  "rand 0.8.8",
  "reqwest 0.12.28",
+ "reqwest 0.13.5",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -1915,7 +1917,7 @@ dependencies = [
 
 [[package]]
 name = "nextkloud-migrate"
-version = "0.1.64"
+version = "0.1.65"
 dependencies = [
  "serde",
  "serde_json",

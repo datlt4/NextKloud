@@ -1,6 +1,6 @@
 [package]
 name = "nextkloud-backend"
-version = "0.1.64"
+version = "0.1.65"
 edition = "2021"
 license = "MIT"
 
@@ -38,3 +38,6 @@ tokio-tungstenite = "0.24"
 
 [dev-dependencies]
 tower = "0.5"
+# test S3: mỗi store 1 reqwest client riêng (pool mặc định dùng chung bị kẹt khi runtime test cũ đã tắt)
+opendal-http-transport-reqwest = "0.59"
+reqwest013 = { package = "reqwest", version = "0.13", default-features = false }

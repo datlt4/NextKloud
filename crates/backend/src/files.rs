@@ -246,7 +246,11 @@ pub mod tests {
         let v = std::env::var("NK_TEST_S3").ok()?;
         let p: Vec<&str> = v.split(',').collect();
         let staging = std::env::temp_dir().join(format!("nk-s3-stage-{}", std::process::id()));
-        Some((Store::s3(p[0], p[1], p[2], p[3], staging).unwrap(), Uuid::new_v4()))
+        let mut s = Store::s3(p[0], p[1], p[2], p[3], staging).unwrap();
+        // client riêng cho từng test: kết nối trong pool chung gắn với runtime của test khác (đã tắt) -> lỗi ngẫu nhiên khi chạy song song
+        let tr = opendal::HttpTransporter::new(opendal_http_transport_reqwest::ReqwestTransport::new(reqwest013::Client::new()));
+        s.op = s.op.clone().with_context(s.op.base_context().with_http_transport(tr));
+        Some((s, Uuid::new_v4()))
     }
 
     #[test]
