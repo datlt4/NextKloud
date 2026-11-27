@@ -8,7 +8,8 @@ import { Icon } from "../icons";
  * Sửa draw.io (.drawio) qua editor nhúng. Lưu ngược lại file trên NextKloud.
  * Cần mạng để tải editor từ embed.diagrams.net (lần đầu), file vẫn nằm 100% trên server nhà.
  */
-export default function DrawioView(props: { path: string }) {
+/** readonly: link công khai — chỉ xem, không lưu. */
+export default function DrawioView(props: { path: string; readonly?: boolean }) {
   const [err, setErr] = createSignal("");
   const [saved, setSaved] = createSignal<string | null>(null);
   // "Full màn hình" = lấp đầy khung trình duyệt (giữ chrome/nút điều hướng), KHÔNG dùng Fullscreen API.
@@ -44,7 +45,7 @@ export default function DrawioView(props: { path: string }) {
         (xml) => !dead && send({ action: "load", xml: xml.trim() || undefined, autosave: 1, saveAndExit: "0" }),
         () => !dead && send({ action: "load", autosave: 1, saveAndExit: "0" }),
       );
-    } else if (m.event === "save" || m.event === "autosave") {
+    } else if ((m.event === "save" || m.event === "autosave") && !props.readonly) {
       if (typeof m.xml === "string") {
         if (m.event === "save") {
           clearTimeout(timer);
@@ -76,7 +77,7 @@ export default function DrawioView(props: { path: string }) {
       <iframe
         ref={frame!}
         title="drawio"
-        src="https://embed.diagrams.net/?embed=1&ui=atlas&spin=1&proto=json&saveAndExit=0"
+        src={`https://embed.diagrams.net/?embed=1&ui=atlas&spin=1&proto=json&saveAndExit=0${props.readonly ? "&chrome=0" : ""}`}
         allow="clipboard-write"
       />
     </div>

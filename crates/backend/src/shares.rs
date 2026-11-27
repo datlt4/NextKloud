@@ -5,7 +5,7 @@ use axum::{
     body::Body,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode, header},
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -468,6 +468,13 @@ pub struct LinkQuery {
     pub pw: String,
     #[serde(default)]
     pub prefix: String,
+    #[serde(default)]
+    pub sort: index::SortKey,
+    #[serde(default)]
+    pub desc: bool,
+    #[serde(default)]
+    pub offset: i64,
+    pub limit: Option<i64>,
 }
 
 async fn public_share(db: &PgPool, token: &str, pw: &str) -> Result<ShareRow, AppError> {
@@ -541,26 +548,54 @@ pub async fn link_meta(State(s): State<AppState>, Path(token): Path<String>, Que
     }
 }
 
-/// Liệt kê trong thư mục được chia sẻ qua link.
+/// Đường dẫn trả cho khách: tương đối so với gốc link (không lộ cây thư mục của chủ).
+fn rel_of(r: &ShareRow, full: &str) -> String {
+    if r.is_dir { full.strip_prefix(&format!("{}/", r.path)).unwrap_or(full).to_string() } else { full.rsplit('/').next().unwrap_or(full).to_string() }
+}
+
+/// Liệt kê trong thư mục được chia sẻ qua link (path trả về tương đối so với gốc link).
+/// Link trỏ tới 1 file: trả đúng 1 dòng là file đó.
 pub async fn link_list(State(s): State<AppState>, Path(token): Path<String>, Query(q): Query<LinkQuery>) -> Result<Json<index::Page>, AppError> {
     let r = public_share(&s.db, &token, &q.pw).await?;
-    let prefix = if q.prefix.is_empty() {
-        if !r.is_dir {
-            return Err(AppError::BadRequest("link này trỏ tới 1 file, dùng link tải trực tiếp".into()));
-        }
-        r.path.clone()
-    } else {
-        let rel = clean_path(&q.prefix).map_err(|_| AppError::BadRequest("prefix không hợp lệ".into()))?;
-        if rel.is_empty() {
-            r.path.clone()
-        } else {
-            format!("{}/{}", r.path, rel)
-        }
-    };
-    if !(prefix == r.path || prefix.starts_with(&format!("{}/", r.path))) {
-        return Err(AppError::Forbidden("ngoài phạm vi link".into()));
+    if !r.is_dir {
+        let row: Option<index::Row> = sqlx::query_as("SELECT path, name, is_dir, size, modified FROM files WHERE user_id = $1 AND path = $2")
+            .bind(r.owner)
+            .bind(&r.path)
+            .fetch_optional(&s.db)
+            .await?;
+        let row = row.ok_or_else(|| AppError::NotFound("file không còn tồn tại".into()))?;
+        let bytes = row.size;
+        let entries = if q.offset > 0 { vec![] } else { vec![index::Row { path: rel_of(&r, &row.path), ..row }] };
+        return Ok(Json(index::Page { entries, dirs: 0, files: 1, bytes }));
     }
-    Ok(Json(index::list(&s.db, r.owner, &prefix, index::SortKey::default(), false, 0, 200).await?))
+    let prefix = scope_path(&r, &q.prefix)?;
+    let limit = q.limit.unwrap_or(200).clamp(0, 1000);
+    let mut page = index::list(&s.db, r.owner, &prefix, q.sort, q.desc, q.offset.max(0), limit).await?;
+    for e in &mut page.entries {
+        e.path = rel_of(&r, &e.path);
+    }
+    Ok(Json(page))
+}
+
+#[derive(Deserialize)]
+pub struct LinkSearch {
+    #[serde(default)]
+    pub pw: String,
+    pub q: String,
+}
+
+/// Tìm theo tên trong phạm vi link.
+pub async fn link_search(State(s): State<AppState>, Path(token): Path<String>, Query(q): Query<LinkSearch>) -> Result<Json<Vec<index::Row>>, AppError> {
+    let r = public_share(&s.db, &token, &q.pw).await?;
+    let term = q.q.trim();
+    if term.is_empty() || !r.is_dir {
+        return Ok(Json(vec![]));
+    }
+    let mut v = index::search_under(&s.db, r.owner, &r.path, term, 300).await?;
+    for e in &mut v {
+        e.path = rel_of(&r, &e.path);
+    }
+    Ok(Json(v))
 }
 
 /// Tải file qua link công khai (stream trực tiếp, hỗ trợ Range).
@@ -581,7 +616,7 @@ pub async fn link_file(
 ) -> Result<Response, AppError> {
     let pw = q.get("pw").map(String::as_str).unwrap_or("");
     let r = public_share(&s.db, &token, pw).await?;
-    let full = if path.is_empty() { r.path.clone() } else { format!("{}/{}", r.path, clean_path(&path).map_err(|_| AppError::BadRequest("path không hợp lệ".into()))?) };
+    let full = scope_path(&r, &path)?;
     if !(full == r.path || full.starts_with(&format!("{}/", r.path))) {
         return Err(AppError::Forbidden("ngoài phạm vi link".into()));
     }
@@ -627,6 +662,167 @@ pub async fn link_file(
         res = res.header(header::CONTENT_RANGE, format!("bytes {start}-{}/{size}", end - 1));
     }
     Ok(res.body(Body::from_stream(stream)).unwrap())
+}
+
+/// Ràng buộc path nằm trong phạm vi link (gốc share hoặc bên dưới).
+fn scope_path(r: &ShareRow, rel: &str) -> Result<String, AppError> {
+    let rel = clean_path(rel).map_err(|_| AppError::BadRequest("path không hợp lệ".into()))?;
+    // link trỏ tới 1 file: chỉ cho phép rỗng / đúng file / tên file
+    if !r.is_dir {
+        let name = r.path.rsplit('/').next().unwrap_or(&r.path);
+        if rel.is_empty() || rel == r.path || rel == name {
+            return Ok(r.path.clone());
+        }
+        return Err(AppError::Forbidden("ngoài phạm vi link".into()));
+    }
+    let full = if rel.is_empty() { r.path.clone() } else { format!("{}/{}", r.path, rel) };
+    if !(full == r.path || full.starts_with(&format!("{}/", r.path))) {
+        return Err(AppError::Forbidden("ngoài phạm vi link".into()));
+    }
+    Ok(full)
+}
+
+/// Đọc text (md/txt/drawio/excalidraw...) qua link công khai, tối đa 5MB.
+pub async fn link_text(
+    State(s): State<AppState>,
+    Path(token): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<Response, AppError> {
+    let pw = q.get("pw").map(String::as_str).unwrap_or("");
+    let r = public_share(&s.db, &token, pw).await?;
+    let full = scope_path(&r, q.get("path").cloned().unwrap_or_default().as_str())?;
+    let meta = s.store.stat(r.owner, &full).await.map_err(AppError::from)?;
+    if meta.is_dir() {
+        return Err(AppError::BadRequest("đây là thư mục".into()));
+    }
+    if meta.content_length() > 5 * 1024 * 1024 {
+        return Err(AppError::BadRequest("file quá lớn để xem trực tiếp (>5MB), hãy tải về".into()));
+    }
+    let key = s.store.key(r.owner, &full)?;
+    let data = s.store.op.read(&key).await.map_err(crate::files::StoreError::from)?;
+    Ok(Response::builder()
+        .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+        .body(Body::from(data.to_vec()))
+        .unwrap())
+}
+
+/// Thumbnail qua link công khai (cache chung với chủ file).
+pub async fn link_thumb(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<Response, AppError> {
+    let pw = q.get("pw").map(String::as_str).unwrap_or("");
+    let r = public_share(&s.db, &token, pw).await?;
+    let full = scope_path(&r, q.get("path").cloned().unwrap_or_default().as_str())?;
+    let is_img = crate::thumb::thumb_kind(&full).ok_or_else(|| AppError::BadRequest("loại file này chưa có thumbnail".into()))?;
+    let size_px: u32 = q.get("s").and_then(|v| v.parse().ok()).unwrap_or(256).clamp(64, 2048);
+    let meta = s.store.stat(r.owner, &full).await.map_err(AppError::from)?;
+    if meta.is_dir() {
+        return Err(AppError::BadRequest("not a file".into()));
+    }
+    let mtime = crate::files::mtime_of(&meta);
+    let size = meta.content_length();
+    let hash = crate::thumb::thumb_key(&r.owner, &full, mtime, size, size_px);
+    let tkey = s.store.key(r.owner, &crate::thumb::thumb_object(&hash))?;
+    let etag = format!("\"{hash}\"");
+    if let Some(inm) = headers.get(header::IF_NONE_MATCH).and_then(|v| v.to_str().ok()) {
+        if inm.split(',').any(|t| t.trim() == etag) {
+            return Ok(StatusCode::NOT_MODIFIED.into_response());
+        }
+    }
+    if let Ok(cached) = s.store.op.read(&tkey).await {
+        return Ok(Response::builder()
+            .header(header::CONTENT_TYPE, crate::thumb::mime_of(&cached.to_vec()))
+            .header(header::ETAG, &etag)
+            .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+            .body(Body::from(cached.to_vec()))
+            .unwrap());
+    }
+    let src = if is_img {
+        if size > 100 * 1024 * 1024 {
+            return Err(AppError::BadRequest("ảnh quá lớn để tạo thumbnail".into()));
+        }
+        s.store.op.read(&s.store.key(r.owner, &full)?).await.map_err(crate::files::StoreError::from)?.to_vec()
+    } else {
+        crate::thumb::video_frame_png(r.owner, &full, &s.store).await.map_err(AppError::Internal)?
+    };
+    let out = tokio::task::spawn_blocking(move || crate::thumb::render_image(&src, size_px))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+        .map_err(AppError::Internal)?;
+    let _ = s.store.op.write(&tkey, out.clone()).await;
+    Ok(Response::builder()
+        .header(header::CONTENT_TYPE, crate::thumb::mime_of(&out))
+        .header(header::ETAG, &etag)
+        .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+        .body(Body::from(out))
+        .unwrap())
+}
+
+/// Tải zip qua link công khai: cả thư mục `prefix` (mặc định gốc link) hoặc các mục `p` (lặp) nằm trong `prefix`.
+pub async fn link_zip(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+    Query(all): Query<Vec<(String, String)>>,
+) -> Result<Response, AppError> {
+    let get = |k: &str| all.iter().find(|(a, _)| a == k).map(|(_, v)| v.as_str()).unwrap_or("");
+    let r = public_share(&s.db, &token, get("pw")).await?;
+    let base = scope_path(&r, get("prefix"))?;
+    let picks = all.iter().filter(|(k, _)| k == "p").map(|(_, v)| scope_path(&r, v)).collect::<Result<Vec<_>, _>>()?;
+    let files = crate::zip::collect(&s.db, &s.store, r.owner, &base, &picks).await?;
+    crate::zip::respond_zip(&s, &headers, r.owner, files, base).await
+}
+
+/// Cấu hình OnlyOffice xem trước qua link công khai (luôn chỉ xem, không lưu).
+#[derive(Deserialize)]
+pub struct LinkOfficeBody {
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub pw: String,
+}
+
+pub async fn link_office_config(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+    Json(b): Json<LinkOfficeBody>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let r = public_share(&s.db, &token, &b.pw).await?;
+    let full = scope_path(&r, &b.path)?;
+    let (file_type, document_type) = crate::office::doc_type(&full).ok_or_else(|| AppError::BadRequest("loại office này chưa hỗ trợ".into()))?;
+    let meta = s.store.stat(r.owner, &full).await.map_err(AppError::from)?;
+    if meta.is_dir() {
+        return Err(AppError::BadRequest("not a file".into()));
+    }
+    let mtime = crate::files::mtime_of(&meta);
+    let size = meta.content_length();
+    let key = crate::office::doc_key(&r.owner, &full, mtime, size);
+    let base = std::env::var("ONLYOFFICE_BACKEND_URL").ok().filter(|v| !v.trim().is_empty()).map(|v| v.trim_end_matches('/').to_string()).unwrap_or_else(|| crate::office::public_base(&headers));
+    let dl = crate::office::dl_token(r.owner, &full, &s.enc)?;
+    let name = full.rsplit('/').next().unwrap_or(&full);
+    let cfg = serde_json::json!({
+        "document": {
+            "fileType": file_type,
+            "key": key,
+            "title": name,
+            "url": format!("{base}/api/office/file?t={dl}"),
+            "permissions": { "edit": false },
+        },
+        "documentType": document_type,
+        "editorConfig": {
+            "user": { "id": "guest", "name": "Khách" },
+            "mode": "view",
+            "lang": "vi",
+        },
+    });
+    let secret = crate::office::oo_secret()?;
+    let signed = jsonwebtoken::encode(&jsonwebtoken::Header::default(), &cfg, &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()))
+        .map_err(|e| AppError::Internal(format!("ký token office: {e}")))?;
+    Ok(Json(serde_json::json!({ "config": cfg, "token": signed })))
 }
 
 #[cfg(test)]
@@ -845,7 +1041,7 @@ mod tests {
         h.insert(header::AUTHORIZATION, format!("Bearer {tok}").parse().unwrap());
         let q = |pairs: &[(&str, String)]| Query(pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect::<HashMap<_, _>>());
         let thumb = |p: &str| crate::thumb::thumb(State(s.clone()), h.clone(), Path(p.to_string()), q(&[("owner", a.to_string())]));
-        let zip = |p: &str| crate::zip::download_dir(State(s.clone()), h.clone(), q(&[("owner", a.to_string()), ("path", p.to_string())]));
+        let zip = |p: &str| crate::zip::download_dir(State(s.clone()), h.clone(), Query(vec![("owner".into(), a.to_string()), ("path".into(), p.to_string())]));
         // chưa chia sẻ: bị chặn
         assert!(thumb("doc/p.png").await.is_err());
         assert!(zip("doc").await.is_err());

@@ -238,6 +238,15 @@ const fileUrl = (path: string) => (isSecret(path) ? `/api/secret/files/${encPath
 let viewOwner: string | null = null;
 export const setViewOwner = (o: string | null) => (viewOwner = o);
 const ownQ = (path: string, sep: "?" | "&") => (viewOwner && !isSecret(path) ? `${sep}owner=${encodeURIComponent(viewOwner)}` : "");
+// Đang xem link công khai (#/s/<token>): các hàm đọc file đi qua /api/s/:token/*, path tương đối so với gốc link.
+let pub: { token: string; pw: string } | null = null;
+export const setPubLink = (l: { token: string; pw: string } | null) => (pub = l);
+export const inPubLink = () => !!pub;
+const pubUrl = (what: string, q: Record<string, string> = {}) => {
+  const u = new URLSearchParams({ ...q, ...(pub!.pw ? { pw: pub!.pw } : {}) });
+  return `/api/s/${pub!.token}/${what}?${u}`;
+};
+const pubFile = (path: string) => `/api/s/${pub!.token}/file/${encPath(path)}${pub!.pw ? `?pw=${encodeURIComponent(pub!.pw)}` : ""}`;
 const vtQ = (path: string) => (isSecret(path) ? `&vt=${encodeURIComponent(vaultToken() ?? "")}` : "");
 const noSecret = (path: string, what: string) => {
   if (isSecret(path)) throw new Error(`${what} không dùng được với file Bí mật`);
@@ -302,6 +311,7 @@ export const api = {
   },
   /** 1 trang của thư mục (server phân trang, thư mục luôn trước). owner: duyệt vùng được chia sẻ. */
   async files(prefix: string, o: ListOpts, owner?: string) {
+    if (pub) return (await req(pubUrl("list", { prefix, sort: o.sort, desc: String(o.desc), offset: String(o.offset), limit: String(o.limit) }))).json() as Promise<Page>;
     const sec = isSecret(prefix);
     const q = new URLSearchParams({ prefix: sec ? sRel(prefix) : prefix, sort: o.sort, desc: String(o.desc), offset: String(o.offset), limit: String(o.limit) });
     if (owner) q.set("owner", owner);
@@ -317,6 +327,7 @@ export const api = {
   },
   /** Tìm theo tên trên toàn bộ file. */
   async search(q: string) {
+    if (pub) return (await req(pubUrl("search", { q }))).json() as Promise<Entry[]>;
     const r = await req(`/api/search?q=${encodeURIComponent(q)}&limit=300`);
     return r.json() as Promise<Entry[]>;
   },
@@ -401,16 +412,22 @@ export const api = {
   },
   /** URL stream trực tiếp (kèm ?t= cho <video>/<audio>/<img> không gửi được Bearer). */
   streamUrl(path: string, owner?: string) {
+    if (pub) return serverOrigin() + pubFile(path);
     const t = token();
     return `${serverOrigin()}${fileUrl(path)}?t=${encodeURIComponent(t ?? "")}${vtQ(path)}${owner ? `&owner=${encodeURIComponent(owner)}` : ownQ(path, "&")}`;
   },
   /** owner: thumbnail file người khác chia sẻ (mặc định theo file đang xem trong ViewerOverlay). */
   thumbUrl(path: string, s = 256, owner?: string) {
+    if (pub) return serverOrigin() + pubUrl("thumb", { path, s: String(s) });
     const t = token();
     const base = isSecret(path) ? `/api/secret/thumb/${encPath(sRel(path))}` : `/api/thumb/${encPath(path)}`;
     return `${serverOrigin()}${base}?s=${s}&t=${encodeURIComponent(t ?? "")}${vtQ(path)}${owner ? `&owner=${encodeURIComponent(owner)}` : ownQ(path, "&")}`;
   },
   async officeConfig(path: string) {
+    if (pub) {
+      const r = await req(`/api/s/${pub.token}/office/config`, { method: "POST", headers: JSON_H, body: JSON.stringify({ path, pw: pub.pw }) });
+      return r.json() as Promise<{ config: any; token: string }>;
+    }
     const sec = isSecret(path); // file bí mật: chỉ xem
     const owner = !sec && viewOwner ? { owner: viewOwner } : {}; // file được chia sẻ: server quyết xem/sửa theo quyền
     const r = await req(sec ? "/api/secret/office/config" : "/api/office/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: sec ? sRel(path) : path, ...owner }) });
@@ -691,6 +708,7 @@ export const api = {
   },
   /** Ném lỗi nếu file không tồn tại (HEAD, không tải nội dung). */
   async exists(path: string) {
+    if (pub) return void (await req(pubFile(path), { method: "HEAD" }));
     await req(fileUrl(path) + ownQ(path, "?"), { method: "HEAD" });
   },
   /** Bản cũ của file (mới nhất trước), ts = mtime bản cũ. */
@@ -704,6 +722,7 @@ export const api = {
     await req("/api/versions/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, ts }) });
   },
   async readBlob(path: string) {
+    if (pub) return (await req(pubFile(path))).blob();
     return (await req(fileUrl(path) + ownQ(path, "?"))).blob();
   },
   /** Upload đang dở của chính mình (để resume): cùng vùng, path và size. */
@@ -790,16 +809,28 @@ export const api = {
     return (await r.json()) as { path: string; ok: boolean; error?: string }[];
   },
   async readText(path: string) {
+    if (pub) return (await req(pubUrl("text", { path }))).text();
     const r = await req(fileUrl(path) + ownQ(path, "?"));
     return r.text();
   },
   /** Link tải cả thư mục thành zip (stream trực tiếp, không qua RAM). */
   zipDownloadUrl(path: string, owner?: string) {
-    const t = token();
-    return `${serverOrigin()}/api/zip/download?path=${encodeURIComponent(path)}&t=${encodeURIComponent(t ?? "")}${owner ? `&owner=${encodeURIComponent(owner)}` : ""}`;
+    return this.zipPickUrl(path, [], owner);
+  },
+  /** Zip các mục đã chọn (picks) trong thư mục `path`; picks rỗng = cả thư mục. */
+  zipPickUrl(path: string, picks: string[], owner?: string) {
+    if (pub) {
+      const u = new URLSearchParams(pubUrl("zip", { prefix: path }).split("?")[1]);
+      picks.forEach((p) => u.append("p", p));
+      return `${serverOrigin()}/api/s/${pub.token}/zip?${u}`;
+    }
+    const u = new URLSearchParams({ path, t: token() ?? "", ...(owner ? { owner } : {}) });
+    picks.forEach((p) => u.append("p", p));
+    return `${serverOrigin()}/api/zip/download?${u}`;
   },
   /** Link tải trực tiếp (token 10 phút, chỉ cho file này): trình duyệt stream xuống đĩa, không qua RAM. */
   async directDownloadUrl(path: string): Promise<string> {
+    if (pub) return serverOrigin() + pubFile(path);
     if (isSecret(path)) return `${this.streamUrl(path)}&download=1`;
     const r = await req("/api/dl", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
     const { token: t } = (await r.json()) as { token: string };

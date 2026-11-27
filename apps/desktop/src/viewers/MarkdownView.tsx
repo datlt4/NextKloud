@@ -498,6 +498,8 @@ export default function MarkdownView(props: {
   mark?: string;
   /** Gọi sau khi lưu bản sửa (parent tải lại nội dung). */
   onSaved?: () => void;
+  /** Link công khai: chỉ đọc, không sửa/ghi chú/backlink/mục lục vault; tts = được nghe (đã đăng nhập). */
+  pub?: { tts: boolean };
 }) {
   const list = createMemo(() => blocks(props.text));
   const [lb, setLb] = createSignal<{ src: string; alt: string } | null>(null);
@@ -536,14 +538,14 @@ export default function MarkdownView(props: {
     setEditing(false);
   });
   // --- backlinks: file nào nhắc tới file này
-  const [links] = createResource(() => props.path, (p) => api.backlinks(p).catch((): Backlink[] => []));
-  const [outline] = createResource(() => props.path, vaultOutline);
+  const [links] = createResource(() => !props.pub && props.path, (p) => api.backlinks(p).catch((): Backlink[] => []));
+  const [outline] = createResource(() => !props.pub && props.path, vaultOutline);
   /** Chỉ mục tra ảnh từ mục lục vault (null = ngoài vault -> dò mạng như cũ). */
   const imgIdx = createMemo(() => {
     const o = outline();
     return o ? buildImgIndex(o) : null;
   });
-  const reader = createReader(() => props.path, (m) => (props.onError ?? console.error)(m));
+  const reader = createReader(() => props.path, (m) => (props.onError ?? console.error)(m), !!props.pub);
   const plain = createMemo(() => list().map((b) => b.html.replace(/<br\s*\/?>/gi, " ").replace(/<[^>]+>/g, "").replace(/\s+/g, " ")));
   // Annotation -> block: ưu tiên đoạn chứa đúng câu đã trích (bài có thể đã sửa), không thì theo số thứ tự.
   const blockOf = (anchor: string, quote: string) => {
@@ -820,6 +822,7 @@ export default function MarkdownView(props: {
       onJump={jump}
       anchorOf={anchorOf}
       vault={outline() ? { outline: outline()!, path: props.path, onOpen: (p, h) => props.onOpenLink?.("/" + p, h) } : null}
+      hideNotes={!!props.pub}
     >
     <article
       class="md-body"
@@ -835,6 +838,7 @@ export default function MarkdownView(props: {
       onClick={onArticleClick}
     >
       <div class="md-bar">
+        <Show when={!props.pub || props.pub.tts}>
         <button onClick={readAll} disabled={playingAll() || editing()}>
           {playingAll() ? t("vw.mdReading") : (<><Icon name="listen" size={15} /> {t("vw.mdReadAll")}</>)}
         </button>
@@ -849,6 +853,8 @@ export default function MarkdownView(props: {
           <span class="muted sm">{t("vw.mdPrefetching", { a: prepping()![0], b: prepping()![1] })}</span>
           <button class="ghost" onClick={cancelPrefetch} title={t("c.cancel")}><Icon name="close" size={14} /></button>
         </Show>
+        </Show>
+        <Show when={!props.pub}>
         <Show when={!editing()} fallback={
           <>
             <button class="primary" onClick={saveEdit} disabled={saving() || draft() === props.text}>{saving() ? t("vw.mdSaving") : t("vw.mdSave")}</button>
@@ -856,6 +862,7 @@ export default function MarkdownView(props: {
           </>
         }>
           <button class="ghost" onClick={enterEdit} title={t("vw.mdEditTip")}><Icon name="edit" size={15} /> {t("vw.mdEdit")}</button>
+        </Show>
         </Show>
       </div>
       <Show when={editing() && mirrored()}>
@@ -873,7 +880,7 @@ export default function MarkdownView(props: {
           const quote = () => plain()[i()].slice(0, 160);
           return (
             <div class="md-block" data-anchor={`b${i()}`} data-level={b.level} classList={{ [`has-${st()}`]: !!st() }}>
-              <Show when={b.kind === "speak"}>
+              <Show when={b.kind === "speak" && (!props.pub || props.pub.tts)}>
                 <VoiceButton text={stripForSpeech(b.text)} onPlay={() => setBuiltHash(curHash())} />
               </Show>
               <div class="md-content" innerHTML={b.html} />
@@ -889,12 +896,14 @@ export default function MarkdownView(props: {
                     </button>
                   )}
                 </Show>
+                <Show when={!props.pub}>
                 <span class="md-tools">
                 <Show when={!bm()}>
                   <button title={t("vw.mdBookmarkIt")} onClick={() => reader.toggleBookmark(`b${i()}`, quote())}><Icon name="bookmark" size={14} /></button>
                 </Show>
                 <button title={t("vw.mdAddNote")} onClick={() => reader.startNote(`b${i()}`, quote())}><Icon name="note" size={14} /></button>
                 </span>
+                </Show>
               </div>
             </div>
           );

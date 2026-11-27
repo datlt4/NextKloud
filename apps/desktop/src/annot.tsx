@@ -18,8 +18,9 @@ export const STATE_UI: Record<NoteState, { icon: string; next: NoteState }> = {
 };
 
 /** Trạng thái chung của 1 trình đọc (md/pdf): danh sách annotation + sidebar. */
-export function createReader(path: () => string, onError: (m: string) => void) {
-  const [items, { mutate, refetch }] = createResource(path, (p) => api.annotations(p), { initialValue: [] });
+/** off: link công khai — không đọc/ghi annotation của tài khoản. */
+export function createReader(path: () => string, onError: (m: string) => void, off = false) {
+  const [items, { mutate, refetch }] = createResource(() => !off && path(), (p) => api.annotations(p), { initialValue: [] });
   const [tab, setTab] = createSignal<"toc" | "notes">("toc");
   const [sheet, setSheet] = createSignal(false); // mobile: bottom sheet đang mở
   const [focus, setFocus] = createSignal<string | null>(null); // annotation đang được trỏ tới
@@ -110,6 +111,8 @@ export function ReaderLayout(props: {
   anchorOf: (n: Node) => string | null;
   /** Đang ở trong vault Obsidian: mục lục cả vault. */
   vault?: VaultCtx | null;
+  /** Ẩn tab ghi chú + popup bôi đen (link công khai: không lộ dữ liệu cá nhân). */
+  hideNotes?: boolean;
   children: JSX.Element;
 }) {
   const r = props.r;
@@ -147,7 +150,7 @@ export function ReaderLayout(props: {
     <div class="reader">
       <div class="reader-main" ref={main}>
         {props.children}
-        <Show when={pop()}>
+        <Show when={!props.hideNotes ? pop() : null}>
           {(p) => (
             <div class="sel-pop glass" style={{ left: `${p().x}px`, top: `${p().y}px` }} onMouseDown={(e) => e.preventDefault()}>
               <button onClick={() => act(r.toggleBookmark)}><Icon name="bookmark" size={15} /> {t("nt.bm")}</button>
@@ -162,9 +165,11 @@ export function ReaderLayout(props: {
       <aside class="reader-side" classList={{ open: r.sheet() }}>
         <div class="rs-tabs">
           <button classList={{ on: r.tab() === "toc" }} onClick={() => r.setTab("toc")}><Icon name="toc" size={16} /> {t("nt.toc")}</button>
-          <button classList={{ on: r.tab() === "notes" }} onClick={() => r.setTab("notes")}>
-            <Icon name="note" size={16} /> {t("nt.notesTab")} <Show when={count()}><span class="rs-count">{fmtNum(count())}</span></Show>
-          </button>
+          <Show when={!props.hideNotes}>
+            <button classList={{ on: r.tab() === "notes" }} onClick={() => r.setTab("notes")}>
+              <Icon name="note" size={16} /> {t("nt.notesTab")} <Show when={count()}><span class="rs-count">{fmtNum(count())}</span></Show>
+            </button>
+          </Show>
           <button class="icon-btn sm rs-close" onClick={() => r.setSheet(false)} title={t("c.close")}><Icon name="close" size={16} /></button>
         </div>
         <div class="rs-body">
@@ -174,7 +179,7 @@ export function ReaderLayout(props: {
               return props.vault ? vaultTree({ ...props.vault, onOpen: (p, h) => { r.setSheet(false); props.vault!.onOpen(p, h); } }, props.toc, props.current, jump) : fileToc(props.toc, props.current, jump);
             })()} />
           </Show>
-          <Show when={r.tab() === "notes"}>
+          <Show when={r.tab() === "notes" && !props.hideNotes}>
             <NotesTab r={r} toc={props.toc} onJump={(a) => { props.onJump(a); r.setSheet(false); }} />
           </Show>
         </div>

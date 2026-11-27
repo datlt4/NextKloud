@@ -1,5 +1,5 @@
 import { For, Index, Match, Show, Switch, batch, createEffect, createMemo, createResource, createSignal, lazy, onCleanup, onMount, Suspense } from "solid-js";
-import { SECRET_ROOT, api, isSecret, isSelfHostedWeb, serverOrigin, vaultSeen, type Entry, type Me, type OnConflict, type XferOpts } from "./api";
+import { SECRET_ROOT, api, isSecret, isSelfHostedWeb, serverOrigin, setPubLink, vaultSeen, type Entry, type LinkMeta, type Me, type OnConflict, type XferOpts } from "./api";
 import { syncFromServer, ui, wallCss } from "./background";
 import { ResetForm } from "./forms";
 import { LookDialog } from "./look";
@@ -51,7 +51,7 @@ import { NotesPage } from "./annot";
 import { KanbanPage } from "./kanban";
 import { TrackerPage } from "./tracker";
 import { checkUpdate, installUpdate, restartApp, updateState } from "./updater";
-import { PublicPage, ShareDialog, SharedPage } from "./share";
+import { PublicGate, ShareDialog, SharedPage } from "./share";
 import { VersionsDialog } from "./versions";
 import { SecretGate, SecretSettings } from "./secret";
 import { syncAuth } from "./foldersync";
@@ -107,6 +107,11 @@ export default function App() {
   const [newMenu, setNewMenu] = createSignal(false);
   /** Token link công khai đang xem (#/s/<token>), kể cả khi đã đăng nhập. */
   const [pubToken, setPubToken] = createSignal<string | null>(null);
+  /** Link đã mở được (đúng mật khẩu): giao diện duyệt file chạy ở chế độ chỉ xem, path tương đối so với gốc link. */
+  const [pubLink, setPubLinkSig] = createSignal<{ meta: LinkMeta; pw: string } | null>(null);
+  const pub = () => !!pubLink();
+  /** Vị trí trong link chờ mở sau khi qua cổng mật khẩu (#/s/<token>/f/... hoặc /o/...). */
+  let pubStart = "";
   /** Tên file chưa trùng (thêm (2), (3)...), phần mở rộng luôn giữ nguyên. */
   const stripExt = (n: string, ext: string) => (n.toLowerCase().endsWith(`.${ext}`) ? n.slice(0, -(ext.length + 1)) : n);
   const uniqueName = async (base: string, ext: string) => {
@@ -181,7 +186,7 @@ export default function App() {
   };
 
   const fail = (e: any, what: string) => {
-    if (String(e?.message).includes("unauthorized")) logout();
+    if (String(e?.message).includes("unauthorized") && !pubToken()) logout();
     else setErr(`${what}: ${String(e?.message ?? e)}`);
   };
 
@@ -312,7 +317,10 @@ export default function App() {
   // URL giữ vị trí (thư mục / file đang mở / trang): F5 hay gửi link vẫn về đúng chỗ, nút Back của trình duyệt dùng được.
   const encP = (p: string) => p.split("/").map(encodeURIComponent).join("/");
   const routeOf = () => {
-    if (pubToken()) return `#/s/${pubToken()}`;
+    if (pubToken()) {
+      const o = open();
+      return `#/s/${pubToken()}${o && pubLink()?.meta.is_dir ? `/o/${encP(o.path)}` : prefix() ? `/f/${encP(prefix())}` : ""}`;
+    }
     const pg = page();
     if (pg === "settings") return `#/settings/${setTab()}`;
     if (pg === "kanban") return boardId() ? `#/kanban/${boardId()}` : "#/kanban";
@@ -327,7 +335,7 @@ export default function App() {
   let routing = false;
   const [routed, setRouted] = createSignal(false); // chưa đọc URL lúc mở app thì chưa ghi đè nó
   createEffect(() => {
-    if (!authed() || !routed()) return;
+    if ((!authed() && !pubLink()) || !routed() || (pubToken() && !pubLink())) return;
     const h = routeOf();
     if (!routing && location.hash !== h && !(h === "#/" && !location.hash)) history.pushState(null, "", h);
   });
@@ -391,13 +399,23 @@ export default function App() {
     routing = true;
     try {
       // link công khai: xem được cả khi đã đăng nhập, không đá về trang chủ
-      const pm = /^#\/s\/([A-Za-z0-9]+)/.exec(h);
+      const pm = /^#\/s\/([A-Za-z0-9]+)(?:\/(f|o)\/(.*))?$/.exec(h);
       if (pm) {
-        setPubToken(pm[1]);
-        setRouted(true);
+        const inner = pm[2] ? `${pm[2]}:${decodeURIComponent(pm[3] ?? "")}` : "";
+        if (pm[1] !== pubToken() || !pubLink()) {
+          // link mới: qua cổng (mật khẩu) trước, mở xong mới tới vị trí bên trong
+          setPubLink(null);
+          batch(() => { setPubLinkSig(null); setPubToken(pm[1]); });
+          pubStart = inner;
+        } else await pubGo(inner);
         return;
       }
-      setPubToken(null);
+      if (pubToken()) {
+        // rời link: về chế độ file của mình
+        setPubLink(null);
+        batch(() => { setPubToken(null); setPubLinkSig(null); setOpen(null); setSel(new Set<string>()); setQuery(""); setResults(null); });
+      }
+      if (!authed()) return;
       const m = /^#\/(f|o|notes|trash|tasks|shared|settings|kanban|secret)(?:\/(.*))?$/.exec(h);
       const rest = m?.[2] ? decodeURIComponent(m[2]) : "";
       if (m?.[1] === "secret") await openSecret();
@@ -418,11 +436,35 @@ export default function App() {
       setRouted(true);
     }
   };
+  /** Vào link sau khi qua cổng: bật chế độ link ở api rồi mở thư mục/file. */
+  const pubOpen = async (meta: LinkMeta, pw: string) => {
+    setPubLink({ token: pubToken()!, pw });
+    setPubLinkSig({ meta, pw });
+    const inner = pubStart;
+    pubStart = "";
+    routing = true;
+    try {
+      await pubGo(inner);
+    } finally {
+      routing = false;
+      setRouted(true);
+    }
+  };
+  const pubGo = async (inner: string) => {
+    const [k, rest] = [inner.slice(0, 2), inner.slice(2)];
+    if (!pubLink()!.meta.is_dir) {
+      // link 1 file: danh sách chỉ có file đó, mở luôn
+      await load("");
+      const f = entryAt(0);
+      if (f) await openEntry(f);
+    } else if (k === "o:" && rest) await openAt(rest, "");
+    else await load(k === "f:" ? rest : "");
+  };
   onMount(() => {
     // Back/Forward bắn cả popstate lẫn hashchange: chỉ route 1 lần cho mỗi hash
     let last = "";
     const pop = () => {
-      if (!authed() || (routing && location.hash === last)) return;
+      if ((!authed() && !pubToken() && !location.hash.startsWith("#/s/")) || (routing && location.hash === last)) return;
       last = location.hash;
       void go(location.hash);
     };
@@ -507,6 +549,7 @@ export default function App() {
 
   onMount(() => {
     if (authed()) enter();
+    else if (location.hash.startsWith("#/s/")) void go(location.hash);
     // Solid delegate click ở document -> stopPropagation không chặn được, check target.
     const close = (e: MouseEvent) => {
       if ((e.target as Element).closest?.(".menu-wrap")) return;
@@ -688,7 +731,7 @@ export default function App() {
     try {
       const kind = viewerKind(name);
       if (kind === "markdown") setOpen({ path, name, kind, text: await api.readText(path) });
-      else if (kind === "other") download(path, name);
+      else if (kind === "other" || (pub() && kind === "zip")) download(path, name);
       else setOpen({ path, name, kind });
     } catch (e) {
       fail(e, t("f.openFile"));
@@ -814,6 +857,28 @@ export default function App() {
     }
   };
 
+  /** Mục đang có trong danh sách (trang đã tải hoặc kết quả tìm). */
+  const entryOf = (path: string) => (results() ?? [...pages.values()].flat()).find((e) => e.path === path);
+  const clickUrl = (href: string) => {
+    const a = document.createElement("a");
+    a.href = href;
+    a.click();
+  };
+  /** Tải các mục đã chọn: 1 file thì tải thẳng, còn lại gói zip (thư mục chung gần nhất làm gốc). */
+  const downloadSel = () => {
+    const picks = [...sel()];
+    const one = picks.length === 1 ? entryOf(picks[0]) : undefined;
+    if (one && !one.is_dir) return void download(one.path, one.name);
+    let base = picks.map(parentOf).reduce((a, b) => {
+      const x = a.split("/"), y = b.split("/");
+      let i = 0;
+      while (i < x.length && i < y.length && x[i] === y[i]) i++;
+      return x.slice(0, i).join("/");
+    });
+    while (base && picks.includes(base)) base = parentOf(base);
+    clickUrl(api.zipPickUrl(base, picks));
+  };
+
   /** Tải lại sau thao tác: trang đang xem hoặc kết quả tìm kiếm. */
   const reload = async () => {
     const q = query().trim();
@@ -913,7 +978,7 @@ export default function App() {
         e.preventDefault();
         selectAll();
       } else if (e.key === "Escape") setSel(new Set<string>());
-      else if (e.key === "Delete" && sel().size) remove([...sel()]);
+      else if (e.key === "Delete" && sel().size && !pub()) remove([...sel()]);
     };
     document.addEventListener("keydown", key);
     onCleanup(() => document.removeEventListener("keydown", key));
@@ -921,7 +986,8 @@ export default function App() {
 
   // --- kéo thả để di chuyển (desktop) ---
   const DND = "application/x-nextkloud";
-  const canDrag = matchMedia("(pointer: fine)").matches; // cảm ứng: nhấn giữ là để chọn
+  const fineDrag = matchMedia("(pointer: fine)").matches; // cảm ứng: nhấn giữ là để chọn
+  const canDrag = () => fineDrag && !pub(); // link công khai: chỉ xem, không kéo để di chuyển
   const dragStart = (e: DragEvent, f: Entry) => {
     const paths = sel().has(f.path) ? [...sel()] : [f.path];
     e.dataTransfer!.setData(DND, JSON.stringify(paths));
@@ -930,7 +996,7 @@ export default function App() {
   const [dropOn, setDropOn] = createSignal<string | null>(null);
   const dropProps = (dest: () => string) => ({
     onDragOver: (e: DragEvent) => {
-      if (!e.dataTransfer?.types.includes(DND)) return;
+      if (!e.dataTransfer?.types.includes(DND) || pub()) return;
       e.preventDefault();
       setDropOn(dest());
     },
@@ -1020,12 +1086,12 @@ export default function App() {
   const externalDrag = (e: DragEvent) => !!e.dataTransfer?.types.includes("Files") && !e.dataTransfer.types.includes(DND);
   const panelDrop = {
     onDragEnter: (e: DragEvent) => {
-      if (page() !== "files" || !externalDrag(e)) return;
+      if (page() !== "files" || pub() || !externalDrag(e)) return;
       e.preventDefault();
       setDropping(true);
     },
     onDragOver: (e: DragEvent) => {
-      if (page() !== "files" || !externalDrag(e)) return;
+      if (page() !== "files" || pub() || !externalDrag(e)) return;
       e.preventDefault();
       setDropping(true);
     },
@@ -1034,7 +1100,7 @@ export default function App() {
     },
     onDrop: async (e: DragEvent) => {
       setDropping(false);
-      if (page() !== "files" || !externalDrag(e)) return;
+      if (page() !== "files" || pub() || !externalDrag(e)) return;
       e.preventDefault();
       // liệt kê hàng nghìn file mất vài giây: hiện ngay để user biết đang đọc, không tưởng bị treo
       setUpload({ name: t("f.dropReading"), pct: 0, left: 0 });
@@ -1094,6 +1160,7 @@ export default function App() {
               <Icon name="download" /> {t("f.zip")}
             </button>
           </Show>
+          <Show when={!pub()}>
           <button onClick={() => { closeMenu(); setDlg({ kind: "rename", f: p.f }); }}>
             <Icon name="edit" /> {t("f.rename")}
           </button>
@@ -1113,18 +1180,21 @@ export default function App() {
               <Icon name="users" /> {t("f.share")}
             </button>
           </Show>
+          </Show>
           <button onClick={() => { closeMenu(); toggleSel(p.f.path, true); lastIdx = -1; }}>
             <Icon name="check" /> {t("f.select")}
           </button>
-          <Show when={p.f.is_dir}>
+          <Show when={p.f.is_dir && !pub()}>
             <button onClick={() => { closeMenu(); toggleBookmark(p.f.path); }}>
               <Icon name="bookmark" /> {bookmarks().includes(p.f.path) ? t("nav.unbookmark") : t("nav.bookmark")}
             </button>
           </Show>
-          <div class="menu-sep" />
-          <button class="danger" onClick={() => { closeMenu(); remove([p.f.path]); }}>
-            <Icon name="trash" /> {t("f.delete")}
-          </button>
+          <Show when={!pub()}>
+            <div class="menu-sep" />
+            <button class="danger" onClick={() => { closeMenu(); remove([p.f.path]); }}>
+              <Icon name="trash" /> {t("f.delete")}
+            </button>
+          </Show>
         </div>
       </Show>
     </div>
@@ -1172,12 +1242,14 @@ export default function App() {
           </div>
         </Match>
 
-        {/* Link công khai: xem được khi chưa đăng nhập */}
-        <Match when={!authed() && /^#\/s\/[A-Za-z0-9]+/.test(location.hash)}>
-          <PublicPage />
+        {/* Link công khai (cả khi chưa đăng nhập): qua cổng mật khẩu rồi mới vào giao diện duyệt file */}
+        <Match when={pubToken() && !pubLink()}>
+          <Show when={pubToken()} keyed>
+            {(tk) => <PublicGate token={tk} onOpen={pubOpen} />}
+          </Show>
         </Match>
 
-        <Match when={!authed()}>
+        <Match when={!authed() && !pubLink()}>
           <div class="auth">
             <form class="auth-card glass" onSubmit={(e) => { e.preventDefault(); doLogin(); }}>
               <Logo />
@@ -1196,26 +1268,22 @@ export default function App() {
           </div>
         </Match>
 
-        <Match when={authed() && pubToken()}>
-          <Show when={pubToken()} keyed>
-            {(t) => <PublicPage token={t} />}
-          </Show>
-        </Match>
-
         <Match when={true}>
           <header class="hdr glass">
             <button class="icon-btn only-mobile" onClick={() => setSideOpen(!sideOpen())} title="Menu">
               <Icon name="menu" size={20} />
             </button>
-            <a href="#" class="hdr-brand" onClick={(e) => { e.preventDefault(); load(""); }}>
+            <a href="#" class="hdr-brand" onClick={(e) => { e.preventDefault(); pub() ? (location.hash = "#/") : load(""); }}>
               <Logo />
             </a>
             <div class="hdr-search hdr-search-inline">
               <Icon name="search" />
               <input value={query()} onInput={(e) => { setPage("files"); setQuery(e.currentTarget.value); }} placeholder={byContent() ? t("search.contentPh") : t("search.namePh")} />
-              <button class="search-mode" classList={{ on: byContent() }} onClick={() => setByContent(!byContent())} title={t("search.mode")}>
-                {byContent() ? t("search.content") : t("search.name")}
-              </button>
+              <Show when={!pub()}>
+                <button class="search-mode" classList={{ on: byContent() }} onClick={() => setByContent(!byContent())} title={t("search.mode")}>
+                  {byContent() ? t("search.content") : t("search.name")}
+                </button>
+              </Show>
               <Show when={query()}>
                 <button class="icon-btn sm" onClick={() => setQuery("")}><Icon name="close" size={14} /></button>
               </Show>
@@ -1223,7 +1291,10 @@ export default function App() {
             <button class="icon-btn search-fab" onClick={() => setMSearch(true)} title={t("c.search")}>
               <Icon name="search" size={20} />
             </button>
-            <div class="menu-wrap">
+            <Show when={pub()}>
+              <a class="btn ghost sm" href="#/">{authed() ? t("pub.mine") : t("login.go")}</a>
+            </Show>
+            <div class="menu-wrap" hidden={pub()}>
               <button class="avatar" onClick={(e) => {
                 if (userMenu()) { setUserMenu(false); return; }
                 setUserMenuUp(flipIfNeeded(e.currentTarget as HTMLElement));
@@ -1274,9 +1345,11 @@ export default function App() {
                 <div class="hdr-search hdr-search-modal">
                   <Icon name="search" />
                   <input autofocus value={query()} onInput={(e) => { setPage("files"); setQuery(e.currentTarget.value); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setMSearch(false); }} placeholder={byContent() ? t("search.contentPh") : t("search.namePh")} />
-                  <button class="search-mode" classList={{ on: byContent() }} onClick={() => setByContent(!byContent())} title={t("search.mode")}>
-                    {byContent() ? t("search.content") : t("search.name")}
-                  </button>
+                  <Show when={!pub()}>
+                    <button class="search-mode" classList={{ on: byContent() }} onClick={() => setByContent(!byContent())} title={t("search.mode")}>
+                      {byContent() ? t("search.content") : t("search.name")}
+                    </button>
+                  </Show>
                   <Show when={query()}>
                     <button class="icon-btn sm" onClick={() => setQuery("")}><Icon name="close" size={14} /></button>
                   </Show>
@@ -1292,7 +1365,17 @@ export default function App() {
             </Show>
             <aside class="side glass" classList={{ open: sideOpen() }}>
               <div class="side-brand only-mobile"><Logo /></div>
-              <nav>
+              <Show when={pubLink()}>
+                {(pl) => (
+                  <nav>
+                    <button class="nav" classList={{ active: !prefix() && !open() }} onClick={() => load("")} title={pl().meta.title}>
+                      <Icon name={pl().meta.is_dir ? "folder" : "file"} /> <span>{pl().meta.title}</span>
+                    </button>
+                    <a class="nav" href="#/"><Icon name={authed() ? "home" : "user"} /> {authed() ? t("pub.mine") : t("login.go")}</a>
+                  </nav>
+                )}
+              </Show>
+              <nav hidden={pub()}>
                 <button class="nav" classList={{ active: page() === "files" && !prefix() && !open() }} onClick={() => load("")}>
                   <Icon name="home" /> {t("nav.files")}
                 </button>
@@ -1323,7 +1406,7 @@ export default function App() {
                   <Icon name="settings" /> {t("nav.settings")}
                 </button>
               </nav>
-              <Show when={bookmarks().length}>
+              <Show when={!pub() && bookmarks().length}>
                 <div class="side-sep" />
                 <nav>
                   <For each={bookmarks()}>
@@ -1346,7 +1429,7 @@ export default function App() {
                 </nav>
               </Show>
               <div class="side-foot">
-                <Show when={me()}>
+                <Show when={me() && !pub()}>
                   <div class="quota">
                     <div class="quota-txt">
                       <Icon name="cloud" />
@@ -1451,15 +1534,22 @@ export default function App() {
                   <b>{t("f.selected", { n: fmtNum(sel().size) })}</b>
                   <button class="btn ghost sm" onClick={selectAll}>{t("f.selectAll")}</button>
                   <span class="grow" />
-                  <button class="btn ghost sm" onClick={() => setDlg({ kind: "move", paths: [...sel()] })}>
-                    <Icon name="move" /> <span class="hide-xs">{t("f.move")}</span>
-                  </button>
-                  <button class="btn ghost sm" onClick={() => setDlg({ kind: "copy", paths: [...sel()] })}>
-                    <Icon name="copy" /> <span class="hide-xs">{t("f.copy")}</span>
-                  </button>
-                  <button class="btn danger sm" onClick={() => remove([...sel()])}>
-                    <Icon name="trash" /> <span class="hide-xs">{t("f.delete")}</span>
-                  </button>
+                  <Show when={!inSecret()}>
+                    <button class="btn ghost sm" onClick={downloadSel}>
+                      <Icon name="download" /> <span class="hide-xs">{t("f.download")}</span>
+                    </button>
+                  </Show>
+                  <Show when={!pub()}>
+                    <button class="btn ghost sm" onClick={() => setDlg({ kind: "move", paths: [...sel()] })}>
+                      <Icon name="move" /> <span class="hide-xs">{t("f.move")}</span>
+                    </button>
+                    <button class="btn ghost sm" onClick={() => setDlg({ kind: "copy", paths: [...sel()] })}>
+                      <Icon name="copy" /> <span class="hide-xs">{t("f.copy")}</span>
+                    </button>
+                    <button class="btn danger sm" onClick={() => remove([...sel()])}>
+                      <Icon name="trash" /> <span class="hide-xs">{t("f.delete")}</span>
+                    </button>
+                  </Show>
                 </div>
               </Show>
               <div class="toolbar" classList={{ hidden: sel().size > 0 }}>
@@ -1469,6 +1559,7 @@ export default function App() {
                     <Icon name="back" /> {t("c.back")}
                   </button>
                 }>
+                  <Show when={!pub()}>
                   <button class="btn primary" onClick={() => fileInput.click()} disabled={!!upload()}>
                     <Icon name="upload" /> <span class="hide-xs">{t("c.upload")}</span>
                   </button>
@@ -1512,12 +1603,13 @@ export default function App() {
                   <button class="btn ghost" title={t("f.uploadDir")} onClick={() => dirInput.click()} disabled={!!upload()}>
                     <Icon name="folder" /> <span class="hide-xs">{t("f.uploadDir")}</span>
                   </button>
+                  </Show>
                 </Show>
                 <input ref={fileInput} type="file" multiple hidden onChange={(e) => doUpload(e.currentTarget.files)} />
                 <input ref={dirInput} type="file" multiple hidden {...{ webkitdirectory: true }} onChange={(e) => doUpload(e.currentTarget.files)} />
                 <nav class="crumbs">
-                  <button class="crumb" classList={{ drop: dropOn() === "" }} onClick={() => load("")} {...dropProps(() => "")}>
-                    <Icon name="home" size={16} />
+                  <button class="crumb" classList={{ drop: dropOn() === "", cur: pub() && !crumbs().length && !open() }} onClick={() => load("")} {...dropProps(() => "")}>
+                    <Show when={pubLink()} fallback={<Icon name="home" size={16} />}>{(pl) => <><Icon name="users" size={15} /> {pl().meta.title}</>}</Show>
                   </button>
                   <For each={crumbs()}>
                     {(c, i) => (
@@ -1547,8 +1639,20 @@ export default function App() {
                     <button class="btn ghost sm" title={t("f.lockNow")} onClick={lockSecret}><Icon name="lock" /> <span class="hide-xs">{t("f.lock")}</span></button>
                   </div>
                 </Show>
+                {/* ghim/bỏ ghim thư mục hiện tại (sidebar) */}
+                {/* tải cả thư mục đang xem (zip) */}
+                <Show when={!open() && !results() && !inSecret() && (pub() ? pubLink()!.meta.is_dir : !!prefix())}>
+                  <button class="icon-btn" title={t("f.dlAll")} onClick={() => clickUrl(api.zipDownloadUrl(prefix()))}>
+                    <Icon name="download" />
+                  </button>
+                </Show>
+                <Show when={page() === "files" && !pub() && !inSecret() && prefix() && !open()}>
+                  <button class="icon-btn" classList={{ "bm-on": (bookmarks() ?? []).includes(prefix()) }} title={(bookmarks() ?? []).includes(prefix()) ? t("nav.unbookmark") : t("nav.bookmark")} onClick={() => toggleBookmark(prefix())}>
+                    <Icon name="bookmark" />
+                  </button>
+                </Show>
                 <Show when={!open()}>
-                  <div class="seg">
+                  <div class="seg view-seg">
                     <button classList={{ on: view() === "list" }} title={t("f.list")} onClick={() => { setView("list"); localStorage.setItem("nk-view", "list"); }}>
                       <Icon name="list" />
                     </button>
@@ -1556,6 +1660,10 @@ export default function App() {
                       <Icon name="grid" />
                     </button>
                   </div>
+                  {/* mobile: 1 nút duy nhất chuyển list/grid */}
+                  <button class="icon-btn only-mobile" title={view() === "list" ? t("f.grid") : t("f.list")} onClick={() => { const v = view() === "list" ? "grid" : "list"; setView(v); localStorage.setItem("nk-view", v); }}>
+                    <Icon name={view() === "list" ? "grid" : "list"} />
+                  </button>
                 </Show>
               </div>
 
@@ -1573,7 +1681,7 @@ export default function App() {
                     <Suspense fallback={<p class="muted">{t("c.opening")}</p>}>
                       <Switch>
                         <Match when={open()!.kind === "markdown"}>
-                          <MarkdownView path={open()!.path} text={open()!.text ?? ""} anchor={open()!.anchor ?? null} onOpenLink={openWikiLink} onError={setErr} mark={open()!.mark} onSaved={() => openAt(open()!.path, "")} />
+                          <MarkdownView path={open()!.path} text={open()!.text ?? ""} anchor={open()!.anchor ?? null} onOpenLink={openWikiLink} onError={setErr} mark={open()!.mark} onSaved={() => openAt(open()!.path, "")} pub={pub() ? { tts: authed() } : undefined} />
                         </Match>
                         <Match when={open()!.kind === "text"}>
                           <TextView path={open()!.path} />
@@ -1588,7 +1696,7 @@ export default function App() {
                           <VideoView path={open()!.path} />
                         </Match>
                         <Match when={open()!.kind === "pdf"}>
-                          <PdfView path={open()!.path} onError={setErr} mark={open()!.mark} />
+                          <PdfView path={open()!.path} onError={setErr} mark={open()!.mark} readonly={pub()} />
                         </Match>
                         <Match when={open()!.kind === "zip"}>
                           <ZipView path={open()!.path} />
@@ -1597,10 +1705,10 @@ export default function App() {
                           <EpubView path={open()!.path} />
                         </Match>
                         <Match when={open()!.kind === "drawio"}>
-                          <DrawioView path={open()!.path} />
+                          <DrawioView path={open()!.path} readonly={pub()} />
                         </Match>
                         <Match when={open()!.kind === "excalidraw"}>
-                          <ExcalidrawView path={open()!.path} />
+                          <ExcalidrawView path={open()!.path} readonly={pub()} />
                         </Match>
                         <Match when={open()!.kind === "office"}>
                           <OfficeView path={open()!.path} />
@@ -1647,7 +1755,7 @@ export default function App() {
                                     style={pos()}
                                     classList={{ "menu-open": menuFor() === f().path, sel: sel().has(f().path), drop: f().is_dir && dropOn() === f().path }}
                                     onClick={(e) => rowClick(e, i(), f())}
-                                    draggable={canDrag}
+                                    draggable={canDrag()}
                                     onDragStart={(e) => dragStart(e, f())}
                                     {...(f().is_dir ? dropProps(() => f().path) : {})}
                                     {...pressProps(i, f)}
@@ -1702,7 +1810,7 @@ export default function App() {
                                         class="tile"
                                         classList={{ "menu-open": menuFor() === f().path, sel: sel().has(f().path), drop: f().is_dir && dropOn() === f().path }}
                                         onClick={(e) => rowClick(e, i(), f())}
-                                        draggable={canDrag}
+                                        draggable={canDrag()}
                                         onDragStart={(e) => dragStart(e, f())}
                                         {...(f().is_dir ? dropProps(() => f().path) : {})}
                                         {...pressProps(i, f)}
@@ -1738,7 +1846,7 @@ export default function App() {
                     <div class="empty">
                       <Icon name={results() ? "search" : "folder"} size={48} />
                       <p>{results() ? t("f.noResults") : t("f.emptyFolder")}</p>
-                      <Show when={!results()}>
+                      <Show when={!results() && !pub()}>
                         <button class="btn primary" onClick={() => fileInput.click()}>
                           <Icon name="upload" /> {t("f.uploadFile")}
                         </button>

@@ -181,6 +181,11 @@ pub fn api_router(state: AppState) -> Router {
         // link công khai: không cần đăng nhập
         .route("/api/s/:token", get(crate::shares::link_meta))
         .route("/api/s/:token/list", get(crate::shares::link_list))
+        .route("/api/s/:token/text", get(crate::shares::link_text))
+        .route("/api/s/:token/search", get(crate::shares::link_search))
+        .route("/api/s/:token/thumb", get(crate::shares::link_thumb))
+        .route("/api/s/:token/zip", get(crate::shares::link_zip))
+        .route("/api/s/:token/office/config", post(crate::shares::link_office_config))
         .route("/api/s/:token/file", get(crate::shares::link_file_root))
         .route("/api/s/:token/file/*path", get(crate::shares::link_file))
         .route("/api/habits", get(crate::tracker::list_habits).post(crate::tracker::create_habit))

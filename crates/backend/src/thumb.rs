@@ -53,7 +53,8 @@ fn hex_of(bytes: &[u8]) -> String {
     s
 }
 
-fn thumb_object(hash: &str) -> String {
+/// Key cache thumbnail dùng chung (kể cả link công khai): tránh render trùng.
+pub(crate) fn thumb_object(hash: &str) -> String {
     format!(".nextkloud/thumbs/{hash}.webp")
 }
 

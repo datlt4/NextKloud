@@ -97,7 +97,7 @@ pub struct DlClaims {
     pub exp: usize,
 }
 
-fn dl_token(user: uuid::Uuid, path: &str, enc: &EncodingKey) -> Result<String, AppError> {
+pub(crate) fn dl_token(user: uuid::Uuid, path: &str, enc: &EncodingKey) -> Result<String, AppError> {
     let exp = (chrono::Utc::now() + chrono::Duration::minutes(30)).timestamp() as usize;
     encode(&Header::default(), &DlClaims { sub: user, path: path.to_string(), exp }, enc)
         .map_err(|e| AppError::Internal(format!("ký dl token: {e}")))

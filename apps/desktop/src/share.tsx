@@ -286,79 +286,43 @@ function SharedIcon(props: { e: Entry; owner: string }) {
   );
 }
 
-/** Trang link công khai — dùng được khi chưa đăng nhập. */
-export function PublicPage(props: { token?: string } = {}) {
-  const m = /^#\/s\/([A-Za-z0-9]+)/.exec(location.hash);
-  const token = () => props.token ?? m?.[1] ?? "";
+/** Cổng link công khai: kiểm tra link, hỏi mật khẩu nếu cần; mở được thì App hiện giao diện duyệt file chỉ xem. */
+export function PublicGate(props: { token: string; onOpen: (m: LinkMeta, pw: string) => void }) {
   const [pw, setPw] = createSignal("");
   const [tried, setTried] = createSignal("");
   const [gone, setGone] = createSignal("");
   // 401 = sai/thiếu mật khẩu -> hiện ô nhập; lỗi khác = link hỏng/hết hạn.
   const [meta] = createResource(
-    () => ({ t: token(), p: tried() }),
+    () => ({ t: props.token, p: tried() }),
     async (v): Promise<LinkMeta | null> => {
-      if (!v.t) return null;
       try {
         setGone("");
-        return await api.linkMeta(v.t, v.p || undefined);
+        const m = await api.linkMeta(v.t, v.p || undefined);
+        if (!m.locked) props.onOpen(m, v.p);
+        return m;
       } catch (e) {
-        if (String((e as Error)?.message ?? e).includes("unauthorized")) {
-          return { title: "", is_dir: true, locked: true, expires_at: null };
-        }
+        if (String((e as Error)?.message ?? e).includes("unauthorized")) return { title: "", is_dir: true, locked: true, expires_at: null };
         setGone(errText(e));
         return null;
       }
     },
   );
-  const [prefix, setPrefix] = createSignal("");
-  const [page] = createResource(
-    () => {
-      const m = meta();
-      return m && !m.locked && m.is_dir ? { t: token(), p: prefix(), pw: tried() } : null;
-    },
-    (v) => api.linkList(v.t, v.p, v.pw || undefined).catch(() => ({ entries: [], dirs: 0, files: 0, bytes: 0 })),
-  );
   return (
     <div class="auth">
       <div class="auth-card glass pub">
         <h2>{t("sh.pubH2")}</h2>
-        <Show when={!token()}><p class="err">{t("sh.badLink")}</p></Show>
-        <Show when={token() && meta.loading}><p class="muted">{t("c.loading")}</p></Show>
-        <Show when={token() && !meta.loading && gone()}><p class="err">{gone()}</p></Show>
-        <Show when={token() ? meta() : null}>
-          {(md) => (
-            <>
-              <Show when={md().locked}>
-                <p class="muted">{t("sh.needPw")}</p>
-                <div class="sh-add">
-                  <input type="password" value={pw()} onInput={(e) => setPw(e.currentTarget.value)} placeholder={t("sh.pwLinkPh")} onKeyDown={(e) => e.key === "Enter" && setTried(pw())} />
-                  <button class="btn primary sm" onClick={() => setTried(pw())}>{t("c.open")}</button>
-                </div>
-              </Show>
-              <Show when={!md().locked && md().title}>
-                <h3>{md().title}</h3>
-                <Show when={md().is_dir} fallback={<a class="btn primary block" href={api.linkFileUrl(token(), "", tried() || undefined)} download={md().title}>{t("c.download")}</a>}>
-                  <Show when={prefix()}><button class="link" onClick={() => setPrefix(prefix().split("/").slice(0, -1).join("/"))}>← {prefix().split("/").slice(0, -1).pop() || t("sh.rootDir")}</button></Show>
-                  <For each={page()?.entries ?? []}>
-                    {(e) => {
-                      const rel = prefix() ? `${prefix()}/${e.name}` : e.name;
-                      return (
-                        <div class="sh-row">
-                          <Icon name={e.is_dir ? "folder" : "file"} size={15} class="ic muted" />
-                          <span>{e.name}</span>
-                          <span class="grow" />
-                          <Show when={e.is_dir} fallback={<a class="btn ghost sm" href={api.linkFileUrl(token(), rel, tried() || undefined)} download={e.name}>{t("sh.dl")}</a>}>
-                            <button class="btn ghost sm" onClick={() => setPrefix(rel)}>{t("c.open")}</button>
-                          </Show>
-                        </div>
-                      );
-                    }}
-                  </For>
-                </Show>
-              </Show>
-            </>
-          )}
+        <Show when={meta.loading}><p class="muted">{t("c.loading")}</p></Show>
+        <Show when={!meta.loading && gone()}><p class="err">{gone()}</p></Show>
+        <Show when={meta()?.locked}>
+          <Show when={meta()!.title}><h3>{meta()!.title}</h3></Show>
+          <p class="muted">{t("sh.needPw")}</p>
+          <Show when={tried() && !meta.loading}><p class="err">{t("sh.badPw")}</p></Show>
+          <div class="sh-add">
+            <input type="password" value={pw()} onInput={(e) => setPw(e.currentTarget.value)} placeholder={t("sh.pwLinkPh")} onKeyDown={(e) => e.key === "Enter" && setTried(pw())} />
+            <button class="btn primary sm" onClick={() => setTried(pw())}>{t("c.open")}</button>
+          </div>
         </Show>
+        <a class="link sm" href="#/">{t("login.go")}</a>
       </div>
     </div>
   );

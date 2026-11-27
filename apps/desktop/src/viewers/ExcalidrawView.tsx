@@ -11,7 +11,8 @@ import { t } from "../i18n";
  * Sửa .excalidraw bằng editor chính chủ (component React, mount vào 1 root React riêng
  * vì app là Solid). Chỉ tự lưu khi nét vẽ đổi (không lưu lúc mới mở / chỉ đổi zoom), debounce 2s.
  */
-export default function ExcalidrawView(props: { path: string }) {
+/** readonly: link công khai — chỉ xem, không lưu. */
+export default function ExcalidrawView(props: { path: string; readonly?: boolean }) {
   const [err, setErr] = createSignal("");
   const [ready, setReady] = createSignal(false);
   // "Full màn hình" = lấp đầy khung trình duyệt (giữ chrome/nút điều hướng), KHÔNG dùng Fullscreen API.
@@ -24,7 +25,7 @@ export default function ExcalidrawView(props: { path: string }) {
 
   const onChange = (elements: any, appState: any, files: any) => {
     const v = getSceneVersion(elements);
-    if (v === lastVer) return;
+    if (v === lastVer || props.readonly) return;
     lastVer = v;
     clearTimeout(timer);
     timer = setTimeout(() => {
@@ -46,7 +47,7 @@ export default function ExcalidrawView(props: { path: string }) {
       }
       lastVer = getSceneVersion(data.elements);
       root = createRoot(host);
-      root.render(createElement(Excalidraw as any, { initialData: data, onChange }));
+      root.render(createElement(Excalidraw as any, { initialData: data, onChange, viewModeEnabled: !!props.readonly }));
       setReady(true);
     },
     (e: any) => !dead && setErr(String(e?.message ?? e)),

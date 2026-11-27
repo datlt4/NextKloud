@@ -137,8 +137,9 @@ function PdfPage(props: { doc: pdfjs.PDFDocumentProxy; n: number; scale: number;
 }
 
 /** PDF: 1 trang / cuộn liên tục / 2 trang / 2 trang liên tục + zoom. Lazy import nên không phình bundle chính. */
-export default function PdfView(props: { path: string; onError?: (m: string) => void; mark?: string }) {
-  const reader = createReader(() => props.path, (m) => (props.onError ?? console.error)(m));
+export default function PdfView(props: { path: string; onError?: (m: string) => void; mark?: string; readonly?: boolean }) {
+  const live = !props.readonly;
+  const reader = createReader(() => props.path, (m) => (props.onError ?? console.error)(m), !live);
   const [toc, setToc] = createSignal<TocItem[]>([]);
   const here = () => `p${page()}`;
   const pageAnns = () => reader.items().filter((a) => a.anchor === here());
@@ -362,7 +363,7 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
   const onErr = (m: string) => !cancelled && setErr(m);
 
   return (
-    <ReaderLayout r={reader} toc={toc()} current={toc().filter((t) => +t.anchor.slice(1) <= page()).pop()?.anchor ?? ""} onJump={jump} anchorOf={() => here()}>
+    <ReaderLayout r={reader} toc={toc()} current={toc().filter((t) => +t.anchor.slice(1) <= page()).pop()?.anchor ?? ""} onJump={jump} anchorOf={() => here()} hideNotes={!live}>
     <div class="pdf-wrap" ref={host} classList={{ "vw-wide": wide() }}>
       <div class="pdf-bar" classList={{ hide: barHidden() }}>
         <button class="icon-btn" onClick={() => go(-1)} disabled={page() <= 1} title={t("vw.prevPage")}><Icon name="back" /></button>
@@ -384,10 +385,12 @@ export default function PdfView(props: { path: string; onError?: (m: string) => 
           /{pages() || "…"}
         </span>
         <button class="icon-btn" onClick={() => go(1)} disabled={(spread() && !scrolling() ? shown()[shown().length - 1] : page()) >= pages()} title={t("vw.nextPage")}><Icon name="next" /></button>
-        <button class="icon-btn" classList={{ "bm-on": !!bm() }} onClick={() => reader.toggleBookmark(here(), t("vw.pageOf", { p: page() }))} title={bm() ? t("vw.bmDel") : t("vw.bmAdd")}>
-          <Icon name="bookmark" />
-        </button>
-        <button class="icon-btn" onClick={() => reader.startNote(here(), "")} title={t("vw.notePage")}><Icon name="note" /></button>
+        <Show when={live}>
+          <button class="icon-btn" classList={{ "bm-on": !!bm() }} onClick={() => reader.toggleBookmark(here(), t("vw.pageOf", { p: page() }))} title={bm() ? t("vw.bmDel") : t("vw.bmAdd")}>
+            <Icon name="bookmark" />
+          </button>
+          <button class="icon-btn" onClick={() => reader.startNote(here(), "")} title={t("vw.notePage")}><Icon name="note" /></button>
+        </Show>
         <Show when={st()}>
           {(s) => (
             <button class={`mk mk-note st-${s()}`} onClick={() => reader.showNotes(pageAnns().find((a) => a.kind === "note")!.id)} title={t("nt.viewNotes")}>

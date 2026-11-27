@@ -298,43 +298,100 @@ pub async fn extract(
 pub async fn download_dir(
     State(s): State<AppState>,
     headers: HeaderMap,
-    Query(q): Query<HashMap<String, String>>,
+    Query(pairs): Query<Vec<(String, String)>>,
 ) -> Result<Response, AppError> {
+    let q: HashMap<String, String> = pairs.iter().cloned().collect();
     let user = auth_opt(&headers, &q, &s).await.ok_or_else(|| AppError::Auth("missing token".into()))?;
     let raw = q.get("path").cloned().unwrap_or_default();
     let prefix = if raw.trim().is_empty() { String::new() } else { crate::ops::user_path(&raw)? };
     // thư mục người khác chia sẻ: cần quyền xem trên đúng prefix (gốc "" thì resolve từ chối)
     let oid = crate::shares::resolve(&s.db, user.id, q.get("owner").and_then(|v| v.parse().ok()), &prefix, false).await?;
-    let like = format!("{}/%", crate::index::like_escape(&prefix));
-    let files: Vec<(String, i64, i64)> = if prefix.is_empty() {
-        sqlx::query_as("SELECT path, size, modified FROM files WHERE user_id = $1 AND NOT is_dir AND path NOT LIKE '.nextkloud/%' ORDER BY path LIMIT 200001")
+    // ?p= lặp: chỉ tải các mục đã chọn trong `path`
+    let picks = pairs
+        .iter()
+        .filter(|(k, _)| k == "p")
+        .map(|(_, v)| crate::ops::user_path(v))
+        .collect::<Result<Vec<_>, _>>()?;
+    let files = collect(&s.db, &s.store, oid, &prefix, &picks).await?;
+    Ok(respond_zip(&s, &headers, oid, files, prefix).await?)
+}
+
+/// File cần zip: cả cây dưới `base` (picks rỗng) hoặc các mục đã chọn (file lẻ / cả thư mục), mọi mục phải nằm trong `base`.
+pub(crate) async fn collect(db: &sqlx::PgPool, store: &Store, oid: uuid::Uuid, base: &str, picks: &[String]) -> Result<Vec<(String, i64, i64)>, AppError> {
+    let inside = |p: &str| base.is_empty() || p == base || p.starts_with(&format!("{base}/"));
+    if picks.iter().any(|p| !inside(p) || p == base) {
+        return Err(AppError::BadRequest("mục chọn nằm ngoài thư mục đang tải".into()));
+    }
+    let roots: Vec<&str> = if picks.is_empty() { vec![base] } else { picks.iter().map(String::as_str).collect() };
+    let mut out: std::collections::BTreeMap<String, (i64, i64)> = Default::default();
+    for root in roots {
+        let rows: Vec<(String, i64, i64)> = if root.is_empty() {
+            sqlx::query_as("SELECT path, size, modified FROM files WHERE user_id = $1 AND NOT is_dir AND path NOT LIKE '.nextkloud/%' ORDER BY path LIMIT 200001")
+                .bind(oid)
+                .fetch_all(db)
+                .await?
+        } else {
+            sqlx::query_as(
+                "SELECT path, size, modified FROM files WHERE user_id = $1 AND NOT is_dir AND path NOT LIKE '.nextkloud/%'
+                 AND (path = $2 OR path LIKE $3) ORDER BY path LIMIT 200001",
+            )
             .bind(oid)
-            .fetch_all(&s.db)
+            .bind(root)
+            .bind(format!("{}/%", crate::index::like_escape(root)))
+            .fetch_all(db)
             .await?
-    } else {
-        sqlx::query_as(
-            "SELECT path, size, modified FROM files WHERE user_id = $1 AND NOT is_dir AND path NOT LIKE '.nextkloud/%'
-             AND (path = $2 OR path LIKE $3) ORDER BY path LIMIT 200001",
-        )
-        .bind(oid)
-        .bind(&prefix)
-        .bind(&like)
-        .fetch_all(&s.db)
-        .await?
-    };
-    if files.len() > 200_000 {
-        return Err(AppError::BadRequest("thư mục quá nhiều file (>200.000), chia nhỏ ra".into()));
-    }
-    let total: i64 = files.iter().map(|f| f.1).sum();
-    if total > 100 * 1024 * 1024 * 1024 {
-        return Err(AppError::BadRequest("thư mục quá lớn (>100GB), chia nhỏ ra".into()));
-    }
-    if files.is_empty() {
+        };
         // phân biệt thư mục rỗng (zip chỉ có entry thư mục) với path không tồn tại
-        if prefix.is_empty() || crate::ops::kind(&s.db, oid, &prefix).await?.is_none() {
+        if rows.is_empty() && (root.is_empty() || crate::ops::kind(db, oid, root).await?.is_none()) {
             return Err(AppError::NotFound("thư mục trống hoặc không tồn tại".into()));
         }
+        let have = existing(store, oid, root).await?;
+        out.extend(rows.into_iter().filter(|(p, _, _)| have.contains(p.as_str())).map(|(p, sz, m)| (p, (sz, m))));
+        if out.len() > 200_000 {
+            return Err(AppError::BadRequest("quá nhiều file (>200.000), chia nhỏ ra".into()));
+        }
     }
+    let files: Vec<(String, i64, i64)> = out.into_iter().map(|(p, (sz, m))| (p, sz, m)).collect();
+    let total: i64 = files.iter().map(|f| f.1).sum();
+    if total > 100 * 1024 * 1024 * 1024 {
+        return Err(AppError::BadRequest("quá lớn (>100GB), chia nhỏ ra".into()));
+    }
+    Ok(files)
+}
+
+/// File thật sự có trong kho dưới `root` (chỉ mục có thể lệch: file mất -> stream zip đứt giữa chừng, nên bỏ trước).
+async fn existing(store: &Store, oid: uuid::Uuid, root: &str) -> Result<std::collections::HashSet<String>, AppError> {
+    use futures::TryStreamExt as _;
+    let mut have = std::collections::HashSet::new();
+    if !root.is_empty() && store.op.stat(&store.key(oid, root)?).await.is_ok_and(|m| !m.is_dir()) {
+        have.insert(root.to_string());
+        return Ok(have);
+    }
+    let dir = if root.is_empty() { format!("{oid}/") } else { format!("{}/", store.key(oid, root)?) };
+    let skip = format!("{oid}/").len();
+    let mut l = match store.op.lister_with(&dir).recursive(true).await {
+        Ok(l) => l,
+        Err(e) if e.kind() == opendal::ErrorKind::NotFound => return Ok(have),
+        Err(e) => return Err(crate::files::StoreError::from(e).into()),
+    };
+    while let Some(e) = l.try_next().await.map_err(crate::files::StoreError::from)? {
+        if !e.metadata().is_dir() {
+            have.insert(e.path()[skip..].to_string());
+        }
+    }
+    Ok(have)
+}
+
+/// Lõi tải zip dùng chung (tải thư mục + link công khai): stream trực tiếp kiểu store,
+/// RAM cố định, hỗ trợ Range + ETag. `prefix` là gốc để đặt tên file trong zip.
+pub(crate) async fn respond_zip(
+    s: &AppState,
+    headers: &HeaderMap,
+    oid: uuid::Uuid,
+    files: Vec<(String, i64, i64)>,
+    prefix: String,
+) -> Result<Response, AppError> {
+    let total: i64 = files.iter().map(|f| f.1).sum();
     // tên trong zip: đường dẫn tương đối so với thư mục được tải
     // (path là file lẻ -> zip chứa đúng 1 file đó)
     let rel = |p: &str| {
@@ -1011,7 +1068,7 @@ mod tests {
                     hm.insert(k, HeaderValue::from_str(&v).unwrap());
                 }
                 let q = HashMap::from([("path".to_string(), "z".to_string())]);
-                let r = download_dir(State(s), hm, Query(q)).await.unwrap();
+                let r = download_dir(State(s), hm, Query(q.into_iter().collect())).await.unwrap();
                 let (st, hd) = (r.status(), r.headers().clone());
                 let body = axum::body::to_bytes(r.into_body(), 1 << 24).await.unwrap().to_vec();
                 (st, hd, body)
