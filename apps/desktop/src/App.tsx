@@ -399,7 +399,7 @@ export default function App() {
     routing = true;
     try {
       // link công khai: xem được cả khi đã đăng nhập, không đá về trang chủ
-      const pm = /^#\/s\/([A-Za-z0-9]+)(?:\/(f|o)\/(.*))?$/.exec(h);
+      const pm = /^#\/s\/([A-Za-z0-9]+)\/?(?:(f|o)\/(.*))?$/.exec(h); // chấp nhận "/" thừa cuối token
       if (pm) {
         const inner = pm[2] ? `${pm[2]}:${decodeURIComponent(pm[3] ?? "")}` : "";
         if (pm[1] !== pubToken() || !pubLink()) {
@@ -438,11 +438,12 @@ export default function App() {
   };
   /** Vào link sau khi qua cổng: bật chế độ link ở api rồi mở thư mục/file. */
   const pubOpen = async (meta: LinkMeta, pw: string) => {
+    // bật routing trước khi set pubLink: không thì effect ghi URL gốc link đè mất /o/... (F5)
+    routing = true;
     setPubLink({ token: pubToken()!, pw });
     setPubLinkSig({ meta, pw });
     const inner = pubStart;
     pubStart = "";
-    routing = true;
     try {
       await pubGo(inner);
     } finally {
