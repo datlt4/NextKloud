@@ -183,6 +183,7 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/s/:token/list", get(crate::shares::link_list))
         .route("/api/s/:token/text", get(crate::shares::link_text))
         .route("/api/s/:token/search", get(crate::shares::link_search))
+        .route("/api/s/:token/tts", post(crate::shares::link_tts))
         .route("/api/s/:token/thumb", get(crate::shares::link_thumb))
         .route("/api/s/:token/zip", get(crate::shares::link_zip))
         .route("/api/s/:token/office/config", post(crate::shares::link_office_config))

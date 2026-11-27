@@ -56,6 +56,11 @@ pub struct SynthBody {
 }
 
 pub async fn synthesize(State(s): State<AppState>, _u: AuthUser, Json(b): Json<SynthBody>) -> Result<Response, AppError> {
+    forward(&s, b).await
+}
+
+/// Gửi sang service TTS (mp3 cache theo hash nội dung, dùng chung cho mọi người).
+pub async fn forward(s: &AppState, b: SynthBody) -> Result<Response, AppError> {
     if b.text.len() > 20000 {
         return Err(AppError::BadRequest("text too long".into()));
     }

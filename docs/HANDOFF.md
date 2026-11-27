@@ -1,12 +1,12 @@
 # NextKloud — Handoff (chi tiết)
 
 Tài liệu bàn giao cho agent kế tiếp (review hoặc tiếp quản). Đọc hết file này trước khi sửa code.
-Cập nhật: 2026-11-27 · version 0.1.63 · việc còn lại tổng hợp ở mục 9.0 (bảng "Còn lại 26/11").
+Cập nhật: 2026-11-27 · version 0.1.64 · việc còn lại tổng hợp ở mục 9.0 (bảng "Còn lại 26/11").
 
 > Repo **public**. Không ghi secret, mật khẩu, nội dung file hay nội dung card Kanban của người dùng vào repo (kể cả trong tài liệu này).
 
 ## Link công khai + tải nhiều mục (0.1.63, 27/11)
-- **Link công khai dùng chính giao diện duyệt file** (bỏ trang `PublicPage` riêng): `#/s/<token>[/f/<dir>|/o/<file>]`. `PublicGate` (share.tsx) chỉ kiểm tra link + hỏi mật khẩu; mở được thì `App` bật `api.setPubLink` -> `files/search/readText/readBlob/exists/streamUrl/thumbUrl/officeConfig/directDownloadUrl/zipPickUrl` đi qua `/api/s/:token/*`, path **tương đối so với gốc link**. Chế độ link (`pub()`): ẩn upload/tạo/sửa/xoá/di chuyển/chia sẻ/ghim, sidebar chỉ còn gốc link + "Đăng nhập"/"File của tôi"; md/pdf không ghi chú/bookmark/sửa/backlink (TTS chỉ khi đã đăng nhập); drawio/excalidraw chỉ xem; zip -> tải.
+- **Link công khai dùng chính giao diện duyệt file** (bỏ trang `PublicPage` riêng): `#/s/<token>[/f/<dir>|/o/<file>]`. `PublicGate` (share.tsx) chỉ kiểm tra link + hỏi mật khẩu; mở được thì `App` bật `api.setPubLink` -> `files/search/readText/readBlob/exists/streamUrl/thumbUrl/officeConfig/directDownloadUrl/zipPickUrl` đi qua `/api/s/:token/*`, path **tương đối so với gốc link**. Chế độ link (`pub()`): ẩn upload/tạo/sửa/xoá/di chuyển/chia sẻ/ghim, sidebar chỉ còn gốc link + "Đăng nhập"/"File của tôi"; md/pdf không ghi chú/bookmark/sửa/backlink; nghe đọc (đọc cả bài, tải trước) không cần đăng nhập qua `POST /api/s/:token/tts` (cache mp3 server chung với user); drawio/excalidraw chỉ xem; zip -> tải.
 - **Backend** (`shares.rs`): `link_list` có sort/phân trang, trả path tương đối (link 1 file -> 1 dòng); `GET /api/s/:token/search`; `link_zip` = `?prefix=` + `?p=` lặp, dùng chung `zip::collect` với `/api/zip/download?path=&p=` (tải nhiều mục cho user thường). `scope_path` chặn vượt phạm vi.
 - **User thường**: thanh chọn có "Tải xuống" (1 file tải thẳng, nhiều mục -> zip), nút "Tải tất cả (zip)" khi đang trong thư mục, nút ghim/bỏ ghim thư mục hiện tại, mobile 1 nút chuyển list/grid.
 

@@ -776,6 +776,17 @@ pub async fn link_zip(
     crate::zip::respond_zip(&s, &headers, r.owner, files, base).await
 }
 
+/// Nghe đọc qua link công khai (không cần đăng nhập), như user thường.
+pub async fn link_tts(
+    State(s): State<AppState>,
+    Path(token): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+    Json(b): Json<crate::tts::SynthBody>,
+) -> Result<Response, AppError> {
+    public_share(&s.db, &token, q.get("pw").map(String::as_str).unwrap_or("")).await?;
+    crate::tts::forward(&s, b).await
+}
+
 /// Cấu hình OnlyOffice xem trước qua link công khai (luôn chỉ xem, không lưu).
 #[derive(Deserialize)]
 pub struct LinkOfficeBody {

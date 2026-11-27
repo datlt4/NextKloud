@@ -854,7 +854,9 @@ export async function speak(text: string, provider?: "auto" | "edge" | "google",
   const hit = audioCache.get(key);
   if (hit) return hit;
   const t = token();
-  const r = await fetch(serverOrigin() + "/api/tts/synthesize", {
+  // link công khai: đọc qua link (không cần đăng nhập), cache mp3 phía server dùng chung với mọi người
+  const ep = pub ? pubUrl("tts") : "/api/tts/synthesize";
+  const r = await fetch(serverOrigin() + ep, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
     body: JSON.stringify({ text, provider: provider ?? "auto" }),
