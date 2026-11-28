@@ -12,8 +12,15 @@ use std::collections::HashMap;
 
 use crate::state::{AppError, AppState, AuthUser};
 
-async fn passthrough(res: reqwest::Response, content_type: &str) -> Result<Response, AppError> {
+async fn passthrough(res: reqwest::Response, fallback_type: &str) -> Result<Response, AppError> {
     let status = res.status();
+    // Giữ content-type của service TTS (mp3 edge/google, wav vieneu).
+    let content_type = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or(fallback_type)
+        .to_string();
     let bytes = res.bytes().await.map_err(|e| AppError::Internal(format!("tts: {e}")))?;
     Ok(Response::builder()
         .status(status)

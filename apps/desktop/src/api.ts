@@ -847,7 +847,7 @@ export function hashText(s: string): string {
 
 const audioCache = new Map<string, string>();
 
-export async function speak(text: string, provider?: "auto" | "edge" | "google", signal?: AbortSignal): Promise<string> {
+export async function speak(text: string, provider?: "auto" | "edge" | "google" | "vieneu", signal?: AbortSignal): Promise<string> {
   // Qua backend proxy (/api/tts/*) để chạy được trên domain public,
   // không cần mở port 8016 ra ngoài.
   const key = hashText(text);

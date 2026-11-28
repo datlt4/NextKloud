@@ -60,6 +60,8 @@ services:
 
   # TTS giọng đọc: edge-tts (Microsoft Neural, miễn phí) + detect EN/VI/ZH
   # bằng LibreTranslate sẵn có trên mini PC (:8015).
+  # Tiếng Việt ưu tiên VienEU (service `vieneu` bên dưới, giọng Ngọc Huyền);
+  # edge-tts + Google dịch làm backup khi VienEU không chạy.
   tts:
     image: "${NEXTKLOUD_TTS_IMAGE:?set NEXTKLOUD_TTS_IMAGE=<dockerhub_user>/nextkloud-tts}:latest"
     container_name: nextkloud-tts
@@ -69,10 +71,24 @@ services:
     environment:
       - LIBRETRANSLATE_URL=http://host.docker.internal:8015
       - TTS_RATE=+0%
+      # Trong stack gọi qua tên service (tương đương 127.0.0.1:7861 trên mini PC).
+      - VIENEU_URL=http://vieneu:7861
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - /mnt/das_8tb/nextkloud_volume/tts:/data
+    depends_on:
+      - vieneu
+
+  # Adapter VienEU TTS tiếng Việt (Gradio, CPU): giọng Ngọc Huyền.
+  # Image build sẵn trên mini PC (hienanh/vieneu-cpu). Chạy lẻ trước đây thì xoá:
+  #   docker stop vieneu-cpu && docker rm vieneu-cpu
+  vieneu:
+    image: hienanh/vieneu-cpu:latest
+    container_name: nextkloud-vieneu
+    restart: unless-stopped
+    ports:
+      - "7861:7861" # Gradio API trực tiếp (không qua backend)
 
   # RustFS: S3-compatible, Apache-2.0 (thay MinIO community đã rời Docker Hub). Ghim version.
   rustfs:
