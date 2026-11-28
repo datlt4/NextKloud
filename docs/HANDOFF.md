@@ -1,7 +1,7 @@
 # NextKloud — Handoff (chi tiết)
 
 Tài liệu bàn giao cho agent kế tiếp (review hoặc tiếp quản). Đọc hết file này trước khi sửa code.
-Cập nhật: 2026-11-27 · version 0.1.69 · việc còn lại tổng hợp ở mục 9.0 (bảng "Còn lại 26/11").
+Cập nhật: 2026-11-27 · version 0.1.70 · việc còn lại tổng hợp ở mục 9.0 (bảng "Còn lại 26/11").
 
 > Repo **public**. Không ghi secret, mật khẩu, nội dung file hay nội dung card Kanban của người dùng vào repo (kể cả trong tài liệu này).
 
@@ -16,6 +16,7 @@ Cập nhật: 2026-11-27 · version 0.1.69 · việc còn lại tổng hợp ở
 - **Backend** (`tts.rs`): proxy giữ nguyên content-type upstream; request TTS timeout 600s riêng (VienEU CPU ~30 ký tự/giây, đoạn 5000 ký tự mất vài phút). Frontend `speak()` thêm kiểu `"vieneu"` (mọi chỗ gọi vẫn `auto`, không đổi hành vi).
 - **Compose** (`docker/server/docker-compose.yml`): service `vieneu` mới (image `hienanh/vieneu-cpu:latest`, port 7861); `tts` thêm `VIENEU_URL=http://vieneu:7861` + `depends_on: vieneu`. CI `build.yml` tự rebuild image tts khi `docker/tts/**` đổi.
 - **Đã test local** (trỏ `VIENEU_URL` sang `192.168.0.186:7861`): `vieneu` -> wav 24kHz OK; `auto`+vi -> trúng cache VienEU; `auto`+en -> edge mp3; VienEU chết + `auto`+vi -> rớt edge mp3 200; `vieneu` ép khi chết -> 502 rõ lý do.
+- **Giọng:** image `hienanh/vieneu-cpu` (source ở `/home/mini/vieneu-cpu` trên mini, ngoài repo) trước dùng v3-Nano — không có preset Ngọc Huyền nên ra giọng nam mặc định Minh Quân. Đã đổi sang v3-Turbo ONNX/CPU + `infer(voice="Ngọc Huyền")` (preset trùng với image GPU `hienanh/vieneu`), 48 kHz; câu ngắn ~8s, chậm hơn thời gian thực ~2 lần.
 - **0.1.69:** xoá toàn bộ cache TTS cũ trên mini (`/mnt/das_8tb/nextkloud_volume/tts`), tiếng Việt tạo lại bằng VienEU khi nghe/tải trước.
 - **Triển khai trên mini PC:** kill container chạy lẻ (`docker stop vieneu-cpu && docker rm vieneu-cpu`), pull code mới, `docker compose up -d` (tts rebuild image mới — CI build từ `docker/tts/Dockerfile`, hoặc build local).
 
