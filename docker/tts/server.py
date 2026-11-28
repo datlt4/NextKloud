@@ -1,8 +1,8 @@
 """NextKloud TTS: edge-tts (giọng Microsoft, miễn phí) + detect ngôn ngữ bằng LibreTranslate.
 
 POST /synthesize {"text": "...", "voice"?: "vi-VN-HoaiMyNeural", "rate"?: "+0%", "provider"?: "auto"}
-  -> mp3/wav (cache theo hash). Không truyền voice = tự detect EN/VI/ZH.
-  provider "auto" (mặc định): tiếng Việt -> VienEU (192.168.0.186:7861, giọng Ngọc Huyền),
+  -> mp3 (cache theo hash). Không truyền voice = tự detect EN/VI/ZH.
+  provider "auto" (mặc định): tiếng Việt -> VienEU (VIENEU_URL, giọng Ngọc Huyền),
     engine khác -> edge-tts trước, google khi edge lỗi/throttle.
   provider "vieneu" | "edge" | "google": ép dùng đúng 1 engine.
 GET  /detect?q=...     -> {"language": "vi", "confidence": 0.9}
@@ -11,10 +11,12 @@ GET  /health           -> {"status": "ok"}
 """
 import asyncio
 import hashlib
+import io
 import json
 import os
 import re
 import urllib.request
+import wave
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -227,6 +229,22 @@ def _http(method: str, url: str, body: bytes | None = None, headers: dict | None
         return e.code, e.read()
 
 
+def _wav_to_mp3(data: bytes) -> bytes:
+    """wav PCM 16-bit của VienEU -> mp3 64kbps (nhẹ ~10 lần, cùng định dạng cache với edge/google)."""
+    import lameenc
+
+    with wave.open(io.BytesIO(data)) as w:
+        if w.getsampwidth() != 2:
+            raise RuntimeError(f"vieneu wav {w.getsampwidth() * 8}-bit, cần 16-bit")
+        enc = lameenc.Encoder()
+        enc.set_bit_rate(64)
+        enc.set_in_sample_rate(w.getframerate())
+        enc.set_channels(w.getnchannels())
+        enc.set_quality(2)
+        pcm = w.readframes(w.getnframes())
+    return enc.encode(pcm) + enc.flush()
+
+
 def _vieneu_wav(text: str, voice: str) -> bytes:
     """Tổng hợp qua adapter VienEU (Gradio): upload SRT -> call wrapper_2 -> đợi SSE -> tải wav."""
     import uuid as _uuid
@@ -340,14 +358,15 @@ async def synthesize(b: SynthBody):
     # Engine xử lý tuần tự 1 job/lúc nên khóa chung (request sau chờ request trước).
     if provider == "vieneu" or (provider == "auto" and lang == "vi"):
         vkey = hashlib.sha256(f"vieneu|{VIENEU_VOICE}|{text}".encode()).hexdigest()
-        out = os.path.join(DATA, f"{vkey}.wav")
+        out = os.path.join(DATA, f"{vkey}.mp3")
         if os.path.exists(out) and os.path.getsize(out) == 0:
             os.remove(out)
         if not os.path.exists(out):
             async with _vieneu_lock:
                 if not os.path.exists(out):
                     try:
-                        data = await asyncio.to_thread(_vieneu_wav, text, VIENEU_VOICE)
+                        wav = await asyncio.to_thread(_vieneu_wav, text, VIENEU_VOICE)
+                        data = await asyncio.to_thread(_wav_to_mp3, wav)
                         with open(out + ".tmp", "wb") as f:
                             f.write(data)
                         os.replace(out + ".tmp", out)
@@ -358,7 +377,7 @@ async def synthesize(b: SynthBody):
                         # auto: im lặng rớt xuống edge/google bên dưới
         if os.path.exists(out):
             os.utime(out)
-            return FileResponse(out, media_type="audio/wav", filename=f"{vkey}.wav")
+            return FileResponse(out, media_type="audio/mpeg", filename=f"{vkey}.mp3")
     # Microsoft throttle khi gọi dồn: retry cùng giọng + giọng phụ, giãn cách.
     tried = [voice] + ([] if b.voice else [FALLBACK_VOICES.get(lang, voice)])
     waits = [0, 8, 20]

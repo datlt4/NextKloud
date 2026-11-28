@@ -80,6 +80,8 @@ pub async fn forward(s: &AppState, b: SynthBody) -> Result<Response, AppError> {
             "rate": b.rate.unwrap_or_default(),
             "provider": b.provider.unwrap_or_default(),
         }))
+        // VienEU chạy CPU: đoạn dài (~5000 ký tự) mất vài phút, vượt timeout 60s chung của client
+        .timeout(std::time::Duration::from_secs(600))
         .send()
         .await
         .map_err(|e| AppError::Internal(format!("tts unreachable: {e}")))?;

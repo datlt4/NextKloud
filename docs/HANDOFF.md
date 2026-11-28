@@ -1,7 +1,7 @@
 # NextKloud — Handoff (chi tiết)
 
 Tài liệu bàn giao cho agent kế tiếp (review hoặc tiếp quản). Đọc hết file này trước khi sửa code.
-Cập nhật: 2026-11-27 · version 0.1.67 · việc còn lại tổng hợp ở mục 9.0 (bảng "Còn lại 26/11").
+Cập nhật: 2026-11-27 · version 0.1.69 · việc còn lại tổng hợp ở mục 9.0 (bảng "Còn lại 26/11").
 
 > Repo **public**. Không ghi secret, mật khẩu, nội dung file hay nội dung card Kanban của người dùng vào repo (kể cả trong tài liệu này).
 
@@ -10,12 +10,13 @@ Cập nhật: 2026-11-27 · version 0.1.67 · việc còn lại tổng hợp ở
 - **Backend** (`shares.rs`): `link_list` có sort/phân trang, trả path tương đối (link 1 file -> 1 dòng); `GET /api/s/:token/search`; `link_zip` = `?prefix=` + `?p=` lặp, dùng chung `zip::collect` với `/api/zip/download?path=&p=` (tải nhiều mục cho user thường). `scope_path` chặn vượt phạm vi.
 - **User thường**: thanh chọn có "Tải xuống" (1 file tải thẳng, nhiều mục -> zip), nút "Tải tất cả (zip)" khi đang trong thư mục, nút ghim/bỏ ghim thư mục hiện tại, mobile 1 nút chuyển list/grid.
 
-## TTS tiếng Việt VienEU (chưa deploy, 28/11)
+## TTS tiếng Việt VienEU (0.1.68–0.1.69, đã deploy 28/11)
 - **Mục tiêu:** tiếng Việt đọc bằng adapter VienEU trên mini PC (giọng Ngọc Huyền) thay edge-tts/Google; giữ edge+google làm backup khi VienEU không chạy.
-- **`docker/tts/server.py`**: provider mới `vieneu` — text -> chia cue -> SRT -> `POST <VIENEU_URL>/gradio_api/upload` -> `call/wrapper_2` -> đợi SSE `complete` -> tải wav (24kHz mono 16-bit), cache `.wav` chung LRU với mp3. `provider=auto` + detect `vi` -> VienEU trước, lỗi thì im lặng rớt xuống edge/google; `provider=vieneu` ép thì lỗi trả 502. Serialize bằng `asyncio.Lock` (adapter 1 job/lúc). `VIENEU_URL` (mặc định `http://127.0.0.1:7861`), `VIENEU_VOICE` (mặc định `Ngọc Huyền`).
-- **Backend** (`tts.rs`): proxy giữ nguyên content-type upstream (wav/mp3) thay vì ép `audio/mpeg`. Frontend `speak()` thêm kiểu `"vieneu"` (mọi chỗ gọi vẫn `auto`, không đổi hành vi).
+- **`docker/tts/server.py`**: provider mới `vieneu` — text -> chia cue -> SRT -> `POST <VIENEU_URL>/gradio_api/upload` -> `call/wrapper_2` -> đợi SSE `complete` -> tải wav (24kHz mono 16-bit) -> đổi sang mp3 64kbps bằng `lameenc` (nhẹ ~6 lần) rồi mới cache, mọi engine đều trả mp3. `provider=auto` + detect `vi` -> VienEU trước, lỗi thì im lặng rớt xuống edge/google; `provider=vieneu` ép thì lỗi trả 502. Serialize bằng `asyncio.Lock` (adapter 1 job/lúc). `VIENEU_URL` (mặc định `http://127.0.0.1:7861`), `VIENEU_VOICE` (mặc định `Ngọc Huyền`).
+- **Backend** (`tts.rs`): proxy giữ nguyên content-type upstream; request TTS timeout 600s riêng (VienEU CPU ~30 ký tự/giây, đoạn 5000 ký tự mất vài phút). Frontend `speak()` thêm kiểu `"vieneu"` (mọi chỗ gọi vẫn `auto`, không đổi hành vi).
 - **Compose** (`docker/server/docker-compose.yml`): service `vieneu` mới (image `hienanh/vieneu-cpu:latest`, port 7861); `tts` thêm `VIENEU_URL=http://vieneu:7861` + `depends_on: vieneu`. CI `build.yml` tự rebuild image tts khi `docker/tts/**` đổi.
 - **Đã test local** (trỏ `VIENEU_URL` sang `192.168.0.186:7861`): `vieneu` -> wav 24kHz OK; `auto`+vi -> trúng cache VienEU; `auto`+en -> edge mp3; VienEU chết + `auto`+vi -> rớt edge mp3 200; `vieneu` ép khi chết -> 502 rõ lý do.
+- **0.1.69:** xoá toàn bộ cache TTS cũ trên mini (`/mnt/das_8tb/nextkloud_volume/tts`), tiếng Việt tạo lại bằng VienEU khi nghe/tải trước.
 - **Triển khai trên mini PC:** kill container chạy lẻ (`docker stop vieneu-cpu && docker rm vieneu-cpu`), pull code mới, `docker compose up -d` (tts rebuild image mới — CI build từ `docker/tts/Dockerfile`, hoặc build local).
 
 > Repo **public**. Không ghi secret, mật khẩu, nội dung file hay nội dung card Kanban của người dùng vào repo (kể cả trong tài liệu này).

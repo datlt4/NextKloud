@@ -1,6 +1,6 @@
 # Build context: repository root.
 FROM python:3.12-slim
-RUN pip install --no-cache-dir edge-tts fastapi uvicorn
+RUN pip install --no-cache-dir edge-tts fastapi uvicorn lameenc
 WORKDIR /app
 COPY docker/tts/server.py ./
 ENV TTS_DATA=/data TTS_RATE=+0%
